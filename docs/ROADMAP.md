@@ -12,9 +12,11 @@ Build a fully tested local-first code tutoring platform that helps AI-heavy deve
 
 Recommended next implementation slice:
 
-1. Finish packaging/beta readiness docs.
+1. Run and harden packaging/beta readiness checks.
 2. Run clean-clone style verification.
 3. Prepare human decision checklist for name, license, and public distribution.
+
+Packaging readiness lives in `docs/BETA_READINESS.md`.
 
 Completed platform foundations now include evaluation, corrections, AST extraction, improved cards, local review session, repo lexicon, privacy preview, and fake/local no-network enrichment.
 

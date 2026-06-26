@@ -100,3 +100,21 @@ npm run smoke
 - Added enrichment unit, CLI, and evaluation coverage.
 - Added `docs/ENRICHMENT.md` plus README and roadmap coverage.
 - Dogfooded on `/home/adam/mergeLearn`; fake enrichment produced two A/B card previews and an enriched eval report with 48 concepts/12 cards, then scratch `.skilltrace` was removed.
+
+## 2026-06-26 Batch 9
+
+- Added local packaging/beta readiness guardrails without publishing or changing release status.
+- Updated package entrypoints to built artifacts, generated declaration files, and constrained npm tarball contents to `dist/`, README, package metadata, and public top-level docs.
+- Added `npm run smoke:package`, which builds, packs to `/tmp`, checks package contents, extracts the tarball, and runs packaged CLI help.
+- Added package manifest regression tests that keep `private: true` and `UNLICENSED` until human name/license/distribution approval.
+- Added `docs/BETA_READINESS.md` with local verification, clean-clone verification, dogfood checklist, and public-release blockers.
+- Updated README and roadmap with prerequisites, local `npm link`, packaged smoke, and beta-readiness pointers.
+- Dogfooded on `/home/adam/mergeLearn`; generated five review cards, two fake enriched previews, and an enriched eval report with 48 concepts/12 cards/5 enriched cards, no network use, and provenance OK; removed scratch `.skilltrace` afterward.
+
+Verified during development:
+
+```bash
+npm test -- --run tests/packaging/packageManifest.test.ts
+npm run smoke:package
+npm run check && npm test && npm run build && npm run eval && npm run smoke && npm run smoke:package && npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-beta-fixtures
+```

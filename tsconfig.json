@@ -9,6 +9,8 @@
     "skipLibCheck": true,
     "outDir": "dist",
     "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
     "types": ["node"]
   },
   "include": ["src/**/*.ts"]

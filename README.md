@@ -27,6 +27,12 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 
 ## Quick start
 
+Prerequisites:
+
+- Node.js 20 or newer.
+- npm.
+- Git available on `PATH`.
+
 ```bash
 npm install
 npm run build
@@ -36,6 +42,13 @@ node dist/cli.js ingest --repo /path/to/repo --since 30d
 node dist/cli.js today --repo /path/to/repo
 node dist/cli.js review --repo /path/to/repo
 node dist/cli.js dashboard --repo /path/to/repo
+```
+
+For a local global command without publishing:
+
+```bash
+npm link
+mergelearn-tutor today --repo /path/to/repo
 ```
 
 Open the dashboard:
@@ -111,7 +124,10 @@ npm test
 npm run build
 npm run eval
 npm run smoke
+npm run smoke:package
 ```
+
+For packaging and beta-readiness details, see `docs/BETA_READINESS.md`. The package remains `private: true` and `UNLICENSED` until a human explicitly approves the name, license, and distribution channel.
 
 ## Further docs
 
@@ -123,4 +139,5 @@ npm run smoke
 - `docs/LEXICON.md` — local repo-specific concept packs, aliases, ignores, and correction promotion.
 - `docs/PRIVACY.md` — offline defaults, redaction, ignore paths, and outbound preview behavior.
 - `docs/ENRICHMENT.md` — fake/local card wording enrichment experiment and no-network guardrails.
+- `docs/BETA_READINESS.md` — local packaging smoke, clean-clone checklist, and public-release blockers.
 - `docs/ROADMAP.md` — current platform roadmap.

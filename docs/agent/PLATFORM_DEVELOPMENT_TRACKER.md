@@ -36,11 +36,11 @@ Escalate via Telegram if needed:
 7. Batch 6: repo lexicon/concept packs. Implemented.
 8. Batch 7: privacy boundary and outbound preview. Implemented.
 9. Batch 8: optional LLM enrichment experiment, fake/local only with no network. Implemented.
-10. Batch 9: packaging/public beta readiness. Next.
+10. Batch 9: packaging/public beta readiness. Implemented locally; public release blocked on human name/license/distribution decisions.
 
 ## Active slice
 
-Batch 8 optional fake/local enrichment experiment is implemented and ready for final verification/commit. Next slice after commit: Batch 9 packaging/beta readiness docs and clean-clone verification.
+Batch 9 packaging/beta readiness is implemented and locally verified. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
 
 ## Verification baseline
 
@@ -58,14 +58,14 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 8 added the optional fake/local enrichment experiment:
+Batch 9 prepared local packaging and beta-readiness without publishing:
 
-- `mergelearn-tutor enrich` compares deterministic cards with enriched wording, worked examples, and follow-up questions
-- `src/core/enrichment.ts` keeps deterministic cards as the truth source and labels allowed changes as wording/worked-example/follow-up only
-- fake and local providers are supported; remote provider is rejected in the local-only experiment
-- no network requests are made; enrichment uses the redacted outbound preview payload
-- `npm run eval:repos -- --with-enrichment fake` records enriched card count, no-network status, and provenance checks
-- `docs/ENRICHMENT.md`, README, and roadmap coverage were added
-- dogfood on `/home/adam/mergeLearn` produced two useful A/B enriched card previews and an enriched eval report, then scratch `.skilltrace` cleanup was verified
+- `package.json` now points package consumers at built artifacts (`dist/index.js`, `dist/index.d.ts`, `dist/cli.js`) and keeps release blocked with `private: true` and `UNLICENSED`
+- TypeScript declaration output is generated for the package surface
+- `npm run smoke:package` builds, packs to `/tmp`, verifies tarball contents, extracts the package, and runs packaged CLI help
+- package contents are constrained to `dist/`, README, package metadata, and public top-level docs; source, agent state, research reports, `.autoloop`, `.skilltrace`, and eval outputs are excluded
+- `docs/BETA_READINESS.md` documents local verification, clean-clone verification, dogfood, and public release blockers
+- README and roadmap now point users to packaging/beta readiness and local `npm link` usage
+- dogfood on `/home/adam/mergeLearn` produced five useful review cards, two fake enriched previews, and an enriched eval report with 48 concepts/12 cards/5 enriched cards; scratch `.skilltrace` cleanup was verified
 
-Next planned slice: Batch 9 packaging/beta readiness docs and clean-clone verification.
+Next planned slice: stop for human decisions before public beta/publish, or continue with non-release local quality work such as human-rating rubric improvements and manual UX checklist automation.
