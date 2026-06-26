@@ -28,3 +28,14 @@ npm run build
 npm run eval
 npm run smoke
 ```
+
+## 2026-06-26 Batch 2
+
+- Added versioned review event and correction types.
+- Added pure reducer functions for feedback events and concept corrections.
+- Added backward-safe state normalization for older `.skilltrace/state.json` files without corrections.
+- Added CLI commands: `feedback` and `correct`.
+- Updated profile/debt renderers to surface correction counts/reasons.
+- Added reducer and CLI tests.
+- Dogfooded correction flow on `/home/adam/mergeLearn` scratch state and removed the scratch `.skilltrace`.
+- Fixed dogfood UX issue: suppressed concepts now re-sort below active concepts and are removed from future cards.

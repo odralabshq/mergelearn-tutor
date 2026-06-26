@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 
 import { extractConcepts } from './core/concepts.js';
+import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
 import { mergeLearningState, recordAnswer } from './core/planner.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderReview, renderToday, stateSummary } from './core/render.js';
@@ -112,6 +113,38 @@ program.command('answer')
     const next = recordAnswer(await loadState(options.repo), options.item, options.answer, options.correct);
     await saveState(options.repo, next);
     process.stdout.write(`Recorded answer for ${options.item}.\n`);
+  });
+
+program.command('feedback')
+  .description('Mark a card useful, wrong, skipped, unsure, or deferred')
+  .requiredOption('--item <id>', 'learning item id')
+  .requiredOption('--event <type>', 'shown, skipped, marked_unsure, marked_wrong, marked_useful, marked_correct, or deferred')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--note <text>', 'optional note')
+  .action(async (options: { repo: string; item: string; event: string; note?: string }) => {
+    const eventType = options.event as Parameters<typeof recordReviewEvent>[1]['eventType'];
+    const next = recordReviewEvent(await loadState(options.repo), { itemId: options.item, eventType, note: options.note });
+    await saveState(options.repo, next);
+    process.stdout.write(`Recorded ${options.event} for ${options.item}.\n`);
+  });
+
+program.command('correct')
+  .description('Correct or pin a concept so future sessions adapt')
+  .requiredOption('--concept <id>', 'concept id')
+  .requiredOption('--type <type>', 'wrong_concept, not_useful, better_label, pin_important, wrong_evidence, or duplicate')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--label <text>', 'replacement label for better_label')
+  .option('--note <text>', 'optional note')
+  .action(async (options: { repo: string; concept: string; type: string; label?: string; note?: string }) => {
+    const next = addCorrection(await loadState(options.repo), {
+      targetType: 'concept',
+      targetId: options.concept,
+      correctionType: options.type as Parameters<typeof addCorrection>[1]['correctionType'],
+      replacementLabel: options.label,
+      note: options.note,
+    });
+    await saveState(options.repo, next);
+    process.stdout.write(`Recorded ${options.type} correction for ${options.concept}.\n`);
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

@@ -41,5 +41,18 @@ describe('mergelearn-tutor CLI', () => {
     expect(dashboard.stdout).toContain('dashboard.html');
     const html = await readFile(path.join(repo, '.skilltrace', 'dashboard.html'), 'utf8');
     expect(html).toContain('MergeLearn Tutor');
+
+    const state = JSON.parse(await readFile(path.join(repo, '.skilltrace', 'state.json'), 'utf8')) as { learningItems: Array<{ id: string; conceptId: string }>; concepts: Array<{ id: string }> };
+    const item = state.learningItems[0]!;
+    const feedback = await cli(['feedback', '--repo', repo, '--item', item.id, '--event', 'marked_wrong', '--note', 'not useful yet']);
+    expect(feedback.stdout).toContain('Recorded marked_wrong');
+    const correction = await cli(['correct', '--repo', repo, '--concept', item.conceptId, '--type', 'not_useful', '--note', 'hide generic card']);
+    expect(correction.stdout).toContain('Recorded not_useful correction');
+    const profile = await cli(['profile', '--repo', repo]);
+    expect(profile.stdout).toContain('Corrections: 1');
+    const updated = JSON.parse(await readFile(path.join(repo, '.skilltrace', 'state.json'), 'utf8')) as { corrections: unknown[]; learningEvents: unknown[]; learningItems: Array<{ conceptId: string }> };
+    expect(updated.corrections).toHaveLength(1);
+    expect(updated.learningEvents.length).toBeGreaterThanOrEqual(2);
+    expect(updated.learningItems.some((candidate) => candidate.conceptId === item.conceptId)).toBe(false);
   });
 });

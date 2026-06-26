@@ -11,6 +11,8 @@ export type ConceptKind =
 
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 export type LearningItemType = 'concept_card' | 'explain_back' | 'trace_flow' | 'spot_risk' | 'compare_pattern' | 'spaced_review';
+export type ReviewEventType = 'shown' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'corrected' | 'deferred';
+export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 
 export type EvidenceRef = {
   commit?: string;
@@ -75,9 +77,21 @@ export type LearningEvent = {
   id: string;
   itemId: string;
   conceptId: string;
-  eventType: 'shown' | 'answered' | 'skipped' | 'marked_wrong' | 'marked_correct';
+  eventType: ReviewEventType;
   answerText?: string;
   correct?: boolean;
+  note?: string;
+  createdAt: string;
+};
+
+export type Correction = {
+  id: string;
+  targetType: 'concept' | 'card';
+  targetId: string;
+  conceptId?: string;
+  correctionType: CorrectionType;
+  replacementLabel?: string;
+  note?: string;
   createdAt: string;
 };
 
@@ -92,4 +106,5 @@ export type TutorState = {
   conceptStates: ConceptState[];
   learningItems: LearningItem[];
   learningEvents: LearningEvent[];
+  corrections: Correction[];
 };

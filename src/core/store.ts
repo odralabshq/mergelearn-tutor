@@ -25,12 +25,25 @@ export function createEmptyState(repoPath: string, goals: string[] = []): TutorS
     conceptStates: [],
     learningItems: [],
     learningEvents: [],
+    corrections: [],
+  };
+}
+
+function normalizeState(state: TutorState): TutorState {
+  return {
+    ...state,
+    artifacts: state.artifacts ?? [],
+    concepts: state.concepts ?? [],
+    conceptStates: state.conceptStates ?? [],
+    learningItems: state.learningItems ?? [],
+    learningEvents: state.learningEvents ?? [],
+    corrections: state.corrections ?? [],
   };
 }
 
 export async function loadState(repoPath: string): Promise<TutorState> {
   try {
-    return JSON.parse(await readFile(statePath(repoPath), 'utf8')) as TutorState;
+    return normalizeState(JSON.parse(await readFile(statePath(repoPath), 'utf8')) as TutorState);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return createEmptyState(repoPath);
     throw error;

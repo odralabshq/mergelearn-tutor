@@ -1,4 +1,5 @@
-import type { CommitArtifact, Concept, ConceptState, LearningEvent, LearningItem, TutorState } from './types.js';
+import type { CommitArtifact, Concept, ConceptState, LearningItem, TutorState } from './types.js';
+import { applyCorrections, recordReviewEvent } from './events.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
 function importanceFor(concept: Concept): number {
@@ -44,7 +45,7 @@ export function mergeLearningState(state: TutorState, artifacts: CommitArtifact[
     conceptStates: [...states.values()].sort((a, b) => priorityScore(b) - priorityScore(a)),
   };
   next.learningItems = generateLearningItems(next);
-  return next;
+  return applyCorrections(next);
 }
 
 function refreshConceptState(previous: ConceptState, concept: Concept, now: string): ConceptState {
@@ -122,18 +123,5 @@ function promptFor(concept: Concept): string {
 }
 
 export function recordAnswer(state: TutorState, itemId: string, answerText: string, correct: boolean): TutorState {
-  const item = state.learningItems.find((candidate) => candidate.id === itemId);
-  if (!item) throw new Error(`Unknown learning item: ${itemId}`);
-  const now = nowIso();
-  const event: LearningEvent = { id: stableId('event', [itemId, answerText, now]), itemId, conceptId: item.conceptId, eventType: 'answered', answerText, correct, createdAt: now };
-  const conceptStates = state.conceptStates.map((conceptState) => {
-    if (conceptState.conceptId !== item.conceptId) return conceptState;
-    const activeRecallCount = conceptState.activeRecallCount + 1;
-    const correctCount = conceptState.correctCount + (correct ? 1 : 0);
-    const failedCount = conceptState.failedCount + (correct ? 0 : 1);
-    const delta = correct ? 0.18 : -0.12;
-    const masteryEstimate = clamp(conceptState.masteryEstimate + delta, 0, 1);
-    return { ...conceptState, activeRecallCount, correctCount, failedCount, masteryEstimate, confidence: masteryEstimate, lastTestedAt: now, nextReviewAt: addDays(now, correct ? 3 : 1) };
-  });
-  return { ...state, conceptStates, learningEvents: [...state.learningEvents, event] };
+  return recordReviewEvent(state, { itemId, eventType: 'answered', answerText, correct });
 }

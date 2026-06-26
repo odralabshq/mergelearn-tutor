@@ -54,12 +54,15 @@ mergelearn-tutor init --repo .
 mergelearn-tutor ingest --repo . --since 30d --limit 80
 mergelearn-tutor today --repo .
 mergelearn-tutor review --repo . --count 5
+mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
+mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "too generic"
+mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
 mergelearn-tutor profile --repo .
 mergelearn-tutor debt --repo .
 mergelearn-tutor map --repo .
 mergelearn-tutor explain-last-commit --repo .
 mergelearn-tutor dashboard --repo .
-mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
+npm run eval:repos -- --fixtures --repo /path/to/repo --out eval-runs/latest
 ```
 
 ## Product stance

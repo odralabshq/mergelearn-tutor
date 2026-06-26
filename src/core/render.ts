@@ -28,9 +28,11 @@ export function renderReview(state: TutorState, count = 5): string {
 export function renderProfile(state: TutorState): string {
   const rows = state.conceptStates.slice(0, 20).map((item) => {
     const concept = state.concepts.find((candidate) => candidate.id === item.conceptId);
-    return `- ${concept?.label ?? item.conceptId}: mastery ${Math.round(item.masteryEstimate * 100)}%, exposure ${item.exposureCount}, priority ${priorityScore(item).toFixed(2)}`;
+    const corrections = state.corrections.filter((correction) => (correction.conceptId ?? correction.targetId) === item.conceptId);
+    const correctionText = corrections.length ? `, corrections ${corrections.length}` : '';
+    return `- ${concept?.label ?? item.conceptId}: mastery ${Math.round(item.masteryEstimate * 100)}%, exposure ${item.exposureCount}, priority ${priorityScore(item).toFixed(2)}${correctionText}`;
   });
-  return ['Personal skill ledger', '', `Concepts: ${state.concepts.length}`, `Learning events: ${state.learningEvents.length}`, '', ...rows].join('\n') + '\n';
+  return ['Personal skill ledger', '', `Concepts: ${state.concepts.length}`, `Learning events: ${state.learningEvents.length}`, `Corrections: ${state.corrections.length}`, '', ...rows].join('\n') + '\n';
 }
 
 export function renderKnowledgeDebt(state: TutorState): string {
@@ -39,7 +41,9 @@ export function renderKnowledgeDebt(state: TutorState): string {
   if (weakImportant.length === 0) lines.push('No high-priority weak concepts detected yet.');
   for (const item of weakImportant) {
     const concept = state.concepts.find((candidate) => candidate.id === item.conceptId);
-    lines.push(`- ${concept?.label ?? item.conceptId}: importance ${item.importance.toFixed(2)}, mastery ${item.masteryEstimate.toFixed(2)}, exposures ${item.exposureCount}`);
+    const corrections = state.corrections.filter((correction) => (correction.conceptId ?? correction.targetId) === item.conceptId);
+    const reason = corrections.length ? `; corrected: ${corrections.at(-1)?.correctionType}` : '';
+    lines.push(`- ${concept?.label ?? item.conceptId}: importance ${item.importance.toFixed(2)}, mastery ${item.masteryEstimate.toFixed(2)}, exposures ${item.exposureCount}${reason}`);
   }
   return `${lines.join('\n')}\n`;
 }
