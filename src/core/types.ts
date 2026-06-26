@@ -13,6 +13,7 @@ export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 export type LearningItemType = 'concept_card' | 'explain_back' | 'trace_flow' | 'spot_risk' | 'compare_pattern' | 'spaced_review';
 export type ReviewEventType = 'shown' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
+export type ManualRatingTargetType = 'concept' | 'card';
 
 export type EvidenceRef = {
   commit?: string;
@@ -96,6 +97,20 @@ export type Correction = {
   createdAt: string;
 };
 
+export type ManualRating = {
+  id: string;
+  targetType: ManualRatingTargetType;
+  targetId: string;
+  conceptId?: string;
+  relevance?: number;
+  evidence?: number;
+  answerability?: number;
+  usefulness?: number;
+  repeatability?: number;
+  note?: string;
+  createdAt: string;
+};
+
 export type TutorState = {
   version: 1;
   repoPath: string;
@@ -108,4 +123,5 @@ export type TutorState = {
   learningItems: LearningItem[];
   learningEvents: LearningEvent[];
   corrections: Correction[];
+  manualRatings: ManualRating[];
 };

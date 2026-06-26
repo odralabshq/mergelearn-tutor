@@ -33,7 +33,7 @@ export function renderProfile(state: TutorState): string {
     const correctionText = corrections.length ? `, corrections ${corrections.length}` : '';
     return `- ${concept?.label ?? item.conceptId}: mastery ${Math.round(item.masteryEstimate * 100)}%, exposure ${item.exposureCount}, priority ${priorityScore(item).toFixed(2)}${correctionText}`;
   });
-  return ['Personal skill ledger', '', `Concepts: ${state.concepts.length}`, `Learning events: ${state.learningEvents.length}`, `Corrections: ${state.corrections.length}`, '', ...rows].join('\n') + '\n';
+  return ['Personal skill ledger', '', `Concepts: ${state.concepts.length}`, `Learning events: ${state.learningEvents.length}`, `Corrections: ${state.corrections.length}`, `Manual ratings: ${state.manualRatings.length}`, '', ...rows].join('\n') + '\n';
 }
 
 export function renderKnowledgeDebt(state: TutorState): string {

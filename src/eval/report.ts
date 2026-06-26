@@ -32,7 +32,7 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
       lines.push(`- ${card.title} — ${card.answerableHeuristic ? 'answerable' : 'needs review'}; evidence ${card.evidenceCount}`);
     }
   }
-  lines.push('', '## Manual rating rubric', '', '| Item | Rating 1-5 | Notes |', '|---|---:|---|', '| Top concepts are relevant |  |  |', '| Evidence paths are correct |  |  |', '| Cards are answerable |  |  |', '| Cards teach something useful |  |  |', '| Session would be worth repeating |  |  |');
+  lines.push('', '## Manual rating rubric', '', 'Persist ratings with:', '', '```bash', 'mergelearn-tutor rate --repo <repo> --item <card-id> --answerability 5 --usefulness 4 --note "grounded and clear"', 'mergelearn-tutor rate --repo <repo> --concept <concept-id> --relevance 5 --evidence 4', 'mergelearn-tutor ratings --repo <repo>', '```', '', '| Item | Rating 1-5 | Notes |', '|---|---:|---|', '| Top concepts are relevant |  |  |', '| Evidence paths are correct |  |  |', '| Cards are answerable |  |  |', '| Cards teach something useful |  |  |', '| Session would be worth repeating |  |  |');
   return `${lines.join('\n')}\n`;
 }
 

@@ -47,6 +47,5 @@ why_shown_missing 0
 
 1. Add line/hunk locations to evidence.
 2. Add duplicate/noisy card detection.
-3. Add a card-level manual rating store.
-4. Use correction history in prompt generation.
-5. Add interactive local review session.
+3. Use correction history and manual ratings in prompt generation.
+4. Add richer end-of-session UX metrics.

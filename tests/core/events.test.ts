@@ -21,6 +21,7 @@ function state(): TutorState {
     learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', title: 'auth in your recent work', bodyMarkdown: 'body', prompt: 'Explain auth clearly from evidence.', expectedFocus: ['auth'], evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z' }],
     learningEvents: [],
     corrections: [],
+    manualRatings: [],
   };
 }
 
@@ -57,15 +58,16 @@ describe('review events and corrections', () => {
   it('normalizes older state files without corrections', async () => {
     const repo = await mkdtemp(path.join(os.tmpdir(), 'mergelearn-tutor-old-state-'));
     const oldState = state();
-    const { corrections, ...withoutCorrections } = oldState;
+    const { corrections, manualRatings, ...withoutNewFields } = oldState;
     await writeFile(path.join(repo, '.gitkeep'), '');
     await writeFile(path.join(repo, '.skilltrace-do-not-use'), '');
-    await writeFile(path.join(repo, 'state.json'), JSON.stringify(withoutCorrections));
+    await writeFile(path.join(repo, 'state.json'), JSON.stringify(withoutNewFields));
     await writeFile(path.join(repo, '.placeholder'), '');
     await import('node:fs/promises').then(async ({ mkdir, rename }) => {
       await mkdir(stateDir(repo), { recursive: true });
       await rename(path.join(repo, 'state.json'), path.join(stateDir(repo), 'state.json'));
     });
     expect((await loadState(repo)).corrections).toEqual([]);
+    expect((await loadState(repo)).manualRatings).toEqual([]);
   });
 });

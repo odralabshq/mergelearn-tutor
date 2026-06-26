@@ -11,7 +11,7 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 ## Current MVP
 
 - Local CLI.
-- Local transparent JSON state in `.skilltrace/state.json`.
+- Local transparent JSON state in `.skilltrace/state.json` including learner events, corrections, and manual quality ratings.
 - Local repo lexicon/concept packs in `.skilltrace/lexicon.json`.
 - Deterministic git-history ingestion.
 - Hybrid concept extraction with path/regex rules plus TypeScript AST analysis.
@@ -72,6 +72,8 @@ mergelearn-tutor today --repo .
 mergelearn-tutor review --repo . --count 5
 mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
 mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "too generic"
+mergelearn-tutor rate --repo . --item <id> --answerability 5 --usefulness 4 --note "clear and useful"
+mergelearn-tutor ratings --repo .
 mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
 mergelearn-tutor concept add --repo . --id repo.session_flow --label "Session flow" --term "session,token" --path "src/auth/*"
 mergelearn-tutor concept alias --repo . --concept security.auth_boundary --label "Session policy boundary"

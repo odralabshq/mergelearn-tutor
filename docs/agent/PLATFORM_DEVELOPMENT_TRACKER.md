@@ -37,10 +37,11 @@ Escalate via Telegram if needed:
 8. Batch 7: privacy boundary and outbound preview. Implemented.
 9. Batch 8: optional LLM enrichment experiment, fake/local only with no network. Implemented.
 10. Batch 9: packaging/public beta readiness. Implemented locally; public release blocked on human name/license/distribution decisions.
+11. Batch 10: manual rating persistence and quality feedback loop. Implemented.
 
 ## Active slice
 
-Batch 9 packaging/beta readiness is implemented and locally verified. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
+Batch 10 manual rating persistence is implemented and locally verified. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
 
 ## Verification baseline
 
@@ -58,14 +59,13 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 9 prepared local packaging and beta-readiness without publishing:
+Batch 10 added manual rating persistence so human usefulness checks can become durable local product-quality data:
 
-- `package.json` now points package consumers at built artifacts (`dist/index.js`, `dist/index.d.ts`, `dist/cli.js`) and keeps release blocked with `private: true` and `UNLICENSED`
-- TypeScript declaration output is generated for the package surface
-- `npm run smoke:package` builds, packs to `/tmp`, verifies tarball contents, extracts the package, and runs packaged CLI help
-- package contents are constrained to `dist/`, README, package metadata, and public top-level docs; source, agent state, research reports, `.autoloop`, `.skilltrace`, and eval outputs are excluded
-- `docs/BETA_READINESS.md` documents local verification, clean-clone verification, dogfood, and public release blockers
-- README and roadmap now point users to packaging/beta readiness and local `npm link` usage
-- dogfood on `/home/adam/mergeLearn` produced five useful review cards, two fake enriched previews, and an enriched eval report with 48 concepts/12 cards/5 enriched cards; scratch `.skilltrace` cleanup was verified
+- `.skilltrace/state.json` now stores `manualRatings` with backward-safe normalization for older states
+- `mergelearn-tutor rate` records 1-5 ratings for cards or concepts across relevance, evidence correctness, answerability, usefulness, and repeatability
+- `mergelearn-tutor ratings` summarizes averages and recent ratings without changing learner mastery/events
+- evaluation reports now include copyable rating commands next to the manual rubric
+- README and evaluation/card-quality docs now reflect the persisted rating loop
+- dogfood on `/home/adam/mergeLearn` recorded two local ratings, summarized averages, and verified scratch `.skilltrace` cleanup
 
-Next planned slice: stop for human decisions before public beta/publish, or continue with non-release local quality work such as human-rating rubric improvements and manual UX checklist automation.
+Next planned slice: duplicate/noisy card detection and/or use persisted manual ratings to influence prompt/card ranking locally. Public beta/publish still requires human decisions first.

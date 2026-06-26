@@ -53,7 +53,15 @@ These are not final product-quality metrics. They are baseline guardrails that c
 
 ## Manual rating rubric
 
-The generated Markdown report includes a manual rubric:
+The generated Markdown report includes a manual rubric and CLI commands for persisting ratings back to `.skilltrace/state.json`:
+
+```bash
+mergelearn-tutor rate --repo . --item <card-id> --answerability 5 --usefulness 4 --note "grounded and clear"
+mergelearn-tutor rate --repo . --concept <concept-id> --relevance 5 --evidence 4
+mergelearn-tutor ratings --repo .
+```
+
+Use concept ratings for relevance and evidence correctness. Use card ratings for answerability, usefulness, and whether the session is worth repeating.
 
 | Item | Rating 1-5 | Notes |
 |---|---:|---|
@@ -108,8 +116,7 @@ Pause UI/packaging work if:
 
 ## Next evaluation improvements
 
-1. Add manual rating persistence.
-2. Compare before/after reports across extractor changes.
-3. Add fixture repos for backend/API and config-heavy projects.
-4. Add evidence snippet scoring.
-5. Add duplicate concept detection.
+1. Compare before/after reports across extractor changes.
+2. Add fixture repos for backend/API and config-heavy projects.
+3. Add evidence snippet scoring.
+4. Add duplicate concept detection.

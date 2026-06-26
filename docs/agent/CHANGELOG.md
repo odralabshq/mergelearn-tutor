@@ -118,3 +118,20 @@ npm test -- --run tests/packaging/packageManifest.test.ts
 npm run smoke:package
 npm run check && npm test && npm run build && npm run eval && npm run smoke && npm run smoke:package && npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-beta-fixtures
 ```
+
+## 2026-06-26 Batch 10
+
+- Added persisted manual quality ratings to the local state model via `manualRatings`.
+- Added `mergelearn-tutor rate` for concept/card 1-5 ratings across relevance, evidence correctness, answerability, usefulness, and repeatability.
+- Added `mergelearn-tutor ratings` summary output with averages and recent rating notes.
+- Kept ratings separate from learner mastery/events so product-quality feedback does not masquerade as active recall.
+- Added backward-safe state normalization for older `.skilltrace/state.json` files without ratings.
+- Updated evaluation reports, README, `docs/EVALUATION.md`, and `docs/CARD_QUALITY.md` to use the persisted rating loop.
+- Dogfooded on `/home/adam/mergeLearn`; recorded a card rating and a concept rating, verified averages, and removed scratch `.skilltrace` afterward.
+
+Verified during development:
+
+```bash
+npm test -- --run tests/core/ratings.test.ts tests/core/events.test.ts tests/cli/cli.test.ts tests/eval/evaluationHarness.test.ts
+npm run check && npm test && npm run build && npm run eval && npm run smoke && npm run smoke:package && npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-manual-ratings-fixtures
+```

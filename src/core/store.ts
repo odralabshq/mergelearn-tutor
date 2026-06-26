@@ -26,6 +26,7 @@ export function createEmptyState(repoPath: string, goals: string[] = []): TutorS
     learningItems: [],
     learningEvents: [],
     corrections: [],
+    manualRatings: [],
   };
 }
 
@@ -38,6 +39,7 @@ function normalizeState(state: TutorState): TutorState {
     learningItems: state.learningItems ?? [],
     learningEvents: state.learningEvents ?? [],
     corrections: state.corrections ?? [],
+    manualRatings: state.manualRatings ?? [],
   };
 }
 

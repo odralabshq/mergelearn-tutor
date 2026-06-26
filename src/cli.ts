@@ -9,6 +9,7 @@ import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, ty
 import { mergeLearningState, recordAnswer } from './core/planner.js';
 import { createOutboundPreview, loadPrivacyConfig, renderOutboundPreview, savePrivacyConfig, type PrivacyConfig, type PrivacyProvider } from './core/privacy.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderReview, renderToday, stateSummary } from './core/render.js';
+import { recordManualRating, renderManualRatingSummary } from './core/ratings.js';
 import { initState, loadState, saveState, statePath } from './core/store.js';
 import { writeDashboard } from './dashboard/html.js';
 import { startReviewServer } from './session/server.js';
@@ -26,6 +27,17 @@ function listFrom(value?: string): string[] | undefined {
 
 function collect(value: string, previous: string[]): string[] {
   return [...previous, value];
+}
+
+function scoreFrom(value?: string): number | undefined {
+  return value === undefined ? undefined : Number.parseInt(value, 10);
+}
+
+function targetFrom(options: { item?: string; concept?: string }): { targetType: 'card' | 'concept'; targetId: string } {
+  if (options.item && options.concept) throw new Error('Use either --item or --concept, not both.');
+  if (options.item) return { targetType: 'card', targetId: options.item };
+  if (options.concept) return { targetType: 'concept', targetId: options.concept };
+  throw new Error('Manual rating requires --item <id> or --concept <id>.');
 }
 
 function renderLexicon(lexicon: RepoLexicon): string {
@@ -201,6 +213,39 @@ program.command('feedback')
     const next = recordReviewEvent(await loadState(options.repo), { itemId: options.item, eventType, note: options.note });
     await saveState(options.repo, next);
     process.stdout.write(`Recorded ${options.event} for ${options.item}.\n`);
+  });
+
+program.command('rate')
+  .description('Persist a manual 1-5 quality rating for a concept or card')
+  .option('--item <id>', 'learning item/card id to rate')
+  .option('--concept <id>', 'concept id to rate')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--relevance <1-5>', 'concept relevance score')
+  .option('--evidence <1-5>', 'evidence correctness score')
+  .option('--answerability <1-5>', 'card answerability score')
+  .option('--usefulness <1-5>', 'learning usefulness score')
+  .option('--repeatability <1-5>', 'would-repeat-session score')
+  .option('--note <text>', 'optional rating note')
+  .action(async (options: { repo: string; item?: string; concept?: string; relevance?: string; evidence?: string; answerability?: string; usefulness?: string; repeatability?: string; note?: string }) => {
+    const target = targetFrom(options);
+    const next = recordManualRating(await loadState(options.repo), {
+      ...target,
+      relevance: scoreFrom(options.relevance),
+      evidence: scoreFrom(options.evidence),
+      answerability: scoreFrom(options.answerability),
+      usefulness: scoreFrom(options.usefulness),
+      repeatability: scoreFrom(options.repeatability),
+      note: options.note,
+    });
+    await saveState(options.repo, next);
+    process.stdout.write(`Recorded manual rating for ${target.targetId}.\n`);
+  });
+
+program.command('ratings')
+  .description('Summarize persisted manual quality ratings')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderManualRatingSummary(await loadState(options.repo)));
   });
 
 program.command('correct')
