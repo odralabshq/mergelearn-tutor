@@ -22,6 +22,7 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 - No telemetry.
 - No target repo code execution.
 - No required LLM calls.
+- Offline privacy config and outbound preview before any optional enrichment.
 
 ## Quick start
 
@@ -67,6 +68,8 @@ mergelearn-tutor map --repo .
 mergelearn-tutor explain-last-commit --repo .
 mergelearn-tutor dashboard --repo .
 mergelearn-tutor session --repo .
+mergelearn-tutor privacy init --repo . --ignore-path "secrets/**" --redact "internal-codename"
+mergelearn-tutor privacy preview --repo . --provider fake --include-snippets
 npm run eval:repos -- --fixtures --repo /path/to/repo --out eval-runs/latest
 ```
 
@@ -77,6 +80,14 @@ The tutor intentionally starts local and personal. The primary UI is `today`, no
 ## Privacy model
 
 The CLI reads git metadata and diffs. It does not run project code, install target repo dependencies, send telemetry, or call an LLM. Optional LLM enrichment can be added later behind explicit config and preview of what leaves the machine.
+
+Before any optional enrichment, inspect the payload locally:
+
+```bash
+mergelearn-tutor privacy preview --repo . --provider fake
+```
+
+The preview command sends nothing. Snippets are omitted unless `--include-snippets` is passed, and `.skilltrace/privacy.json` can add ignored path globs and literal redaction terms.
 
 ## Storage note
 
@@ -100,4 +111,5 @@ npm run smoke
 - `docs/CARD_QUALITY.md` — card generation quality rules and dogfood findings.
 - `docs/REVIEW_SESSION.md` — local browser review session and API.
 - `docs/LEXICON.md` — local repo-specific concept packs, aliases, ignores, and correction promotion.
+- `docs/PRIVACY.md` — offline defaults, redaction, ignore paths, and outbound preview behavior.
 - `docs/ROADMAP.md` — current platform roadmap.

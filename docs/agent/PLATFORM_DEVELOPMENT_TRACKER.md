@@ -34,13 +34,13 @@ Escalate via Telegram if needed:
 5. Batch 4: improved card generation. Implemented.
 6. Batch 5: interactive local review session. Implemented initial local server.
 7. Batch 6: repo lexicon/concept packs. Implemented.
-8. Batch 7: privacy boundary and outbound preview. Next.
-9. Batch 8: optional LLM enrichment experiment, only after privacy boundary.
+8. Batch 7: privacy boundary and outbound preview. Implemented.
+9. Batch 8: optional LLM enrichment experiment, only after privacy boundary. Next.
 10. Batch 9: packaging/public beta readiness.
 
 ## Active slice
 
-Batch 6 repo lexicon/concept packs is implemented and ready for final verification/commit. Next slice after commit: Batch 7 privacy boundary and outbound preview.
+Batch 7 privacy boundary and outbound preview is implemented and ready for final verification/commit. Next slice after commit: Batch 8 optional LLM enrichment experiment using fake/local provider only, with no real network.
 
 ## Verification baseline
 
@@ -58,14 +58,15 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 6 added repo lexicon/concept packs:
+Batch 7 added the privacy boundary and outbound preview:
 
-- local `.skilltrace/lexicon.json` parser/validator
-- custom repo-specific concepts matched from changed paths and terms
-- local aliases for extracted concept labels
-- local ignore rules for noisy concepts/evidence
-- correction promotion into lexicon aliases/ignores/concepts
-- CLI commands under `mergelearn-tutor concept ...`
-- dogfood on `/home/adam/mergeLearn` with `repo.pr_understanding_guard`, then scratch `.skilltrace` cleanup
+- offline-by-default `.skilltrace/privacy.json` schema and parser
+- fail-closed outbound guard requiring network enablement, consent, and provider
+- redaction helpers for common secrets, email addresses, custom terms, and user path segments
+- outbound payload preview for future enrichment that sends nothing
+- optional snippet preview with ignore path support
+- CLI commands under `mergelearn-tutor privacy ...`
+- `docs/PRIVACY.md` and README privacy command coverage
+- dogfood on `/home/adam/mergeLearn` confirmed blocked/no-send preview, then scratch `.skilltrace` cleanup
 
-Next planned slice: Batch 7 privacy boundary and outbound preview.
+Next planned slice: Batch 8 optional LLM enrichment experiment with fake/local provider only and no real network.

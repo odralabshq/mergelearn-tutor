@@ -78,3 +78,14 @@ npm run smoke
 - Added lexicon tests and CLI coverage for adding/listing a repo-specific concept.
 - Added `docs/LEXICON.md` and README command coverage.
 - Dogfooded on `/home/adam/mergeLearn` with a custom `repo.pr_understanding_guard` concept; it generated 12 evidence refs and a learning card, then scratch `.skilltrace` state was removed.
+
+## 2026-06-26 Batch 7
+
+- Added offline-by-default privacy config loading/saving at `.skilltrace/privacy.json`.
+- Added fail-closed outbound guard behavior requiring explicit network enablement, consent, and provider.
+- Added outbound preview rendering so future enrichment payloads can be inspected without sending anything.
+- Added redaction for common secrets, email addresses, custom terms, and Linux/WSL/Windows user path segments.
+- Kept evidence snippets omitted by default; `privacy preview --include-snippets` is opt-in and uses redaction plus ignore path rules.
+- Added CLI commands: `privacy init` and `privacy preview`.
+- Added `docs/PRIVACY.md` and README coverage.
+- Dogfooded on `/home/adam/mergeLearn`; preview showed `Would send: no` and `Blocked reason: network disabled by default`, then scratch `.skilltrace` state was removed.

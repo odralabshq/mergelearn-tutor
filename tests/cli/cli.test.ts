@@ -37,6 +37,11 @@ describe('mergelearn-tutor CLI', () => {
     expect(conceptAdd.stdout).toContain('Saved local concept repo.session_flow');
     const ingest = await cli(['ingest', '--repo', repo, '--since', '365d']);
     expect(ingest.stdout).toContain('learning cards');
+    const privacyInit = await cli(['privacy', 'init', '--repo', repo, '--ignore-path', 'src/auth/*', '--redact', 'Session']);
+    expect(privacyInit.stdout).toContain('offline privacy config');
+    const privacyPreview = await cli(['privacy', 'preview', '--repo', repo, '--include-snippets', '--provider', 'fake']);
+    expect(privacyPreview.stdout).toContain('Would send: no');
+    expect(privacyPreview.stdout).toContain('ignoredEvidenceCount');
     const today = await cli(['today', '--repo', repo]);
     expect(today.stdout).toContain("Today's 5-minute review");
     const dashboard = await cli(['dashboard', '--repo', repo]);

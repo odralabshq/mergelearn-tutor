@@ -6,6 +6,7 @@ import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
 import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
 import { mergeLearningState, recordAnswer } from './core/planner.js';
+import { createOutboundPreview, loadPrivacyConfig, renderOutboundPreview, savePrivacyConfig, type PrivacyConfig, type PrivacyProvider } from './core/privacy.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderReview, renderToday, stateSummary } from './core/render.js';
 import { initState, loadState, saveState, statePath } from './core/store.js';
 import { writeDashboard } from './dashboard/html.js';
@@ -20,6 +21,10 @@ function goalsFrom(value?: string): string[] {
 function listFrom(value?: string): string[] | undefined {
   const items = value?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
   return items.length ? items : undefined;
+}
+
+function collect(value: string, previous: string[]): string[] {
+  return [...previous, value];
 }
 
 function renderLexicon(lexicon: RepoLexicon): string {
@@ -126,6 +131,35 @@ program.command('session')
   .action(async (options: { repo: string; port: string }) => {
     const review = await startReviewServer(options.repo, Number.parseInt(options.port, 10));
     process.stdout.write(`MergeLearn Tutor session: ${review.url}\nPress Ctrl+C to stop.\n`);
+  });
+
+const privacy = program.command('privacy')
+  .description('Inspect local privacy config and outbound payload previews');
+
+privacy.command('init')
+  .description('Write an offline-by-default .skilltrace/privacy.json')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--ignore-path <glob>', 'path/glob to omit from outbound previews', collect, [])
+  .option('--redact <term>', 'extra literal term to redact from previews', collect, [])
+  .action(async (options: { repo: string; ignorePath: string[]; redact: string[] }) => {
+    const config: PrivacyConfig = { version: 1, network: { enabled: false, consentToSend: false }, redaction: { replacement: '[REDACTED]', extraTerms: options.redact }, ignorePaths: options.ignorePath, includeSnippetsByDefault: false };
+    await savePrivacyConfig(options.repo, config);
+    process.stdout.write('Wrote offline privacy config to .skilltrace/privacy.json.\n');
+  });
+
+privacy.command('preview')
+  .description('Show exactly what optional enrichment would receive; sends nothing')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--provider <name>', 'fake, local, or remote provider label for preview only')
+  .option('--include-snippets', 'include bounded evidence snippets in the preview', false)
+  .option('--limit <count>', 'maximum cards to preview', '5')
+  .action(async (options: { repo: string; provider?: string; includeSnippets: boolean; limit: string }) => {
+    const preview = createOutboundPreview(await loadState(options.repo), await loadPrivacyConfig(options.repo), {
+      provider: options.provider as PrivacyProvider | undefined,
+      includeSnippets: options.includeSnippets,
+      limit: Number.parseInt(options.limit, 10),
+    });
+    process.stdout.write(renderOutboundPreview(preview));
   });
 
 program.command('answer')
