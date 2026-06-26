@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { activeLearningItems } from './planner.js';
 import type { EvidenceRef, LearningItem, TutorState } from './types.js';
 
 export type PrivacyProvider = 'fake' | 'local' | 'remote';
@@ -119,7 +120,7 @@ export function createOutboundPreview(state: TutorState, config: PrivacyConfig =
   const includeSnippets = options.includeSnippets ?? config.includeSnippetsByDefault;
   const redactionCounter = { count: 0 };
   const ignoredCounter = { count: 0 };
-  const items = state.learningItems.slice(0, options.limit ?? 5).map((item) => previewItem(item, config, includeSnippets, redactionCounter, ignoredCounter));
+  const items = activeLearningItems(state).slice(0, options.limit ?? 5).map((item) => previewItem(item, config, includeSnippets, redactionCounter, ignoredCounter));
   const provider = options.provider ?? config.network.provider;
   const providerConfigured = Boolean(provider);
   const networkAllowed = config.network.enabled && config.network.consentToSend && providerConfigured;

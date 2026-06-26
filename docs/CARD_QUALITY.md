@@ -26,6 +26,8 @@ Every new card should include:
    - README/docs are deprioritized unless there is no better evidence
 5. Prompts must ask for a concrete explanation tied to one evidence path.
 6. Expected focus terms must include both conceptual requirements and evidence paths.
+7. Regenerating cards archives/supersedes old active cards; it must not delete answer history, ratings, or events.
+8. Website snippets should render as diff-like blocks with visible line numbers and add/delete markers.
 
 ## Current card fields
 
@@ -43,6 +45,10 @@ Learning items include:
 - `whyShown`
 - `evidence`
 - `difficulty`
+- `status`
+- `batchId`
+- `generation`
+- `source`
 
 ## Dogfood result
 

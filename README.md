@@ -41,6 +41,7 @@ node dist/cli.js init --repo /path/to/repo
 node dist/cli.js ingest --repo /path/to/repo --since 30d
 node dist/cli.js today --repo /path/to/repo
 node dist/cli.js review --repo /path/to/repo
+node dist/cli.js cards generate --repo /path/to/repo --count 5 --mode more
 node dist/cli.js progress --repo /path/to/repo
 node dist/cli.js dashboard --repo /path/to/repo
 ```
@@ -71,6 +72,8 @@ mergelearn-tutor init --repo .
 mergelearn-tutor ingest --repo . --since 30d --limit 80
 mergelearn-tutor today --repo .
 mergelearn-tutor review --repo . --count 5
+mergelearn-tutor cards generate --repo . --count 5 --mode more
+mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
 mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
 mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "too generic"
 mergelearn-tutor rate --repo . --item <id> --answerability 5 --usefulness 4 --note "clear and useful"
@@ -122,6 +125,21 @@ Cards now start with code you recently touched, then ask a question about that s
 - `repo_domain` — repo-specific concepts and vocabulary
 
 Preferences live in `.skilltrace/preferences.json`, so the CLI, local website, and future LLM agents can use the same control surface.
+
+## Flashcard generation
+
+Use `cards generate` when you want fresh cards without re-ingesting git history:
+
+```bash
+mergelearn-tutor cards generate --repo . --count 5 --mode more
+mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
+```
+
+- `more` adds new active cards and keeps the current queue.
+- `regenerate` archives the current active queue and creates a new focused batch.
+- Archived cards are not deleted, so answers, feedback, ratings, and statistics remain auditable in `.skilltrace/state.json`.
+
+The local website exposes the same behavior through “Generate 5 more” and “Regenerate 5”.
 
 Batch 8 adds a fake/local enrichment experiment for wording only:
 

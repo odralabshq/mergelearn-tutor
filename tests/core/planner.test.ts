@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mergeLearningState, recordAnswer } from '../../src/core/planner.js';
+import { activeLearningItems, generateCardBatch, mergeLearningState, recordAnswer } from '../../src/core/planner.js';
 import { createEmptyState } from '../../src/core/store.js';
 import type { CommitArtifact, Concept } from '../../src/core/types.js';
 
@@ -47,5 +47,17 @@ describe('planner', () => {
     expect(next.learningEvents).toHaveLength(1);
     expect(next.conceptStates[0]!.correctCount).toBe(1);
     expect(next.conceptStates[0]!.masteryEstimate).toBeGreaterThan(state.conceptStates[0]!.masteryEstimate);
+  });
+
+  it('generates new flashcard batches without deleting card history', () => {
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
+    const firstItem = activeLearningItems(state)[0]!;
+    const more = generateCardBatch(state, undefined, { count: 1, mode: 'more' });
+    expect(activeLearningItems(more).length).toBe(2);
+    expect(more.cardBatches).toHaveLength(2);
+    const regenerated = generateCardBatch(more, undefined, { count: 1, mode: 'regenerate' });
+    expect(regenerated.learningItems.find((item) => item.id === firstItem.id)?.status).toBe('archived');
+    expect(activeLearningItems(regenerated)).toHaveLength(1);
+    expect(regenerated.learningItems.length).toBeGreaterThan(activeLearningItems(regenerated).length);
   });
 });

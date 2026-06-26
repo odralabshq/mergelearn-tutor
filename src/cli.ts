@@ -6,7 +6,7 @@ import { enrichLearningItems, renderEnrichmentComparison } from './core/enrichme
 import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
 import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
-import { mergeLearningState, recordAnswer } from './core/planner.js';
+import { generateCardBatch, mergeLearningState, recordAnswer } from './core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from './core/preferences.js';
 import { createOutboundPreview, loadPrivacyConfig, renderOutboundPreview, savePrivacyConfig, type PrivacyConfig, type PrivacyProvider } from './core/privacy.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderProgress, renderReview, renderToday, stateSummary } from './core/render.js';
@@ -95,6 +95,27 @@ program.command('review')
   .option('-n, --count <count>', 'number of cards', '5')
   .action(async (options: { repo: string; count: string }) => {
     process.stdout.write(renderReview(await loadState(options.repo), Number.parseInt(options.count, 10)));
+  });
+
+const cardsCommand = program.command('cards')
+  .description('Manage generated flashcard batches');
+
+cardsCommand.command('generate')
+  .description('Generate more active cards or regenerate the current active queue')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('-n, --count <count>', 'number of cards to generate', '5')
+  .option('--mode <mode>', 'more or regenerate', 'more')
+  .option('--reason <text>', 'optional generation note')
+  .action(async (options: { repo: string; count: string; mode: string; reason?: string }) => {
+    const mode = options.mode === 'regenerate' ? 'regenerate' : 'more';
+    const next = generateCardBatch(await loadState(options.repo), await loadPreferences(options.repo), {
+      count: Number.parseInt(options.count, 10),
+      mode,
+      reason: options.reason,
+    });
+    await saveState(options.repo, next);
+    const lastBatch = next.cardBatches.at(-1)!;
+    process.stdout.write(`Generated ${lastBatch.itemIds.length} cards in ${lastBatch.id}. Archived ${lastBatch.archivedItemIds.length}.\n`);
   });
 
 program.command('profile')

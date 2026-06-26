@@ -12,6 +12,9 @@ export type ConceptKind =
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 export type LearningItemType = 'concept_card' | 'explain_back' | 'trace_flow' | 'spot_risk' | 'compare_pattern' | 'spaced_review';
 export type QuestionPlane = 'language_mechanics' | 'local_behavior' | 'file_role' | 'architecture_flow' | 'risk_and_tests' | 'repo_domain';
+export type LearningItemStatus = 'active' | 'archived';
+export type LearningItemSource = 'ingest' | 'manual_generate' | 'regenerate';
+export type CardBatchMode = 'initial' | 'more' | 'regenerate';
 export type ReviewEventType = 'shown' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 export type ManualRatingTargetType = 'concept' | 'card';
@@ -97,6 +100,22 @@ export type LearningItem = {
   evidence: EvidenceRef[];
   difficulty: Difficulty;
   createdAt: string;
+  status: LearningItemStatus;
+  batchId?: string;
+  generation: number;
+  source: LearningItemSource;
+  archivedAt?: string;
+  supersededBy?: string;
+};
+
+export type CardBatch = {
+  id: string;
+  mode: CardBatchMode;
+  requestedCount: number;
+  itemIds: string[];
+  archivedItemIds: string[];
+  createdAt: string;
+  reason?: string;
 };
 
 export type LearningEvent = {
@@ -145,6 +164,7 @@ export type TutorState = {
   concepts: Concept[];
   conceptStates: ConceptState[];
   learningItems: LearningItem[];
+  cardBatches: CardBatch[];
   learningEvents: LearningEvent[];
   corrections: Correction[];
   manualRatings: ManualRating[];

@@ -25,6 +25,7 @@ export function createEmptyState(repoPath: string, goals: string[] = []): TutorS
     concepts: [],
     conceptStates: [],
     learningItems: [],
+    cardBatches: [],
     learningEvents: [],
     corrections: [],
     manualRatings: [],
@@ -38,6 +39,7 @@ function normalizeState(state: TutorState): TutorState {
     concepts: state.concepts ?? [],
     conceptStates: state.conceptStates ?? [],
     learningItems: (state.learningItems ?? []).map(normalizeLearningItem),
+    cardBatches: state.cardBatches ?? [],
     learningEvents: state.learningEvents ?? [],
     corrections: state.corrections ?? [],
     manualRatings: state.manualRatings ?? [],
@@ -58,6 +60,9 @@ function normalizeLearningItem(item: LearningItem): LearningItem {
     questionPlane,
     snippet,
     explanationMarkdown: item.explanationMarkdown ?? 'Read the snippet carefully, identify the behavior, then connect it to the concept on this card.',
+    status: item.status ?? 'active',
+    generation: item.generation ?? 1,
+    source: item.source ?? 'ingest',
   };
 }
 

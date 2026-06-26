@@ -30,6 +30,7 @@ The page shows snippet-first cards with:
 - revealable explanation if the learner gets stuck
 - explain-back text box
 - action buttons
+- queue controls to generate more cards or regenerate the active queue
 
 Available actions:
 
@@ -54,6 +55,7 @@ GET  /api/state
 GET  /api/progress
 GET  /api/preferences
 PUT  /api/preferences
+POST /api/cards/generate
 POST /answer
 POST /feedback
 POST /correct
@@ -75,6 +77,10 @@ Example payloads:
 
 ```json
 {"review":{"enabledPlanes":["local_behavior","risk_and_tests"],"snippetLineCount":12}}
+```
+
+```json
+{"count":5,"mode":"regenerate","reason":"need a fresh review queue"}
 ```
 
 The `/api/*` endpoints intentionally provide a stable control surface for CLI, website, and future LLM-driven customization.

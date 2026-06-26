@@ -158,3 +158,27 @@ npm test -- --run tests/core/preferences.test.ts tests/core/progress.test.ts tes
 npm test
 npm run build
 ```
+
+## 2026-06-27 Batch 12
+
+- Added persisted card batches and active/archived lifecycle metadata for generated flashcards.
+- Added `mergelearn-tutor cards generate --count N --mode more|regenerate`.
+- Added `POST /api/cards/generate` plus website “Generate 5 more” and “Regenerate 5” controls.
+- Preserved history by archiving/superseding old active cards instead of deleting learning events, answers, or ratings.
+- Added reusable diff-like snippet rendering with line numbers and add/delete/context styling.
+- Applied diff snippets to the local review website and static dashboard.
+- Redesigned the review website with a hero, queue toolbar, batch stats, polished cards, and stronger visual hierarchy.
+- Ran screenshot iteration: baseline screenshot, redesigned screenshot, duplicate-heading fix, final screenshot, and browser console check.
+- Dogfooded on `/tmp/mergelearn-live-demo`: CLI generation, API generation, regenerate archive counts, pages, preferences, progress, and dashboard.
+
+Verified:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run eval
+npm run smoke
+npm run smoke:package
+npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-batch12-fixtures
+```

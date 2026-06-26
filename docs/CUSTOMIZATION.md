@@ -62,6 +62,7 @@ GET  /api/state
 GET  /api/progress
 GET  /api/preferences
 PUT  /api/preferences
+POST /api/cards/generate
 GET  /preferences
 POST /answer
 POST /feedback
@@ -69,6 +70,8 @@ POST /correct
 ```
 
 `PUT /api/preferences` accepts partial preferences and normalizes invalid values fail-closed to safe defaults.
+
+`POST /api/cards/generate` accepts `{ "count": 5, "mode": "more" }` or `{ "count": 5, "mode": "regenerate" }`. Regeneration archives old active cards instead of deleting them, so learning events and ratings remain attached to historical card IDs.
 
 ## LLM customization stance
 

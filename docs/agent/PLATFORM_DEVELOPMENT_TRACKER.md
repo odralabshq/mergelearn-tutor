@@ -39,10 +39,11 @@ Escalate via Telegram if needed:
 10. Batch 9: packaging/public beta readiness. Implemented locally; public release blocked on human name/license/distribution decisions.
 11. Batch 10: manual rating persistence and quality feedback loop. Implemented.
 12. Batch 11: snippet-first learning UX, preferences onboarding, and progress map. Implemented.
+13. Batch 12: flashcard generation lifecycle, diff snippets, and website polish. Implemented.
 
 ## Active slice
 
-Batch 11 snippet-first learning UX is implemented and locally dogfooded. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
+Batch 12 flashcard generation and website polish is implemented and locally dogfooded. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
 
 ## Verification baseline
 
@@ -60,14 +61,14 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 11 changed the primary UX from concept-first questions to snippet-first code reading:
+Batch 12 made the website and card lifecycle more product-ready:
 
-- learning cards now include `questionPlane`, `snippet`, and `explanationMarkdown`
-- `today` and `review` show the code snippet path before the question
-- `.skilltrace/preferences.json` configures enabled question planes, snippet length, and explanation defaults
-- `mergelearn-tutor preferences show/set` and `mergelearn-tutor progress` were added
-- the local website now has snippet-first review cards, `/progress`, `/preferences`, and JSON endpoints for state/progress/preferences
-- the dashboard now includes snippet-first cards plus a progress map with hierarchy and SVG graph
-- dogfood on a fresh demo repo and `/home/adam/mergeLearn` verified snippets, progress, preferences API/page, and scratch cleanup
+- card batches are persisted in state with active/archived lifecycle metadata
+- `mergelearn-tutor cards generate --mode more|regenerate` creates fresh cards without deleting history
+- `/api/cards/generate` and website buttons expose Generate 5 more / Regenerate 5
+- session and dashboard snippets now render as diff-like blocks with line numbers and add/delete coloring
+- the review website was redesigned with hero, queue toolbar, stats, polished cards, and responsive layout
+- screenshot iteration removed a duplicate heading and verified the final layout had no browser console errors
+- dogfood on `/tmp/mergelearn-live-demo` verified CLI generation, API generation, archive counts, pages, and dashboard output
 
-Next planned slice: polish onboarding persistence/ranking from user feedback, or add richer graph interactivity with a frontend graph library if the static graph proves insufficient. Public beta/publish still requires human decisions first.
+Next planned slice: optional card-history browsing, keyboard shortcuts, or richer graph interactivity. Public beta/publish still requires human decisions first.

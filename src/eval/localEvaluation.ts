@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import { extractConcepts } from '../core/concepts.js';
 import { collectCommits } from '../core/git.js';
-import { mergeLearningState } from '../core/planner.js';
+import { activeLearningItems, mergeLearningState } from '../core/planner.js';
 import { createEmptyState } from '../core/store.js';
 
 const execFileAsync = promisify(execFile);
@@ -40,8 +40,9 @@ async function main(): Promise<void> {
     const hasAuth = concepts.some((concept) => concept.id === 'security.auth_boundary');
     const hasUnion = concepts.some((concept) => concept.id === 'typescript.union_types');
     const hasTesting = concepts.some((concept) => concept.id === 'testing.behavior_tests');
-    const passed = useful.length >= 4 && state.learningItems.length >= 3 && hasAuth && hasUnion && hasTesting;
-    process.stdout.write(`# MergeLearn Tutor Local Evaluation\n\nResult: ${passed ? 'PASS' : 'FAIL'}\n\nConcepts: ${concepts.length}\nLearning cards: ${state.learningItems.length}\nAuth detected: ${hasAuth}\nUnion detected: ${hasUnion}\nTesting detected: ${hasTesting}\n`);
+    const activeCards = activeLearningItems(state);
+    const passed = useful.length >= 4 && activeCards.length >= 3 && hasAuth && hasUnion && hasTesting;
+    process.stdout.write(`# MergeLearn Tutor Local Evaluation\n\nResult: ${passed ? 'PASS' : 'FAIL'}\n\nConcepts: ${concepts.length}\nLearning cards: ${activeCards.length}\nAuth detected: ${hasAuth}\nUnion detected: ${hasUnion}\nTesting detected: ${hasTesting}\n`);
     if (!passed) process.exitCode = 1;
   } finally {
     await rm(repo, { recursive: true, force: true });

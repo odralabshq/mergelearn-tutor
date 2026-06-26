@@ -1,5 +1,5 @@
 import type { Concept, ConceptState, TutorState } from './types.js';
-import { priorityScore } from './planner.js';
+import { activeLearningItems, priorityScore } from './planner.js';
 import { buildProgressGraph } from './progress.js';
 
 function conceptState(state: TutorState, conceptId: string): ConceptState | undefined {
@@ -7,7 +7,7 @@ function conceptState(state: TutorState, conceptId: string): ConceptState | unde
 }
 
 export function renderToday(state: TutorState, count = 5): string {
-  const items = state.learningItems.slice(0, count);
+  const items = activeLearningItems(state).slice(0, count);
   if (items.length === 0) return 'No learning cards yet. Run `mergelearn-tutor ingest --repo <path>` first.\n';
   const lines = ["Today's 5-minute review", ''];
   items.forEach((item, index) => {
@@ -24,7 +24,7 @@ export function renderToday(state: TutorState, count = 5): string {
 }
 
 export function renderReview(state: TutorState, count = 5): string {
-  const items = state.learningItems.slice(0, count);
+  const items = activeLearningItems(state).slice(0, count);
   return `${items.map((item, index) => `## Card ${index + 1}: ${item.title}\n\nQuestion plane: ${item.questionPlane}\n\nSnippet from \`${item.snippet.path}\`:\n\n\`\`\`${item.snippet.language ?? ''}\n${item.snippet.code}\n\`\`\`\n\nQuestion: ${item.prompt}\n\nExplanation if stuck:\n${item.explanationMarkdown}\n\nExpected focus:\n${item.expectedFocus.map((focus) => `- ${focus}`).join('\n')}`).join('\n\n---\n\n')}\n`;
 }
 
@@ -78,5 +78,7 @@ function safeId(value: string): string {
 }
 
 export function stateSummary(state: TutorState): string {
-  return `Ingested ${state.artifacts.length} commits, ${state.concepts.length} concepts, ${state.learningItems.length} learning cards.`;
+  const active = activeLearningItems(state).length;
+  const archived = state.learningItems.filter((item) => item.status === 'archived').length;
+  return `Ingested ${state.artifacts.length} commits, ${state.concepts.length} concepts, ${active} active learning cards (${archived} archived).`;
 }

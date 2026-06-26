@@ -1,7 +1,7 @@
 import { extractConcepts } from '../core/concepts.js';
 import { enrichLearningItems } from '../core/enrichment.js';
 import { collectCommits } from '../core/git.js';
-import { mergeLearningState } from '../core/planner.js';
+import { activeLearningItems, mergeLearningState } from '../core/planner.js';
 import { createEmptyState } from '../core/store.js';
 import type { EvaluationAggregate, EvaluatedRepo, EvaluationRepoSpec, EvaluationRun } from './types.js';
 
@@ -24,7 +24,8 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
     grounded: concept.evidence.length > 0 && concept.evidence.every((item) => item.path.length > 0),
     expected: expected.has(concept.id),
   }));
-  const cardFindings = state.learningItems.map((item) => ({
+  const activeCards = activeLearningItems(state);
+  const cardFindings = activeCards.map((item) => ({
     id: item.id,
     title: item.title,
     type: item.type,
@@ -45,7 +46,7 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
     spec,
     artifactCount: artifacts.length,
     conceptCount: concepts.length,
-    cardCount: state.learningItems.length,
+    cardCount: activeCards.length,
     conceptFindings,
     cardFindings,
     expectedConceptHits,
@@ -67,7 +68,7 @@ function evaluateEnrichment(state: ReturnType<typeof mergeLearningState>, provid
     networkUsed: result.networkUsed,
     enrichedCardCount: result.enrichedItems.length,
     provenanceOk: result.enrichedItems.every((item) => item.provenance.truthSource === 'deterministic-card' && item.networkUsed === false),
-    comparisonReady: result.enrichedItems.length === Math.min(state.learningItems.length, 5),
+    comparisonReady: result.enrichedItems.length === Math.min(activeLearningItems(state).length, 5),
   };
 }
 

@@ -1,5 +1,5 @@
 import { DEFAULT_PREFERENCES } from './preferences.js';
-import type { CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, QuestionPlane, TutorState, UserPreferences } from './types.js';
+import type { CardBatchMode, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
 import { applyCorrections, recordReviewEvent } from './events.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
@@ -45,7 +45,8 @@ export function mergeLearningState(state: TutorState, artifacts: CommitArtifact[
     concepts: [...conceptMap.values()].sort((a, b) => a.label.localeCompare(b.label)),
     conceptStates: [...states.values()].sort((a, b) => priorityScore(b) - priorityScore(a)),
   };
-  next.learningItems = generateLearningItems(next, preferences);
+  const activeCount = activeLearningItems(next).length;
+  if (activeCount === 0) return createCardBatch(next, preferences, { count: 12, mode: 'initial', source: 'ingest', reason: 'initial ingest' });
   return applyCorrections(next);
 }
 
@@ -63,6 +64,16 @@ export function priorityScore(state: ConceptState): number {
 
 function conceptById(state: TutorState, conceptId: string): Concept | undefined {
   return state.concepts.find((concept) => concept.id === conceptId);
+}
+
+export type GenerateCardBatchOptions = {
+  count?: number;
+  mode?: Exclude<CardBatchMode, 'initial'>;
+  reason?: string;
+};
+
+export function activeLearningItems(state: TutorState): LearningItem[] {
+  return state.learningItems.filter((item) => item.status !== 'archived');
 }
 
 export function topDueConcepts(state: TutorState, count = 5): Concept[] {
@@ -152,14 +163,52 @@ function languageForPath(path: string): string | undefined {
   return undefined;
 }
 
-export function generateLearningItems(state: TutorState, preferences: UserPreferences = DEFAULT_PREFERENCES): LearningItem[] {
+type CreateCardBatchInput = {
+  count: number;
+  mode: CardBatchMode;
+  source: LearningItemSource;
+  reason?: string;
+};
+
+function rotatePlane(concept: Concept, preferences: UserPreferences, generation: number): QuestionPlane {
+  const enabled = preferences.review.enabledPlanes.length ? preferences.review.enabledPlanes : [preferences.review.defaultPlane];
+  const preferred = planeFor(concept, preferences);
+  const start = Math.max(0, enabled.indexOf(preferred));
+  return enabled[(start + generation - 1) % enabled.length] ?? preferred;
+}
+
+export function createCardBatch(state: TutorState, preferences: UserPreferences, input: CreateCardBatchInput): TutorState {
   const now = nowIso();
-  return topDueConcepts(state, 12).map((concept) => {
+  const batchId = stableId('batch', [now, input.mode, String((state.cardBatches ?? []).length + 1)]);
+  const active = activeLearningItems(state);
+  const archivedIds = input.mode === 'regenerate' ? active.map((item) => item.id) : [];
+  const generation = (state.cardBatches ?? []).length + 1;
+  const baseItems = state.learningItems.map((item) => archivedIds.includes(item.id) ? { ...item, status: 'archived' as const, archivedAt: now, supersededBy: batchId } : item);
+  const workingState = { ...state, learningItems: baseItems };
+  const items = buildLearningItems(workingState, preferences, input.count, batchId, generation, input.source, now);
+  const next = {
+    ...workingState,
+    learningItems: [...baseItems, ...items],
+    cardBatches: [...(state.cardBatches ?? []), { id: batchId, mode: input.mode, requestedCount: input.count, itemIds: items.map((item) => item.id), archivedItemIds: archivedIds, createdAt: now, reason: input.reason }],
+  };
+  return applyCorrections(next);
+}
+
+export function generateCardBatch(state: TutorState, preferences: UserPreferences = DEFAULT_PREFERENCES, options: GenerateCardBatchOptions = {}): TutorState {
+  return createCardBatch(state, preferences, { count: options.count ?? 5, mode: options.mode ?? 'more', source: options.mode === 'regenerate' ? 'regenerate' : 'manual_generate', reason: options.reason });
+}
+
+export function generateLearningItems(state: TutorState, preferences: UserPreferences = DEFAULT_PREFERENCES): LearningItem[] {
+  return buildLearningItems(state, preferences, 12, stableId('batch', ['compat', String(state.learningItems.length)]), (state.cardBatches ?? []).length + 1, 'ingest', nowIso());
+}
+
+function buildLearningItems(state: TutorState, preferences: UserPreferences, count: number, batchId: string, generation: number, source: LearningItemSource, now: string): LearningItem[] {
+  return topDueConcepts(state, Math.max(1, count)).map((concept) => {
     const conceptState = state.conceptStates.find((candidate) => candidate.conceptId === concept.id);
-    const questionPlane = planeFor(concept, preferences);
+    const questionPlane = rotatePlane(concept, preferences, generation);
     const snippet = snippetFor(concept, preferences);
     return {
-      id: stableId('item', [concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane]),
+      id: stableId('item', [batchId, concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane, String(generation)]),
       conceptId: concept.id,
       type: itemTypeFor(concept),
       questionPlane,
@@ -173,6 +222,10 @@ export function generateLearningItems(state: TutorState, preferences: UserPrefer
       evidence: rankedEvidence(concept).slice(0, 5),
       difficulty: concept.difficulty,
       createdAt: now,
+      status: 'active',
+      batchId,
+      generation,
+      source,
     };
   });
 }

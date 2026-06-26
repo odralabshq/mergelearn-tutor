@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
+import { diffSnippetCss, renderDiffSnippetHtml } from '../core/diffView.js';
 import { addCorrection, recordReviewEvent } from '../core/events.js';
-import { recordAnswer } from '../core/planner.js';
+import { activeLearningItems, generateCardBatch, recordAnswer } from '../core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from '../core/preferences.js';
 import { buildProgressGraph } from '../core/progress.js';
 import { renderProgress, renderToday } from '../core/render.js';
@@ -38,6 +39,14 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
   if (method === 'GET' && url.pathname === '/api/progress') return sendJson(res, 200, buildProgressGraph(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/preferences') return sendJson(res, 200, await loadPreferences(repoPath));
+  if (method === 'POST' && url.pathname === '/api/cards/generate') {
+    const body = await readJson(req) as { count?: number; mode?: string; reason?: string };
+    const mode = body.mode === 'regenerate' ? 'regenerate' : 'more';
+    const next = generateCardBatch(await loadState(repoPath), await loadPreferences(repoPath), { count: body.count ?? 5, mode, reason: body.reason });
+    await saveState(repoPath, next);
+    const batch = next.cardBatches.at(-1)!;
+    return sendJson(res, 200, { ok: true, batch, state: summarizeState(next) });
+  }
   if (method === 'PUT' && url.pathname === '/api/preferences') {
     const body = await readJson(req) as Partial<UserPreferences>;
     const next = normalizePreferences(body);
@@ -69,19 +78,24 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
 }
 
 function summarizeState(state: TutorState): Record<string, number> {
-  return { concepts: state.concepts.length, cards: state.learningItems.length, events: state.learningEvents.length, corrections: state.corrections.length };
+  const active = activeLearningItems(state).length;
+  const archived = state.learningItems.filter((item) => item.status === 'archived').length;
+  return { concepts: state.concepts.length, cards: state.learningItems.length, activeCards: active, archivedCards: archived, batches: state.cardBatches.length, events: state.learningEvents.length, corrections: state.corrections.length };
 }
 
 function renderSessionHtml(state: TutorState, preferences: UserPreferences): string {
-  const cards = state.learningItems.slice(0, 8).map((item, index) => `
+  const active = activeLearningItems(state);
+  const archived = state.learningItems.filter((item) => item.status === 'archived').length;
+  const latestBatch = state.cardBatches.at(-1);
+  const cards = active.slice(0, 8).map((item, index) => `
     <article class="card" data-item="${escapeHtml(item.id)}">
-      <p class="eyebrow">Card ${index + 1} · ${escapeHtml(item.questionPlane.replace(/_/g, ' '))} · ${escapeHtml(item.difficulty)}</p>
+      <div class="card-topline"><span>Card ${index + 1}</span><span>${escapeHtml(item.questionPlane.replace(/_/g, ' '))}</span><span>${escapeHtml(item.difficulty)}</span></div>
       <h2>${escapeHtml(item.title)}</h2>
       <p class="why">${escapeHtml(item.whyShown ?? 'Shown from recent repo evidence.')}</p>
-      <p class="path">Snippet from <code>${escapeHtml(item.snippet.path)}</code></p>
-      <pre><code>${escapeHtml(item.snippet.code)}</code></pre>
-      <p><strong>Question:</strong> ${escapeHtml(item.prompt)}</p>
-      <details ${preferences.review.showExplanationsByDefault ? 'open' : ''}><summary>Explanation if stuck</summary><p>${escapeHtml(item.explanationMarkdown)}</p></details>
+      <div class="snippet-head"><span>${escapeHtml(item.snippet.path)}</span><span>generation ${item.generation}</span></div>
+      ${renderDiffSnippetHtml(item.snippet.code)}
+      <section class="question-box"><p class="label">Question</p><p>${escapeHtml(item.prompt)}</p></section>
+      <details class="hint" ${preferences.review.showExplanationsByDefault ? 'open' : ''}><summary>Explanation if stuck</summary><p>${escapeHtml(item.explanationMarkdown)}</p></details>
       <textarea placeholder="Explain what is happening in the snippet"></textarea>
       <div class="actions">
         <button data-action="answer" data-correct="true">Save answer</button>
@@ -90,7 +104,9 @@ function renderSessionHtml(state: TutorState, preferences: UserPreferences): str
         <button data-action="feedback" data-event="marked_useful">Useful</button>
       </div>
     </article>`).join('\n');
-  return pageShell('MergeLearn Tutor Review', `<p><a href="/preferences">Question preferences</a> · <a href="/progress">Progress map</a> · <a href="/api/preferences">Preferences JSON</a></p><p>Answer from the code snippet first. Everything stays local in <code>.skilltrace/state.json</code>.</p>${cards || '<p>No cards yet. Run ingest first.</p>'}`, renderToday(state, 3).split('\n')[0] ?? 'Review session');
+  const hero = `<section class="hero"><div><p class="eyebrow">Local code learning queue</p><h1>Review your recent code as flashcards</h1><p>Generate focused snippets, answer from the diff, and keep your history local.</p></div><div class="hero-card"><strong>${active.length}</strong><span>active cards</span><strong>${archived}</strong><span>archived cards</span></div></section>`;
+  const controls = `<section class="toolbar"><div><strong>Card queue</strong><p>${latestBatch ? `Latest batch ${escapeHtml(latestBatch.id)} · ${latestBatch.mode}` : 'No generated batch yet.'}</p></div><div><button data-action="generate-cards" data-mode="more">Generate 5 more</button><button data-action="generate-cards" data-mode="regenerate">Regenerate 5</button><a class="ghost" href="/preferences">Preferences</a><a class="ghost" href="/progress">Progress</a></div></section>`;
+  return pageShell('MergeLearn Tutor Review', `${hero}${controls}<section class="review-grid">${cards || '<p>No cards yet. Run ingest first.</p>'}</section>`, 'Ready');
 }
 
 function renderProgressHtml(state: TutorState): string {
@@ -100,7 +116,7 @@ function renderProgressHtml(state: TutorState): string {
     return `<section class="panel"><h2>${escapeHtml(group.label)}</h2><ul>${children.map((child) => `<li>${escapeHtml(child!.label)} — ${Math.round(child!.mastery * 100)}% mastery, ${escapeHtml(child!.status.replace(/_/g, ' '))}</li>`).join('')}</ul></section>`;
   }).join('');
   const stats = `<div class="stats"><div>${graph.summary.new}<span>new</span></div><div>${graph.summary.learning}<span>learning</span></div><div>${graph.summary.confident}<span>confident</span></div><div>${graph.summary.needs_review}<span>needs review</span></div></div>`;
-  return pageShell('MergeLearn Tutor Progress', `<p><a href="/">Review cards</a> · <a href="/preferences">Question preferences</a> · <a href="/api/progress">Progress JSON</a></p>${stats}<pre>${escapeHtml(renderProgress(state))}</pre>${groups}`, 'Progress map');
+  return pageShell('MergeLearn Tutor Progress', `<section class="hero"><div><p class="eyebrow">Learning map</p><h1>Progress map</h1><p>Track what you have seen, what needs review, and which concepts are becoming confident.</p></div></section><p><a href="/">Review cards</a> · <a href="/preferences">Question preferences</a> · <a href="/api/progress">Progress JSON</a></p>${stats}<pre>${escapeHtml(renderProgress(state))}</pre>${groups}`, 'Progress map');
 }
 
 function renderPreferencesHtml(preferences: UserPreferences): string {
@@ -113,20 +129,20 @@ function renderPreferencesHtml(preferences: UserPreferences): string {
     ['repo_domain', 'Do you want repo-specific vocabulary questions?', 'Example: What does this project mean by this term here?'],
   ] as const;
   const checks = options.map(([plane, label, example]) => `<label class="choice"><input type="checkbox" data-plane="${plane}" ${preferences.review.enabledPlanes.includes(plane) ? 'checked' : ''} /><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(example)}</small></span></label>`).join('');
-  const body = `<p><a href="/">Review cards</a> · <a href="/progress">Progress map</a></p><p>Pick the kinds of questions you want to receive. Keep this short: choose the categories that would actually help you read your code better.</p><section class="panel"><div class="choices">${checks}</div><label>Snippet lines <input id="snippet-lines" type="number" min="4" max="40" value="${preferences.review.snippetLineCount}" /></label><label class="choice"><input id="show-explanations" type="checkbox" ${preferences.review.showExplanationsByDefault ? 'checked' : ''} /><span><strong>Show explanations by default</strong><small>Useful while learning a new language; turn off for active recall.</small></span></label><button data-action="save-preferences">Save preferences</button></section>`;
+  const body = `<section class="hero"><div><p class="eyebrow">Personalize the tutor</p><h1>Question preferences</h1><p>Choose the question categories that match how you want to learn from your code.</p></div></section><p><a href="/">Review cards</a> · <a href="/progress">Progress map</a></p><p>Pick the kinds of questions you want to receive. Keep this short: choose the categories that would actually help you read your code better.</p><section class="panel"><div class="choices">${checks}</div><label>Snippet lines <input id="snippet-lines" type="number" min="4" max="40" value="${preferences.review.snippetLineCount}" /></label><label class="choice"><input id="show-explanations" type="checkbox" ${preferences.review.showExplanationsByDefault ? 'checked' : ''} /><span><strong>Show explanations by default</strong><small>Useful while learning a new language; turn off for active recall.</small></span></label><button data-action="save-preferences">Save preferences</button></section>`;
   return pageShell('MergeLearn Tutor Preferences', body, 'Question preferences');
 }
 
 function pageShell(title: string, body: string, status: string): string {
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><style>${style()}</style></head><body><div class="status" id="status">${escapeHtml(status)}</div><main><h1>${escapeHtml(title)}</h1>${body}</main><script>${script()}</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><style>${style()}</style></head><body><div class="status" id="status">${escapeHtml(status)}</div><main>${body}</main><script>${script()}</script></body></html>`;
 }
 
 function style(): string {
-  return 'body{font-family:Inter,system-ui,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}main{max-width:980px;margin:0 auto;padding:32px}a{color:#7dd3fc}.card,.panel{background:#111827;border:1px solid #334155;border-radius:16px;padding:22px;margin:18px 0;box-shadow:0 10px 30px #0004}.eyebrow{color:#93c5fd;text-transform:uppercase;font-size:12px;letter-spacing:.08em}.why,.path{color:#cbd5e1}pre{white-space:pre-wrap;background:#020617;color:#e2e8f0;padding:14px;border-radius:12px;overflow:auto;border:1px solid #334155}textarea{width:100%;min-height:90px;border-radius:10px;border:1px solid #475569;background:#020617;color:#e2e8f0;padding:12px}button{margin:8px 8px 0 0;border:0;border-radius:999px;padding:10px 14px;background:#38bdf8;color:#082f49;font-weight:700}button:nth-child(n+2){background:#1e293b;color:#e2e8f0;border:1px solid #475569}input[type=number]{margin-left:8px;border-radius:8px;border:1px solid #475569;background:#020617;color:#e2e8f0;padding:8px}code{color:#bae6fd}.status{position:sticky;top:0;background:#020617;padding:10px;border-bottom:1px solid #334155}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stats div{background:#111827;border:1px solid #334155;border-radius:14px;padding:16px;font-size:28px;font-weight:800}.stats span{display:block;font-size:12px;color:#cbd5e1;font-weight:400}.choices{display:grid;gap:10px;margin:16px 0}.choice{display:flex;gap:12px;align-items:flex-start;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:12px}.choice small{display:block;color:#cbd5e1;margin-top:4px}@media(max-width:800px){.stats{grid-template-columns:1fr 1fr}}';
+  return '*,*:before,*:after{box-sizing:border-box}body{font-family:Inter,ui-sans-serif,system-ui,sans-serif;margin:0;background:radial-gradient(circle at top left,#1e3a8a33,transparent 34rem),linear-gradient(180deg,#07111f,#0b1020 44%,#0a0f1d);color:#e2e8f0}main{max-width:1160px;margin:0 auto;padding:34px 24px 80px}a{color:#7dd3fc}.status{position:sticky;top:0;z-index:5;background:#020617cc;backdrop-filter:blur(16px);padding:10px 24px;border-bottom:1px solid #1e293b;color:#bae6fd}.hero{display:grid;grid-template-columns:minmax(0,1fr) 210px;gap:24px;align-items:stretch;margin:22px 0 20px;padding:30px;border:1px solid #263854;border-radius:28px;background:linear-gradient(135deg,#12203a,#0f172a 70%);box-shadow:0 24px 70px #0007}.hero h1{font-size:44px;line-height:1.02;margin:4px 0 12px;letter-spacing:-.04em}.hero p{color:#cbd5e1;font-size:17px}.hero-card{border:1px solid #334155;border-radius:22px;background:#02061799;padding:20px;display:grid;align-content:center;gap:5px}.hero-card strong{font-size:38px}.hero-card span{color:#93a4b8}.toolbar{position:sticky;top:42px;z-index:4;display:flex;justify-content:space-between;gap:20px;align-items:center;background:#0f172acc;border:1px solid #334155;border-radius:20px;padding:16px 18px;margin-bottom:18px;backdrop-filter:blur(18px)}.toolbar p{margin:.3rem 0 0;color:#93a4b8}.ghost,button{display:inline-flex;align-items:center;justify-content:center;margin:6px 6px 0 0;border-radius:999px;padding:10px 14px;font-weight:800;text-decoration:none;border:1px solid #3b526f;background:#182337;color:#e2e8f0}button:first-child,.actions button:first-child{background:linear-gradient(135deg,#38bdf8,#22c55e);border:0;color:#03111f}.card,.panel{background:linear-gradient(180deg,#111827,#0f172a);border:1px solid #30415c;border-radius:24px;padding:24px;margin:18px 0;box-shadow:0 16px 50px #0005}.review-grid{display:grid;gap:20px}.card-topline{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.card-topline span,.eyebrow{border:1px solid #315070;background:#0b253d;color:#bae6fd;border-radius:999px;padding:5px 9px;text-transform:uppercase;font-size:11px;font-weight:900;letter-spacing:.08em}.card h2{font-size:26px;letter-spacing:-.02em;margin:0 0 10px}.why,.path{color:#cbd5e1}.snippet-head{display:flex;justify-content:space-between;gap:12px;color:#93c5fd;font-size:13px;font-weight:800;margin-top:16px}.question-box{border:1px solid #334155;border-radius:18px;background:#0b1220;padding:14px 16px;margin:16px 0}.label{margin:0 0 4px;color:#7dd3fc;text-transform:uppercase;font-size:12px;font-weight:900;letter-spacing:.12em}.hint{border-left:3px solid #38bdf8;padding-left:12px;color:#dbeafe}textarea{width:100%;min-height:96px;border-radius:16px;border:1px solid #475569;background:#020617;color:#e2e8f0;padding:14px;margin-top:12px}.actions{display:flex;flex-wrap:wrap;gap:6px}.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.stats div{background:#111827;border:1px solid #334155;border-radius:14px;padding:16px;font-size:28px;font-weight:800}.stats span{display:block;font-size:12px;color:#cbd5e1;font-weight:400}.choices{display:grid;gap:10px;margin:16px 0}.choice{display:flex;gap:12px;align-items:flex-start;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:12px}.choice small{display:block;color:#cbd5e1;margin-top:4px}input[type=number]{margin-left:8px;border-radius:8px;border:1px solid #475569;background:#020617;color:#e2e8f0;padding:8px}pre{white-space:pre-wrap;background:#020617;padding:14px;border-radius:12px;overflow:auto}code{color:#bae6fd}' + diffSnippetCss() + '@media(max-width:800px){.hero,.stats{grid-template-columns:1fr}.toolbar{position:static;display:block}.hero h1{font-size:34px}}';
 }
 
 function script(): string {
-  return "async function post(path, body){const res=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const json=await res.json();document.getElementById('status').textContent=json.ok?'Saved locally':json.error;return json;}async function put(path, body){const res=await fetch(path,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const json=await res.json();document.getElementById('status').textContent=json.ok?'Preferences saved':'Could not save preferences';return json;}document.addEventListener('click',async(event)=>{const button=event.target.closest('button');if(!button)return;if(button.dataset.action==='save-preferences'){const enabledPlanes=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippetLineCount=Number(document.getElementById('snippet-lines').value||14);const showExplanationsByDefault=document.getElementById('show-explanations').checked;await put('/api/preferences',{review:{enabledPlanes,snippetLineCount,showExplanationsByDefault}});return;}const card=button.closest('.card');if(!card)return;const itemId=card.dataset.item;if(button.dataset.action==='answer'){await post('/answer',{itemId,answer:card.querySelector('textarea').value,correct:button.dataset.correct==='true'});}else{await post('/feedback',{itemId,eventType:button.dataset.event,note:'from local review session'});}});";
+  return "async function post(path, body){const res=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const json=await res.json();document.getElementById('status').textContent=json.ok?'Saved locally':json.error||'Request failed';return json;}async function put(path, body){const res=await fetch(path,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const json=await res.json();document.getElementById('status').textContent=json.ok?'Preferences saved':'Could not save preferences';return json;}document.addEventListener('click',async(event)=>{const button=event.target.closest('button');if(!button)return;if(button.dataset.action==='generate-cards'){button.disabled=true;document.getElementById('status').textContent='Generating cards...';const json=await post('/api/cards/generate',{count:5,mode:button.dataset.mode,reason:'website button'});if(json.ok) location.reload(); return;}if(button.dataset.action==='save-preferences'){const enabledPlanes=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippetLineCount=Number(document.getElementById('snippet-lines').value||14);const showExplanationsByDefault=document.getElementById('show-explanations').checked;await put('/api/preferences',{review:{enabledPlanes,snippetLineCount,showExplanationsByDefault}});return;}const card=button.closest('.card');if(!card)return;const itemId=card.dataset.item;if(button.dataset.action==='answer'){await post('/answer',{itemId,answer:card.querySelector('textarea').value,correct:button.dataset.correct==='true'});}else{await post('/feedback',{itemId,eventType:button.dataset.event,note:'from local review session'});}});";
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {

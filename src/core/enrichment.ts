@@ -1,5 +1,6 @@
 import type { LearningItem, TutorState } from './types.js';
 import { createOutboundPreview, DEFAULT_PRIVACY_CONFIG, type OutboundPreview, type PrivacyConfig, type PrivacyProvider } from './privacy.js';
+import { activeLearningItems } from './planner.js';
 
 export type EnrichmentProvider = Extract<PrivacyProvider, 'fake' | 'local'>;
 
@@ -38,7 +39,7 @@ export type EnrichmentResult = {
 export function enrichLearningItems(state: TutorState, config: PrivacyConfig = DEFAULT_PRIVACY_CONFIG, options: EnrichmentOptions = {}): EnrichmentResult {
   const provider = parseEnrichmentProvider(options.provider ?? 'fake');
   const preview = createOutboundPreview(state, config, { provider, includeSnippets: options.includeSnippets, limit: options.limit });
-  const deterministicItems = state.learningItems.slice(0, options.limit ?? 5);
+  const deterministicItems = activeLearningItems(state).slice(0, options.limit ?? 5);
   return {
     version: 1,
     provider,
