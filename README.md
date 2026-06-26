@@ -13,7 +13,7 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 - Local CLI.
 - Local transparent JSON state in `.skilltrace/state.json`.
 - Deterministic git-history ingestion.
-- TypeScript/repo concept extraction.
+- Hybrid concept extraction with path/regex rules plus TypeScript AST analysis.
 - Personal concept state and mastery evidence.
 - Daily review cards.
 - Explain-back answer recording.
@@ -86,3 +86,10 @@ npm run build
 npm run eval
 npm run smoke
 ```
+
+## Further docs
+
+- `docs/EVALUATION.md` — evaluation harness and manual rubric.
+- `docs/CORRECTIONS.md` — feedback/correction commands and learner-event behavior.
+- `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer details.
+- `docs/ROADMAP.md` — current platform roadmap.

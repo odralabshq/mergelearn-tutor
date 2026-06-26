@@ -1,4 +1,5 @@
 import { CONCEPT_DEFINITIONS } from './conceptCatalog.js';
+import { analyzeTypeScriptAddedDiff } from './analyzers/typescriptAst.js';
 import type { CommitArtifact, Concept, EvidenceRef } from './types.js';
 import { unique } from './util.js';
 
@@ -51,14 +52,24 @@ function repoDomainConcepts(artifact: CommitArtifact): Concept[] {
 export function extractConcepts(artifacts: CommitArtifact[]): Concept[] {
   const byId = new Map<string, Concept>();
   for (const artifact of artifacts) {
+    const astFindingsByPath = new Map<string, ReturnType<typeof analyzeTypeScriptAddedDiff>>();
+    for (const filePath of artifact.changedFiles) {
+      astFindingsByPath.set(filePath, analyzeTypeScriptAddedDiff(filePath, diffLinesForFile(artifact.diff, filePath)));
+    }
     for (const def of CONCEPT_DEFINITIONS) {
       const evidence: EvidenceRef[] = [];
       for (const filePath of artifact.changedFiles) {
         const fileDiff = diffLinesForFile(artifact.diff, filePath);
+        const astFindings = astFindingsByPath.get(filePath) ?? [];
+        const astConceptIds = new Set(astFindings.map((finding) => finding.conceptId));
         const pathMatched = PATH_HINT_ONLY_CONCEPTS.has(def.id) && def.pathHints.some((pattern) => pattern.test(filePath));
         const diffMatched = def.patterns.some((pattern) => pattern.test(fileDiff));
-        const matched = pathMatched || diffMatched;
-        if (matched) evidence.push({ commit: artifact.externalId, path: filePath, label: def.label, snippet: snippetFor(def.id, fileDiff) });
+        const astMatched = astConceptIds.has(def.id);
+        const matched = pathMatched || diffMatched || astMatched;
+        if (matched) {
+          const astReason = astFindings.find((finding) => finding.conceptId === def.id)?.reason;
+          evidence.push({ commit: artifact.externalId, path: filePath, label: astReason ?? def.label, snippet: snippetFor(def.id, fileDiff) });
+        }
       }
       if (evidence.length === 0) continue;
       const existing = byId.get(def.id);

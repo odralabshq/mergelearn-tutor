@@ -39,3 +39,12 @@ npm run smoke
 - Added reducer and CLI tests.
 - Dogfooded correction flow on `/home/adam/mergeLearn` scratch state and removed the scratch `.skilltrace`.
 - Fixed dogfood UX issue: suppressed concepts now re-sort below active concepts and are removed from future cards.
+
+## 2026-06-26 Batch 3
+
+- Added a TypeScript compiler API analyzer for added diff snippets.
+- Detects interfaces, type aliases, unions, generics, async/await, and React hooks.
+- Integrated AST findings into concept extraction while preserving regex/path fallback.
+- Cached AST findings per changed file so each file is parsed once per artifact.
+- Added analyzer tests and documented the analyzer architecture.
+- Evaluation remained stable: fixture expected concept hit rate 100%, MergeLearn dogfood still produced 48 concepts and 12 cards for 30 recent commits.
