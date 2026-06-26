@@ -1,0 +1,34 @@
+{
+  "name": "mergelearn-tutor",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "cli": "tsx src/cli.ts",
+    "eval": "npm run build && node dist/eval/localEvaluation.js",
+    "smoke": "npm run build && node dist/cli.js --help >/tmp/mergelearn-tutor-help.txt"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "UNLICENSED",
+  "description": "Local-first repo-aware code tutor that turns git history into daily learning cards",
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.25",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  },
+  "type": "module",
+  "bin": {
+    "mergelearn-tutor": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "private": "true"
+}
