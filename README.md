@@ -62,6 +62,7 @@ mergelearn-tutor debt --repo .
 mergelearn-tutor map --repo .
 mergelearn-tutor explain-last-commit --repo .
 mergelearn-tutor dashboard --repo .
+mergelearn-tutor session --repo .
 npm run eval:repos -- --fixtures --repo /path/to/repo --out eval-runs/latest
 ```
 
@@ -93,4 +94,5 @@ npm run smoke
 - `docs/CORRECTIONS.md` — feedback/correction commands and learner-event behavior.
 - `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer details.
 - `docs/CARD_QUALITY.md` — card generation quality rules and dogfood findings.
+- `docs/REVIEW_SESSION.md` — local browser review session and API.
 - `docs/ROADMAP.md` — current platform roadmap.

@@ -58,3 +58,12 @@ npm run smoke
 - Updated `today` output to explain why each card appeared.
 - Added card quality tests and documented card quality rules.
 - Dogfooded on `/home/adam/mergeLearn`; top prompts now point to source/test files and all cards include why-shown metadata.
+
+## 2026-06-26 Batch 5
+
+- Added a local `127.0.0.1` review session server.
+- Added browser HTML surface for top cards with answer and feedback actions.
+- Added local API endpoints: `/`, `/state.json`, `/answer`, `/feedback`, `/correct`.
+- Added `mergelearn-tutor session --repo .` CLI command.
+- Added HTTP integration test for session actions.
+- Dogfooded session server on `/home/adam/mergeLearn` scratch state and removed scratch state afterward.

@@ -8,6 +8,7 @@ import { mergeLearningState, recordAnswer } from './core/planner.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderReview, renderToday, stateSummary } from './core/render.js';
 import { initState, loadState, saveState, statePath } from './core/store.js';
 import { writeDashboard } from './dashboard/html.js';
+import { startReviewServer } from './session/server.js';
 
 const program = new Command();
 
@@ -101,6 +102,15 @@ program.command('dashboard')
   .action(async (options: { repo: string; out: string }) => {
     const output = await writeDashboard(options.repo, await loadState(options.repo), options.out);
     process.stdout.write(`Dashboard: ${output}\n`);
+  });
+
+program.command('session')
+  .description('Start a local interactive review session server')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--port <number>', 'port, or 0 for a random available port', '0')
+  .action(async (options: { repo: string; port: string }) => {
+    const review = await startReviewServer(options.repo, Number.parseInt(options.port, 10));
+    process.stdout.write(`MergeLearn Tutor session: ${review.url}\nPress Ctrl+C to stop.\n`);
   });
 
 program.command('answer')
