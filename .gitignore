@@ -6,3 +6,4 @@ coverage/
 .skilltrace/
 examples/output/
 eval-runs/
+.autoloop/
