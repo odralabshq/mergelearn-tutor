@@ -68,6 +68,7 @@ export type LearningItem = {
   bodyMarkdown: string;
   prompt: string;
   expectedFocus: string[];
+  whyShown?: string;
   evidence: EvidenceRef[];
   difficulty: Difficulty;
   createdAt: string;

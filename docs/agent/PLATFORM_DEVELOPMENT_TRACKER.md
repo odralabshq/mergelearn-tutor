@@ -31,8 +31,8 @@ Escalate via Telegram if needed:
 2. Batch 1: multi-repo evaluation harness and rating rubric. Implemented.
 3. Batch 2: correction and learner-event model. Implemented.
 4. Batch 3: AST-backed TypeScript extraction with evidence ranking. Implemented initial AST analyzer.
-5. Batch 4: improved card generation. Next.
-6. Batch 5: interactive local review session.
+5. Batch 4: improved card generation. Implemented.
+6. Batch 5: interactive local review session. Next.
 7. Batch 6: repo lexicon/concept packs.
 8. Batch 7: privacy boundary and outbound preview.
 9. Batch 8: optional LLM enrichment experiment, only after privacy boundary.
@@ -40,7 +40,7 @@ Escalate via Telegram if needed:
 
 ## Active slice
 
-Batch 3 is implemented and ready for final verification/commit. Next slice after commit: Batch 4 improved card generation.
+Batch 4 is implemented and ready for final verification/commit. Next slice after commit: Batch 5 interactive local review session.
 
 ## Verification baseline
 

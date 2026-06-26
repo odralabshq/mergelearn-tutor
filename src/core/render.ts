@@ -13,6 +13,7 @@ export function renderToday(state: TutorState, count = 5): string {
     const cs = conceptState(state, item.conceptId);
     lines.push(`${index + 1}. ${item.title}`);
     lines.push(`   Type: ${item.type} · difficulty: ${item.difficulty} · mastery: ${Math.round((cs?.masteryEstimate ?? 0) * 100)}%`);
+    if (item.whyShown) lines.push(`   Why: ${item.whyShown}`);
     lines.push(`   Prompt: ${item.prompt}`);
     lines.push('');
   });

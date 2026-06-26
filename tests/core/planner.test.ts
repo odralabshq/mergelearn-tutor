@@ -13,6 +13,29 @@ describe('planner', () => {
     expect(state.conceptStates).toHaveLength(1);
     expect(state.learningItems[0]?.type).toBe('spot_risk');
     expect(state.learningItems[0]?.expectedFocus).toContain('access decision');
+    expect(state.learningItems[0]?.whyShown).toContain('Shown because');
+    expect(state.learningItems[0]?.bodyMarkdown).toContain('Why this card appeared');
+  });
+
+  it('does not generate cards without evidence', () => {
+    const noEvidence = { ...concept, id: 'repo.empty', evidence: [] };
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [noEvidence]);
+    expect(state.concepts).toHaveLength(1);
+    expect(state.learningItems).toHaveLength(0);
+  });
+
+  it('prefers source and test evidence over docs in prompts', () => {
+    const noisyEvidence: Concept = {
+      ...concept,
+      evidence: [
+        { commit: 'abc123', path: 'README.md', label: 'docs' },
+        { commit: 'abc123', path: 'src/auth.ts', label: 'source' },
+        { commit: 'abc123', path: 'tests/auth.test.ts', label: 'test' },
+      ],
+    };
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [noisyEvidence]);
+    expect(state.learningItems[0]?.prompt).toContain('src/auth.ts');
+    expect(state.learningItems[0]?.evidence[0]?.path).toBe('src/auth.ts');
   });
 
   it('records explain-back answers and adjusts mastery', () => {

@@ -48,3 +48,13 @@ npm run smoke
 - Cached AST findings per changed file so each file is parsed once per artifact.
 - Added analyzer tests and documented the analyzer architecture.
 - Evaluation remained stable: fixture expected concept hit rate 100%, MergeLearn dogfood still produced 48 concepts and 12 cards for 30 recent commits.
+
+## 2026-06-26 Batch 4
+
+- Added `whyShown` metadata to learning items.
+- Added no-evidence guard so concepts without evidence cannot generate cards.
+- Improved prompt templates by concept kind.
+- Ranked evidence before prompting so source/test/config files beat README/docs when available.
+- Updated `today` output to explain why each card appeared.
+- Added card quality tests and documented card quality rules.
+- Dogfooded on `/home/adam/mergeLearn`; top prompts now point to source/test files and all cards include why-shown metadata.

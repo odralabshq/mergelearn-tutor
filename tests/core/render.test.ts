@@ -11,7 +11,9 @@ const concept: Concept = { id: 'security.auth_boundary', label: 'Auth boundary',
 describe('renderers', () => {
   it('renders today, debt, and mermaid outputs', () => {
     const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
-    expect(renderToday(state)).toContain("Today's 5-minute review");
+    const today = renderToday(state);
+    expect(today).toContain("Today's 5-minute review");
+    expect(today).toContain('Why: Shown because');
     expect(renderKnowledgeDebt(state)).toContain('Auth boundary');
     expect(renderMermaidMap(state)).toContain('graph TD');
   });

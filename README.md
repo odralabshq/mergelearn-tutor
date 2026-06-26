@@ -92,4 +92,5 @@ npm run smoke
 - `docs/EVALUATION.md` — evaluation harness and manual rubric.
 - `docs/CORRECTIONS.md` — feedback/correction commands and learner-event behavior.
 - `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer details.
+- `docs/CARD_QUALITY.md` — card generation quality rules and dogfood findings.
 - `docs/ROADMAP.md` — current platform roadmap.
