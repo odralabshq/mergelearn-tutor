@@ -35,12 +35,12 @@ Escalate via Telegram if needed:
 6. Batch 5: interactive local review session. Implemented initial local server.
 7. Batch 6: repo lexicon/concept packs. Implemented.
 8. Batch 7: privacy boundary and outbound preview. Implemented.
-9. Batch 8: optional LLM enrichment experiment, only after privacy boundary. Next.
-10. Batch 9: packaging/public beta readiness.
+9. Batch 8: optional LLM enrichment experiment, fake/local only with no network. Implemented.
+10. Batch 9: packaging/public beta readiness. Next.
 
 ## Active slice
 
-Batch 7 privacy boundary and outbound preview is implemented and ready for final verification/commit. Next slice after commit: Batch 8 optional LLM enrichment experiment using fake/local provider only, with no real network.
+Batch 8 optional fake/local enrichment experiment is implemented and ready for final verification/commit. Next slice after commit: Batch 9 packaging/beta readiness docs and clean-clone verification.
 
 ## Verification baseline
 
@@ -58,15 +58,14 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 7 added the privacy boundary and outbound preview:
+Batch 8 added the optional fake/local enrichment experiment:
 
-- offline-by-default `.skilltrace/privacy.json` schema and parser
-- fail-closed outbound guard requiring network enablement, consent, and provider
-- redaction helpers for common secrets, email addresses, custom terms, and user path segments
-- outbound payload preview for future enrichment that sends nothing
-- optional snippet preview with ignore path support
-- CLI commands under `mergelearn-tutor privacy ...`
-- `docs/PRIVACY.md` and README privacy command coverage
-- dogfood on `/home/adam/mergeLearn` confirmed blocked/no-send preview, then scratch `.skilltrace` cleanup
+- `mergelearn-tutor enrich` compares deterministic cards with enriched wording, worked examples, and follow-up questions
+- `src/core/enrichment.ts` keeps deterministic cards as the truth source and labels allowed changes as wording/worked-example/follow-up only
+- fake and local providers are supported; remote provider is rejected in the local-only experiment
+- no network requests are made; enrichment uses the redacted outbound preview payload
+- `npm run eval:repos -- --with-enrichment fake` records enriched card count, no-network status, and provenance checks
+- `docs/ENRICHMENT.md`, README, and roadmap coverage were added
+- dogfood on `/home/adam/mergeLearn` produced two useful A/B enriched card previews and an enriched eval report, then scratch `.skilltrace` cleanup was verified
 
-Next planned slice: Batch 8 optional LLM enrichment experiment with fake/local provider only and no real network.
+Next planned slice: Batch 9 packaging/beta readiness docs and clean-clone verification.

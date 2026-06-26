@@ -12,10 +12,10 @@ Build a fully tested local-first code tutoring platform that helps AI-heavy deve
 
 Recommended next implementation slice:
 
-1. Build the multi-repo evaluation harness.
-2. Add manual card/concept rating rubric.
-3. Dogfood on MergeLearn.
-4. Add correction and learner-event model.
-5. Only then improve extraction and UI.
+1. Finish packaging/beta readiness docs.
+2. Run clean-clone style verification.
+3. Prepare human decision checklist for name, license, and public distribution.
 
-Do not start with a polished dashboard, IDE extension, cloud sync, or LLM grading. The current critical path is truthfulness, correction, and measurable usefulness.
+Completed platform foundations now include evaluation, corrections, AST extraction, improved cards, local review session, repo lexicon, privacy preview, and fake/local no-network enrichment.
+
+Do not start with a polished dashboard, IDE extension, cloud sync, or LLM grading. The current critical path is packaging readiness without weakening the local-first/no-telemetry posture.

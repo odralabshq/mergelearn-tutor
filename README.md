@@ -23,6 +23,7 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 - No target repo code execution.
 - No required LLM calls.
 - Offline privacy config and outbound preview before any optional enrichment.
+- Optional fake/local enrichment experiment that sends no network requests.
 
 ## Quick start
 
@@ -70,7 +71,8 @@ mergelearn-tutor dashboard --repo .
 mergelearn-tutor session --repo .
 mergelearn-tutor privacy init --repo . --ignore-path "secrets/**" --redact "internal-codename"
 mergelearn-tutor privacy preview --repo . --provider fake --include-snippets
-npm run eval:repos -- --fixtures --repo /path/to/repo --out eval-runs/latest
+mergelearn-tutor enrich --repo . --provider fake --limit 3
+npm run eval:repos -- --fixtures --with-enrichment fake --repo /path/to/repo --out eval-runs/latest
 ```
 
 ## Product stance
@@ -88,6 +90,14 @@ mergelearn-tutor privacy preview --repo . --provider fake
 ```
 
 The preview command sends nothing. Snippets are omitted unless `--include-snippets` is passed, and `.skilltrace/privacy.json` can add ignored path globs and literal redaction terms.
+
+Batch 8 adds a fake/local enrichment experiment for wording only:
+
+```bash
+mergelearn-tutor enrich --repo . --provider fake --limit 3
+```
+
+This also sends no network requests and rejects the `remote` provider. Enriched wording is labeled as enrichment; deterministic cards remain the truth source.
 
 ## Storage note
 
@@ -112,4 +122,5 @@ npm run smoke
 - `docs/REVIEW_SESSION.md` — local browser review session and API.
 - `docs/LEXICON.md` — local repo-specific concept packs, aliases, ignores, and correction promotion.
 - `docs/PRIVACY.md` — offline defaults, redaction, ignore paths, and outbound preview behavior.
+- `docs/ENRICHMENT.md` — fake/local card wording enrichment experiment and no-network guardrails.
 - `docs/ROADMAP.md` — current platform roadmap.

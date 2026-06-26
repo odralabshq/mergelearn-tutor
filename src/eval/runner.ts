@@ -1,4 +1,5 @@
 import { extractConcepts } from '../core/concepts.js';
+import { enrichLearningItems } from '../core/enrichment.js';
 import { collectCommits } from '../core/git.js';
 import { mergeLearningState } from '../core/planner.js';
 import { createEmptyState } from '../core/store.js';
@@ -39,6 +40,7 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
   if (artifacts.length === 0) warnings.push('No commits were collected for this repo/spec.');
   if (conceptFindings.length === 0) warnings.push('No concepts were extracted.');
   if (cardFindings.length === 0) warnings.push('No learning cards were generated.');
+  const enrichment = spec.enrichmentProvider ? evaluateEnrichment(state, spec.enrichmentProvider) : undefined;
   return {
     spec,
     artifactCount: artifacts.length,
@@ -54,6 +56,18 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
       answerableCardRate: rate(cardFindings.filter((item) => item.answerableHeuristic).length, cardFindings.length),
       expectedConceptHitRate: expected.size === 0 ? null : rate(expectedConceptHits.length, expected.size),
     },
+    enrichment,
+  };
+}
+
+function evaluateEnrichment(state: ReturnType<typeof mergeLearningState>, provider: NonNullable<EvaluationRepoSpec['enrichmentProvider']>) {
+  const result = enrichLearningItems(state, undefined, { provider, limit: 5 });
+  return {
+    provider,
+    networkUsed: result.networkUsed,
+    enrichedCardCount: result.enrichedItems.length,
+    provenanceOk: result.enrichedItems.every((item) => item.provenance.truthSource === 'deterministic-card' && item.networkUsed === false),
+    comparisonReady: result.enrichedItems.length === Math.min(state.learningItems.length, 5),
   };
 }
 

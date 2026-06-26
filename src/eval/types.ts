@@ -1,3 +1,4 @@
+import type { EnrichmentProvider } from '../core/enrichment.js';
 import type { ConceptKind, Difficulty, LearningItemType } from '../core/types.js';
 
 export type EvaluationRepoSpec = {
@@ -7,6 +8,15 @@ export type EvaluationRepoSpec = {
   since: string;
   limit: number;
   expectedConceptIds?: string[];
+  enrichmentProvider?: EnrichmentProvider;
+};
+
+export type EnrichmentEvaluation = {
+  provider: EnrichmentProvider;
+  networkUsed: false;
+  enrichedCardCount: number;
+  provenanceOk: boolean;
+  comparisonReady: boolean;
 };
 
 export type ConceptEvaluation = {
@@ -47,6 +57,7 @@ export type EvaluatedRepo = {
   missingExpectedConcepts: string[];
   warnings: string[];
   scores: EvaluationScores;
+  enrichment?: EnrichmentEvaluation;
 };
 
 export type EvaluationAggregate = {

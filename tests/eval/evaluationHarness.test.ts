@@ -11,8 +11,11 @@ import { evaluateRepos } from '../../src/eval/runner.js';
 describe('evaluation harness', () => {
   it('evaluates fixture repos and reports expected concept coverage', async () => {
     const specs = await createAllEvalFixtures();
+    specs[0]!.enrichmentProvider = 'fake';
     const run = await evaluateRepos(specs);
     expect(run.repos).toHaveLength(3);
+    expect(run.repos[0]?.enrichment?.provenanceOk).toBe(true);
+    expect(run.repos[0]?.enrichment?.networkUsed).toBe(false);
     expect(run.aggregate.totalConcepts).toBeGreaterThanOrEqual(8);
     expect(run.aggregate.totalCards).toBeGreaterThanOrEqual(6);
     expect(run.aggregate.groundedConceptRate).toBe(1);

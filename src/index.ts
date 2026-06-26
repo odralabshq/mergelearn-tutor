@@ -1,5 +1,6 @@
 export * from './core/types.js';
 export * from './core/concepts.js';
+export * from './core/enrichment.js';
 export * from './core/events.js';
 export * from './core/git.js';
 export * from './core/lexicon.js';

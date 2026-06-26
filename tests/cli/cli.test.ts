@@ -42,6 +42,9 @@ describe('mergelearn-tutor CLI', () => {
     const privacyPreview = await cli(['privacy', 'preview', '--repo', repo, '--include-snippets', '--provider', 'fake']);
     expect(privacyPreview.stdout).toContain('Would send: no');
     expect(privacyPreview.stdout).toContain('ignoredEvidenceCount');
+    const enrich = await cli(['enrich', '--repo', repo, '--provider', 'fake', '--limit', '1']);
+    expect(enrich.stdout).toContain('enrichment experiment');
+    expect(enrich.stdout).toContain('Network used: no');
     const today = await cli(['today', '--repo', repo]);
     expect(today.stdout).toContain("Today's 5-minute review");
     const dashboard = await cli(['dashboard', '--repo', repo]);

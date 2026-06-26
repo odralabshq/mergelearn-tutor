@@ -16,15 +16,22 @@ function allValuesAfter(args: string[], flag: string): string[] {
   return values;
 }
 
+function parseEnrichmentProvider(value: string | undefined): EvaluationRepoSpec['enrichmentProvider'] {
+  if (value === undefined) return undefined;
+  if (value === 'fake' || value === 'local') return value;
+  throw new Error('--with-enrichment supports only fake or local in the local-only experiment.');
+}
+
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const out = valueAfter(args, '--out') ?? 'eval-runs/latest';
   const since = valueAfter(args, '--since') ?? '30d';
   const limit = Number.parseInt(valueAfter(args, '--limit') ?? '80', 10);
+  const enrichmentProvider = parseEnrichmentProvider(valueAfter(args, '--with-enrichment'));
   const specs: EvaluationRepoSpec[] = [];
   const fixtureSpecs = args.includes('--fixtures') ? await createAllEvalFixtures() : [];
-  specs.push(...fixtureSpecs);
-  specs.push(...allValuesAfter(args, '--repo').map((repoPath, index) => ({ id: `repo-${index + 1}`, name: repoPath.split(/[\\/]/).filter(Boolean).at(-1) ?? repoPath, repoPath, since, limit })));
+  specs.push(...fixtureSpecs.map((spec) => ({ ...spec, enrichmentProvider })));
+  specs.push(...allValuesAfter(args, '--repo').map((repoPath, index) => ({ id: `repo-${index + 1}`, name: repoPath.split(/[\\/]/).filter(Boolean).at(-1) ?? repoPath, repoPath, since, limit, enrichmentProvider })));
   if (specs.length === 0) throw new Error('No repos specified. Use --fixtures and/or --repo <path>.');
   const run = await evaluateRepos(specs);
   const outputs = await writeEvaluationOutputs(run, out);

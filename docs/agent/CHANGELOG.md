@@ -89,3 +89,14 @@ npm run smoke
 - Added CLI commands: `privacy init` and `privacy preview`.
 - Added `docs/PRIVACY.md` and README coverage.
 - Dogfooded on `/home/adam/mergeLearn`; preview showed `Would send: no` and `Blocked reason: network disabled by default`, then scratch `.skilltrace` state was removed.
+
+## 2026-06-26 Batch 8
+
+- Added local-only enrichment core with fake/local providers and explicit rejection of remote provider.
+- Added `mergelearn-tutor enrich` to compare deterministic prompts with enriched wording, worked examples, and follow-up questions.
+- Kept deterministic cards as the truth source and recorded enrichment provenance (`deterministic-card`, no network used).
+- Reused the redacted outbound preview payload as the enrichment input so snippets stay opt-in and redacted.
+- Extended `npm run eval:repos` with `--with-enrichment fake|local` and Markdown/JSON reporting of enriched card count, no-network status, and provenance checks.
+- Added enrichment unit, CLI, and evaluation coverage.
+- Added `docs/ENRICHMENT.md` plus README and roadmap coverage.
+- Dogfooded on `/home/adam/mergeLearn`; fake enrichment produced two A/B card previews and an enriched eval report with 48 concepts/12 cards, then scratch `.skilltrace` was removed.

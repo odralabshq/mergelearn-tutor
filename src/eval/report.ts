@@ -21,6 +21,7 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
     lines.push(`- Answerable card heuristic rate: ${percent(repo.scores.answerableCardRate)}`);
     lines.push(`- Expected hits: ${repo.expectedConceptHits.length ? repo.expectedConceptHits.join(', ') : 'none'}`);
     if (repo.missingExpectedConcepts.length) lines.push(`- Missing expected: ${repo.missingExpectedConcepts.join(', ')}`);
+    if (repo.enrichment) lines.push(`- Enrichment: ${repo.enrichment.provider}; cards ${repo.enrichment.enrichedCardCount}; network used: no; provenance: ${repo.enrichment.provenanceOk ? 'ok' : 'needs review'}`);
     if (repo.warnings.length) lines.push(`- Warnings: ${repo.warnings.join('; ')}`);
     lines.push('', '### Top concepts', '');
     for (const concept of repo.conceptFindings.slice(0, 10)) {

@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 
 import { extractConcepts } from './core/concepts.js';
+import { enrichLearningItems, renderEnrichmentComparison } from './core/enrichment.js';
 import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
 import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
@@ -160,6 +161,21 @@ privacy.command('preview')
       limit: Number.parseInt(options.limit, 10),
     });
     process.stdout.write(renderOutboundPreview(preview));
+  });
+
+program.command('enrich')
+  .description('Compare deterministic cards with fake/local wording enrichment; sends no network')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--provider <name>', 'fake or local provider for the local-only experiment', 'fake')
+  .option('--include-snippets', 'include bounded evidence snippets in the preview used for enrichment', false)
+  .option('--limit <count>', 'maximum cards to enrich', '5')
+  .action(async (options: { repo: string; provider: string; includeSnippets: boolean; limit: string }) => {
+    const result = enrichLearningItems(await loadState(options.repo), await loadPrivacyConfig(options.repo), {
+      provider: options.provider,
+      includeSnippets: options.includeSnippets,
+      limit: Number.parseInt(options.limit, 10),
+    });
+    process.stdout.write(renderEnrichmentComparison(result));
   });
 
 program.command('answer')
