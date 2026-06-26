@@ -2,17 +2,30 @@
 
 MergeLearn Tutor should produce a small number of useful, answerable learning cards. Card quality matters more than card volume.
 
+## Snippet-first rule
+
+Cards should start from code, not from an abstract concept label. The user should first see a bounded snippet from a real evidence path, then answer a question about what is happening there.
+
+Every new card should include:
+
+- snippet path and code
+- question plane (`language_mechanics`, `local_behavior`, `file_role`, `architecture_flow`, `risk_and_tests`, or `repo_domain`)
+- question tied to that snippet
+- explanation that can be revealed if the learner gets stuck
+- evidence path list for auditability
+
 ## Current rules
 
 1. No evidence, no card.
-2. Every generated card includes why it appeared.
-3. Evidence is ranked before prompting:
+2. No snippet, no useful card; path-only fallback is allowed only for legacy evidence.
+3. Every generated card includes why it appeared.
+4. Evidence is ranked before prompting:
    - source files are preferred over docs
    - test files are preferred for testing concepts
    - `package.json` is preferred for workflow/dependency concepts
    - README/docs are deprioritized unless there is no better evidence
-4. Prompts must ask for a concrete explanation tied to one evidence path.
-5. Expected focus terms must include both conceptual requirements and evidence paths.
+5. Prompts must ask for a concrete explanation tied to one evidence path.
+6. Expected focus terms must include both conceptual requirements and evidence paths.
 
 ## Current card fields
 
@@ -20,9 +33,12 @@ Learning items include:
 
 - `conceptId`
 - `type`
+- `questionPlane`
 - `title`
+- `snippet`
 - `bodyMarkdown`
 - `prompt`
+- `explanationMarkdown`
 - `expectedFocus`
 - `whyShown`
 - `evidence`

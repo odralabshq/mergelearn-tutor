@@ -18,9 +18,10 @@ function state(repoPath: string): TutorState {
     artifacts: [],
     concepts: [{ id: 'repo.auth', label: 'auth', kind: 'repo_domain', description: 'Auth term', difficulty: 'beginner', parentIds: [], prerequisiteIds: [], relatedIds: [], evidence: [{ path: 'src/auth.ts', label: 'evidence' }] }],
     conceptStates: [{ conceptId: 'repo.auth', exposureCount: 1, activeRecallCount: 0, correctCount: 0, failedCount: 0, hintCount: 0, masteryEstimate: 0.2, confidence: 0.2, importance: 0.6, repoRelevance: 0.5 }],
-    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', title: 'auth in your recent work', bodyMarkdown: 'body', prompt: 'Explain auth clearly from evidence.', expectedFocus: ['auth'], whyShown: 'Shown because this is a test.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z' }],
+    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: auth', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function auth() { return true; }' }, bodyMarkdown: 'body', prompt: 'What happens in this snippet?', explanationMarkdown: 'The function returns true.', expectedFocus: ['auth'], whyShown: 'Snippet-first local behavior card.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z' }],
     learningEvents: [],
     corrections: [],
+    manualRatings: [],
   };
 }
 
@@ -32,7 +33,22 @@ describe('review session server', () => {
     try {
       const html = await fetch(review.url).then((res) => res.text());
       expect(html).toContain('MergeLearn Tutor Review');
-      expect(html).toContain('Explain auth clearly');
+      expect(html).toContain('export function auth');
+      expect(html).toContain('What happens in this snippet?');
+
+      const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
+      expect(progress.nodes.length).toBeGreaterThan(0);
+
+      const preferences = await fetch(`${review.url}/api/preferences`).then((res) => res.json()) as { review: { mode: string } };
+      expect(preferences.review.mode).toBe('snippet_first');
+
+      const preferencesHtml = await fetch(`${review.url}/preferences`).then((res) => res.text());
+      expect(preferencesHtml).toContain('Do you want language mechanics questions?');
+      expect(preferencesHtml).toContain('Example: What could break');
+
+      const updatedPrefs = await fetch(`${review.url}/api/preferences`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ review: { snippetLineCount: 8, showExplanationsByDefault: true } }) }).then((res) => res.json()) as { ok: boolean; preferences: { review: { snippetLineCount: number } } };
+      expect(updatedPrefs.ok).toBe(true);
+      expect(updatedPrefs.preferences.review.snippetLineCount).toBe(8);
 
       const answer = await fetch(`${review.url}/answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', answer: 'Auth gates access to sensitive behavior.', correct: true }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(answer.ok).toBe(true);

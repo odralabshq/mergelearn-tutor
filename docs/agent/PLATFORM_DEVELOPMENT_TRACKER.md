@@ -38,10 +38,11 @@ Escalate via Telegram if needed:
 9. Batch 8: optional LLM enrichment experiment, fake/local only with no network. Implemented.
 10. Batch 9: packaging/public beta readiness. Implemented locally; public release blocked on human name/license/distribution decisions.
 11. Batch 10: manual rating persistence and quality feedback loop. Implemented.
+12. Batch 11: snippet-first learning UX, preferences onboarding, and progress map. Implemented.
 
 ## Active slice
 
-Batch 10 manual rating persistence is implemented and locally verified. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
+Batch 11 snippet-first learning UX is implemented and locally dogfooded. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
 
 ## Verification baseline
 
@@ -59,13 +60,14 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 10 added manual rating persistence so human usefulness checks can become durable local product-quality data:
+Batch 11 changed the primary UX from concept-first questions to snippet-first code reading:
 
-- `.skilltrace/state.json` now stores `manualRatings` with backward-safe normalization for older states
-- `mergelearn-tutor rate` records 1-5 ratings for cards or concepts across relevance, evidence correctness, answerability, usefulness, and repeatability
-- `mergelearn-tutor ratings` summarizes averages and recent ratings without changing learner mastery/events
-- evaluation reports now include copyable rating commands next to the manual rubric
-- README and evaluation/card-quality docs now reflect the persisted rating loop
-- dogfood on `/home/adam/mergeLearn` recorded two local ratings, summarized averages, and verified scratch `.skilltrace` cleanup
+- learning cards now include `questionPlane`, `snippet`, and `explanationMarkdown`
+- `today` and `review` show the code snippet path before the question
+- `.skilltrace/preferences.json` configures enabled question planes, snippet length, and explanation defaults
+- `mergelearn-tutor preferences show/set` and `mergelearn-tutor progress` were added
+- the local website now has snippet-first review cards, `/progress`, `/preferences`, and JSON endpoints for state/progress/preferences
+- the dashboard now includes snippet-first cards plus a progress map with hierarchy and SVG graph
+- dogfood on a fresh demo repo and `/home/adam/mergeLearn` verified snippets, progress, preferences API/page, and scratch cleanup
 
-Next planned slice: duplicate/noisy card detection and/or use persisted manual ratings to influence prompt/card ranking locally. Public beta/publish still requires human decisions first.
+Next planned slice: polish onboarding persistence/ranking from user feedback, or add richer graph interactivity with a frontend graph library if the static graph proves insufficient. Public beta/publish still requires human decisions first.

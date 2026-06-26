@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { TutorState } from './types.js';
+import { DEFAULT_PREFERENCES } from './preferences.js';
+import type { LearningItem, TutorState } from './types.js';
 import { nowIso, normalizeRepoPath } from './util.js';
 
 export function stateDir(repoPath: string): string {
@@ -36,10 +37,27 @@ function normalizeState(state: TutorState): TutorState {
     artifacts: state.artifacts ?? [],
     concepts: state.concepts ?? [],
     conceptStates: state.conceptStates ?? [],
-    learningItems: state.learningItems ?? [],
+    learningItems: (state.learningItems ?? []).map(normalizeLearningItem),
     learningEvents: state.learningEvents ?? [],
     corrections: state.corrections ?? [],
     manualRatings: state.manualRatings ?? [],
+  };
+}
+
+function normalizeLearningItem(item: LearningItem): LearningItem {
+  const firstEvidence = item.evidence?.[0];
+  const questionPlane = item.questionPlane ?? DEFAULT_PREFERENCES.review.defaultPlane;
+  const snippet = item.snippet ?? {
+    path: firstEvidence?.path ?? 'unknown',
+    label: firstEvidence?.label ?? item.title,
+    commit: firstEvidence?.commit,
+    code: firstEvidence?.snippet ?? `// Evidence path: ${firstEvidence?.path ?? 'unknown'}\n// ${item.prompt}`,
+  };
+  return {
+    ...item,
+    questionPlane,
+    snippet,
+    explanationMarkdown: item.explanationMarkdown ?? 'Read the snippet carefully, identify the behavior, then connect it to the concept on this card.',
   };
 }
 

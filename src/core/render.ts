@@ -1,5 +1,6 @@
 import type { Concept, ConceptState, TutorState } from './types.js';
 import { priorityScore } from './planner.js';
+import { buildProgressGraph } from './progress.js';
 
 function conceptState(state: TutorState, conceptId: string): ConceptState | undefined {
   return state.conceptStates.find((item) => item.conceptId === conceptId);
@@ -12,9 +13,10 @@ export function renderToday(state: TutorState, count = 5): string {
   items.forEach((item, index) => {
     const cs = conceptState(state, item.conceptId);
     lines.push(`${index + 1}. ${item.title}`);
-    lines.push(`   Type: ${item.type} · difficulty: ${item.difficulty} · mastery: ${Math.round((cs?.masteryEstimate ?? 0) * 100)}%`);
+    lines.push(`   Plane: ${item.questionPlane.replace(/_/g, ' ')} · difficulty: ${item.difficulty} · mastery: ${Math.round((cs?.masteryEstimate ?? 0) * 100)}%`);
+    lines.push(`   Snippet: ${item.snippet.path}`);
     if (item.whyShown) lines.push(`   Why: ${item.whyShown}`);
-    lines.push(`   Prompt: ${item.prompt}`);
+    lines.push(`   Question: ${item.prompt}`);
     lines.push('');
   });
   lines.push('Run `mergelearn-tutor review --repo <path>` to see the full cards.');
@@ -23,7 +25,19 @@ export function renderToday(state: TutorState, count = 5): string {
 
 export function renderReview(state: TutorState, count = 5): string {
   const items = state.learningItems.slice(0, count);
-  return `${items.map((item, index) => `## Card ${index + 1}: ${item.title}\n\n${item.bodyMarkdown}\n\nExpected focus:\n${item.expectedFocus.map((focus) => `- ${focus}`).join('\n')}`).join('\n\n---\n\n')}\n`;
+  return `${items.map((item, index) => `## Card ${index + 1}: ${item.title}\n\nQuestion plane: ${item.questionPlane}\n\nSnippet from \`${item.snippet.path}\`:\n\n\`\`\`${item.snippet.language ?? ''}\n${item.snippet.code}\n\`\`\`\n\nQuestion: ${item.prompt}\n\nExplanation if stuck:\n${item.explanationMarkdown}\n\nExpected focus:\n${item.expectedFocus.map((focus) => `- ${focus}`).join('\n')}`).join('\n\n---\n\n')}\n`;
+}
+
+export function renderProgress(state: TutorState): string {
+  const graph = buildProgressGraph(state);
+  const lines = ['Progress map', '', `New: ${graph.summary.new}`, `Learning: ${graph.summary.learning}`, `Confident: ${graph.summary.confident}`, `Needs review: ${graph.summary.needs_review}`, ''];
+  for (const group of graph.nodes.filter((node) => node.kind === 'group')) {
+    lines.push(`## ${group.label}`);
+    const children = graph.edges.filter((edge) => edge.type === 'group' && edge.from === group.id).map((edge) => graph.nodes.find((node) => node.id === edge.to)).filter(Boolean);
+    for (const child of children) lines.push(`- ${child!.label}: ${Math.round(child!.mastery * 100)}% mastery, ${child!.status.replace(/_/g, ' ')}`);
+    lines.push('');
+  }
+  return `${lines.join('\n')}\n`;
 }
 
 export function renderProfile(state: TutorState): string {

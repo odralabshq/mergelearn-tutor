@@ -19,13 +19,15 @@ Open that URL in a browser.
 
 ## Current UI
 
-The page shows the top 3-5 cards with:
+The page shows snippet-first cards with:
 
 - card title
-- type and difficulty
+- question plane and difficulty
 - why the card appeared
-- concrete prompt
-- evidence paths
+- evidence file path
+- bounded code snippet
+- concrete question
+- revealable explanation if the learner gets stuck
 - explain-back text box
 - action buttons
 
@@ -46,7 +48,12 @@ Endpoints:
 
 ```text
 GET  /
+GET  /progress
 GET  /state.json
+GET  /api/state
+GET  /api/progress
+GET  /api/preferences
+PUT  /api/preferences
 POST /answer
 POST /feedback
 POST /correct
@@ -65,6 +72,12 @@ Example payloads:
 ```json
 {"conceptId":"repo.auth","correctionType":"better_label","replacementLabel":"session auth"}
 ```
+
+```json
+{"review":{"enabledPlanes":["local_behavior","risk_and_tests"],"snippetLineCount":12}}
+```
+
+The `/api/*` endpoints intentionally provide a stable control surface for CLI, website, and future LLM-driven customization.
 
 ## Dogfood result
 

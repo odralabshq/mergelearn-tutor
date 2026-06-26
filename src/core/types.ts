@@ -11,6 +11,7 @@ export type ConceptKind =
 
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 export type LearningItemType = 'concept_card' | 'explain_back' | 'trace_flow' | 'spot_risk' | 'compare_pattern' | 'spaced_review';
+export type QuestionPlane = 'language_mechanics' | 'local_behavior' | 'file_role' | 'architecture_flow' | 'risk_and_tests' | 'repo_domain';
 export type ReviewEventType = 'shown' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 export type ManualRatingTargetType = 'concept' | 'card';
@@ -20,6 +21,26 @@ export type EvidenceRef = {
   path: string;
   label: string;
   snippet?: string;
+};
+
+export type CodeSnippet = {
+  path: string;
+  label: string;
+  language?: string;
+  commit?: string;
+  code: string;
+};
+
+export type UserPreferences = {
+  version: 1;
+  review: {
+    mode: 'snippet_first' | 'concept_first';
+    enabledPlanes: QuestionPlane[];
+    defaultPlane: QuestionPlane;
+    snippetLineCount: number;
+    showExplanationsByDefault: boolean;
+    preferSourceOverDocs: boolean;
+  };
 };
 
 export type Concept = {
@@ -65,9 +86,12 @@ export type LearningItem = {
   id: string;
   conceptId: string;
   type: LearningItemType;
+  questionPlane: QuestionPlane;
   title: string;
+  snippet: CodeSnippet;
   bodyMarkdown: string;
   prompt: string;
+  explanationMarkdown: string;
   expectedFocus: string[];
   whyShown?: string;
   evidence: EvidenceRef[];

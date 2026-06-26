@@ -5,16 +5,18 @@ import { createEmptyState } from '../../src/core/store.js';
 import type { CommitArtifact, Concept } from '../../src/core/types.js';
 
 const artifact: CommitArtifact = { id: 'a1', type: 'commit', externalId: 'abc123', title: 'commit', body: '', changedFiles: ['src/auth.ts'], diff: '+auth' };
-const concept: Concept = { id: 'security.auth_boundary', label: 'Auth boundary', kind: 'security', description: 'Auth decisions', difficulty: 'advanced', parentIds: [], prerequisiteIds: [], relatedIds: [], evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth' }] };
+const concept: Concept = { id: 'security.auth_boundary', label: 'Auth boundary', kind: 'security', description: 'Auth decisions', difficulty: 'advanced', parentIds: [], prerequisiteIds: [], relatedIds: [], evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth', snippet: '+if (!session) return forbidden();' }] };
 
 describe('planner', () => {
   it('creates concept state and learning cards', () => {
     const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
     expect(state.conceptStates).toHaveLength(1);
     expect(state.learningItems[0]?.type).toBe('spot_risk');
-    expect(state.learningItems[0]?.expectedFocus).toContain('access decision');
-    expect(state.learningItems[0]?.whyShown).toContain('Shown because');
-    expect(state.learningItems[0]?.bodyMarkdown).toContain('Why this card appeared');
+    expect(state.learningItems[0]?.questionPlane).toBe('risk_and_tests');
+    expect(state.learningItems[0]?.snippet.code).toContain('session');
+    expect(state.learningItems[0]?.expectedFocus).toContain('failure mode');
+    expect(state.learningItems[0]?.whyShown).toContain('Snippet-first');
+    expect(state.learningItems[0]?.bodyMarkdown).toContain('Code snippet');
   });
 
   it('does not generate cards without evidence', () => {

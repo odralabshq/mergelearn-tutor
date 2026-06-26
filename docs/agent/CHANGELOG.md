@@ -135,3 +135,26 @@ Verified during development:
 npm test -- --run tests/core/ratings.test.ts tests/core/events.test.ts tests/cli/cli.test.ts tests/eval/evaluationHarness.test.ts
 npm run check && npm test && npm run build && npm run eval && npm run smoke && npm run smoke:package && npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-manual-ratings-fixtures
 ```
+
+## 2026-06-27 Batch 11
+
+- Researched and planned the snippet-first learning UX in `docs/plans/2026-06-27-snippet-first-learning-ux.md`.
+- Changed cards to show real code snippets before questions.
+- Added question planes: `language_mechanics`, `local_behavior`, `file_role`, `architecture_flow`, `risk_and_tests`, and `repo_domain`.
+- Added `questionPlane`, `snippet`, and `explanationMarkdown` to learning items with backward-safe state normalization.
+- Added `.skilltrace/preferences.json` with CLI commands `preferences show` and `preferences set`.
+- Added `mergelearn-tutor progress` plus derived progress graph data.
+- Updated the local review website with snippet-first cards, `/progress`, `/preferences`, and stable JSON endpoints: `/api/state`, `/api/progress`, `/api/preferences`.
+- Added a compact preferences/onboarding page with short example-backed questions for choosing desired question categories.
+- Updated the static dashboard with snippet cards, a progress hierarchy, and a lightweight SVG progress graph.
+- Added docs for customization/API surface and updated card-quality/review-session docs.
+- Dogfooded on a fresh demo repo and `/home/adam/mergeLearn`; verified snippets, explanations, progress, preferences page/API, no network use, and scratch cleanup.
+
+Verified during development:
+
+```bash
+npm run check
+npm test -- --run tests/core/preferences.test.ts tests/core/progress.test.ts tests/core/planner.test.ts tests/core/render.test.ts tests/core/storeDashboard.test.ts tests/session/server.test.ts
+npm test
+npm run build
+```

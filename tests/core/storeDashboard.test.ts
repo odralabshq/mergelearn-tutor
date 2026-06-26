@@ -10,7 +10,7 @@ import { createEmptyState, initState, loadState, saveState, statePath } from '..
 import type { CommitArtifact, Concept } from '../../src/core/types.js';
 
 const artifact: CommitArtifact = { id: 'a1', type: 'commit', externalId: 'abc123', title: 'commit', body: '', changedFiles: ['src/auth.ts'], diff: '+auth' };
-const concept: Concept = { id: 'security.auth_boundary', label: 'Auth boundary', kind: 'security', description: 'Auth decisions', difficulty: 'advanced', parentIds: ['security'], prerequisiteIds: [], relatedIds: [], evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth' }] };
+const concept: Concept = { id: 'security.auth_boundary', label: 'Auth boundary', kind: 'security', description: 'Auth decisions', difficulty: 'advanced', parentIds: ['security'], prerequisiteIds: [], relatedIds: [], evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth', snippet: '+if (!session) return forbidden();' }] };
 
 describe('local state and dashboard', () => {
   it('persists transparent state and writes dashboard HTML', async () => {
@@ -25,5 +25,7 @@ describe('local state and dashboard', () => {
     const html = await readFile(dashboard, 'utf8');
     expect(html).toContain('MergeLearn Tutor');
     expect(html).toContain('Auth boundary');
+    expect(html).toContain('Progress map');
+    expect(html).toContain('if (!session)');
   });
 });

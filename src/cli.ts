@@ -7,8 +7,9 @@ import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
 import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
 import { mergeLearningState, recordAnswer } from './core/planner.js';
+import { loadPreferences, normalizePreferences, savePreferences } from './core/preferences.js';
 import { createOutboundPreview, loadPrivacyConfig, renderOutboundPreview, savePrivacyConfig, type PrivacyConfig, type PrivacyProvider } from './core/privacy.js';
-import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderReview, renderToday, stateSummary } from './core/render.js';
+import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderProgress, renderReview, renderToday, stateSummary } from './core/render.js';
 import { recordManualRating, renderManualRatingSummary } from './core/ratings.js';
 import { initState, loadState, saveState, statePath } from './core/store.js';
 import { writeDashboard } from './dashboard/html.js';
@@ -53,7 +54,7 @@ async function ingest(repo: string, since: string, limit: number): Promise<void>
   const artifacts = await collectCommits(repo, since, limit);
   const lexicon = await loadLexicon(repo);
   const concepts = applyLexicon(artifacts, extractConcepts(artifacts), lexicon);
-  const next = mergeLearningState(state, artifacts, concepts);
+  const next = mergeLearningState(state, artifacts, concepts, await loadPreferences(repo));
   await saveState(repo, next);
   process.stdout.write(`${stateSummary(next)}\nState: ${statePath(repo)}\n`);
 }
@@ -115,6 +116,46 @@ program.command('map')
   .option('-r, --repo <path>', 'repository path', process.cwd())
   .action(async (options: { repo: string }) => {
     process.stdout.write(renderMermaidMap(await loadState(options.repo)));
+  });
+
+program.command('progress')
+  .description('Show topic progress grouped by concept kind and hierarchy')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderProgress(await loadState(options.repo)));
+  });
+
+const preferences = program.command('preferences')
+  .description('Read or update snippet-first review preferences');
+
+preferences.command('show')
+  .description('Print .skilltrace/preferences.json, with defaults if missing')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(`${JSON.stringify(await loadPreferences(options.repo), null, 2)}\n`);
+  });
+
+preferences.command('set')
+  .description('Update snippet-first review preferences')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--planes <csv>', 'enabled question planes, comma-separated')
+  .option('--default-plane <plane>', 'fallback question plane')
+  .option('--snippet-lines <count>', 'maximum snippet lines per card')
+  .option('--show-explanations <value>', 'true or false')
+  .action(async (options: { repo: string; planes?: string; defaultPlane?: string; snippetLines?: string; showExplanations?: string }) => {
+    const current = await loadPreferences(options.repo);
+    const next = normalizePreferences({
+      ...current,
+      review: {
+        ...current.review,
+        enabledPlanes: listFrom(options.planes) as typeof current.review.enabledPlanes | undefined ?? current.review.enabledPlanes,
+        defaultPlane: options.defaultPlane as typeof current.review.defaultPlane | undefined ?? current.review.defaultPlane,
+        snippetLineCount: options.snippetLines ? Number.parseInt(options.snippetLines, 10) : current.review.snippetLineCount,
+        showExplanationsByDefault: options.showExplanations ? options.showExplanations === 'true' : current.review.showExplanationsByDefault,
+      },
+    });
+    await savePreferences(options.repo, next);
+    process.stdout.write(`${JSON.stringify(next, null, 2)}\n`);
   });
 
 program.command('explain-last-commit')

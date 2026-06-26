@@ -16,7 +16,7 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 - Deterministic git-history ingestion.
 - Hybrid concept extraction with path/regex rules plus TypeScript AST analysis.
 - Personal concept state and mastery evidence.
-- Daily review cards.
+- Snippet-first daily review cards with configurable question planes.
 - Explain-back answer recording.
 - Static local dashboard at `.skilltrace/dashboard.html`.
 - No telemetry.
@@ -41,6 +41,7 @@ node dist/cli.js init --repo /path/to/repo
 node dist/cli.js ingest --repo /path/to/repo --since 30d
 node dist/cli.js today --repo /path/to/repo
 node dist/cli.js review --repo /path/to/repo
+node dist/cli.js progress --repo /path/to/repo
 node dist/cli.js dashboard --repo /path/to/repo
 ```
 
@@ -81,9 +82,12 @@ mergelearn-tutor concept promote-corrections --repo .
 mergelearn-tutor profile --repo .
 mergelearn-tutor debt --repo .
 mergelearn-tutor map --repo .
+mergelearn-tutor progress --repo .
 mergelearn-tutor explain-last-commit --repo .
 mergelearn-tutor dashboard --repo .
 mergelearn-tutor session --repo .
+mergelearn-tutor preferences show --repo .
+mergelearn-tutor preferences set --repo . --planes local_behavior,risk_and_tests --snippet-lines 12
 mergelearn-tutor privacy init --repo . --ignore-path "secrets/**" --redact "internal-codename"
 mergelearn-tutor privacy preview --repo . --provider fake --include-snippets
 mergelearn-tutor enrich --repo . --provider fake --limit 3
@@ -105,6 +109,19 @@ mergelearn-tutor privacy preview --repo . --provider fake
 ```
 
 The preview command sends nothing. Snippets are omitted unless `--include-snippets` is passed, and `.skilltrace/privacy.json` can add ignored path globs and literal redaction terms.
+
+## Snippet-first review
+
+Cards now start with code you recently touched, then ask a question about that snippet. The question plane is explicit and configurable:
+
+- `language_mechanics` — syntax, type system, runtime semantics
+- `local_behavior` — what a function/block does
+- `file_role` — why this snippet belongs in this file
+- `architecture_flow` — how code connects across files
+- `risk_and_tests` — bugs, security, validation, regression tests
+- `repo_domain` — repo-specific concepts and vocabulary
+
+Preferences live in `.skilltrace/preferences.json`, so the CLI, local website, and future LLM agents can use the same control surface.
 
 Batch 8 adds a fake/local enrichment experiment for wording only:
 
@@ -137,6 +154,7 @@ For packaging and beta-readiness details, see `docs/BETA_READINESS.md`. The pack
 - `docs/CORRECTIONS.md` — feedback/correction commands and learner-event behavior.
 - `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer details.
 - `docs/CARD_QUALITY.md` — card generation quality rules and dogfood findings.
+- `docs/CUSTOMIZATION.md` — preferences file, API surface, and LLM-operable settings.
 - `docs/REVIEW_SESSION.md` — local browser review session and API.
 - `docs/LEXICON.md` — local repo-specific concept packs, aliases, ignores, and correction promotion.
 - `docs/PRIVACY.md` — offline defaults, redaction, ignore paths, and outbound preview behavior.
