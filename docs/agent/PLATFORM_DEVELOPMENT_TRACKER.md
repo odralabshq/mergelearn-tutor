@@ -27,9 +27,9 @@ Escalate via Telegram if needed:
 
 ## Dependency-ordered queue
 
-1. Baseline plan and tracker.
-2. Batch 1: multi-repo evaluation harness and rating rubric.
-3. Batch 2: correction and learner-event model.
+1. Baseline plan and tracker. Done.
+2. Batch 1: multi-repo evaluation harness and rating rubric. Implemented.
+3. Batch 2: correction and learner-event model. Next.
 4. Batch 3: AST-backed TypeScript extraction with evidence ranking.
 5. Batch 4: improved card generation.
 6. Batch 5: interactive local review session.
@@ -40,7 +40,7 @@ Escalate via Telegram if needed:
 
 ## Active slice
 
-Batch 1: multi-repo evaluation harness and rating rubric.
+Batch 1 is implemented and ready for final verification/commit. Next slice after commit: Batch 2 correction and learner-event model.
 
 ## Verification baseline
 

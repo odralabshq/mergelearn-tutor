@@ -2,6 +2,14 @@ import { CONCEPT_DEFINITIONS } from './conceptCatalog.js';
 import type { CommitArtifact, Concept, EvidenceRef } from './types.js';
 import { unique } from './util.js';
 
+const PATH_HINT_ONLY_CONCEPTS = new Set([
+  'testing.behavior_tests',
+  'security.auth_boundary',
+  'data.validation',
+  'dev_workflow.cli_tools',
+  'dev_workflow.dependency_management',
+]);
+
 function diffLinesForFile(diff: string, path: string): string {
   const marker = `diff --git a/${path} b/${path}`;
   const start = diff.indexOf(marker);
@@ -16,26 +24,27 @@ function snippetFor(definitionId: string, text: string): string | undefined {
 }
 
 function repoDomainConcepts(artifact: CommitArtifact): Concept[] {
-  const terms = new Map<string, EvidenceRef[]>();
+  const terms = new Map<string, { label: string; evidence: EvidenceRef[] }>();
   for (const filePath of artifact.changedFiles) {
     const parts = filePath.split(/[\/._-]/).filter((part) => part.length >= 4 && !['src', 'test', 'tests', 'index'].includes(part));
     for (const part of parts.slice(0, 3)) {
-      const id = `repo.${part.toLowerCase()}`;
-      const evidence = terms.get(id) ?? [];
-      evidence.push({ commit: artifact.externalId, path: filePath, label: 'repo term from changed path' });
-      terms.set(id, evidence);
+      const label = part.toLowerCase();
+      const id = `repo.${label}`;
+      const entry = terms.get(id) ?? { label, evidence: [] };
+      entry.evidence.push({ commit: artifact.externalId, path: filePath, label: 'repo term from changed path' });
+      terms.set(id, entry);
     }
   }
-  return [...terms.entries()].slice(0, 8).map(([id, evidence]) => ({
+  return [...terms.entries()].slice(0, 8).map(([id, entry]) => ({
     id,
-    label: evidence[0]!.path.split(/[\/]/).at(-1)?.replace(/\.[^.]+$/, '') ?? id,
+    label: entry.label,
     kind: 'repo_domain',
     description: 'Repo-specific concept inferred from repeatedly touched path names.',
     difficulty: 'beginner',
     parentIds: ['repo'],
     prerequisiteIds: [],
     relatedIds: [],
-    evidence,
+    evidence: entry.evidence,
   }));
 }
 
@@ -46,7 +55,9 @@ export function extractConcepts(artifacts: CommitArtifact[]): Concept[] {
       const evidence: EvidenceRef[] = [];
       for (const filePath of artifact.changedFiles) {
         const fileDiff = diffLinesForFile(artifact.diff, filePath);
-        const matched = def.pathHints.some((pattern) => pattern.test(filePath)) || def.patterns.some((pattern) => pattern.test(fileDiff));
+        const pathMatched = PATH_HINT_ONLY_CONCEPTS.has(def.id) && def.pathHints.some((pattern) => pattern.test(filePath));
+        const diffMatched = def.patterns.some((pattern) => pattern.test(fileDiff));
+        const matched = pathMatched || diffMatched;
         if (matched) evidence.push({ commit: artifact.externalId, path: filePath, label: def.label, snippet: snippetFor(def.id, fileDiff) });
       }
       if (evidence.length === 0) continue;

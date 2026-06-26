@@ -20,4 +20,16 @@ describe('concept extraction', () => {
     const concepts = extractConcepts([artifact('diff --git a/tests/session.test.ts b/tests/session.test.ts\n+it("works", () => expect(true).toBe(true));', ['tests/session.test.ts'])]);
     expect(concepts.map((item) => item.id)).toContain('testing.behavior_tests');
   });
+
+  it('does not infer language concepts from TypeScript file paths alone', () => {
+    const concepts = extractConcepts([artifact('diff --git a/src/plain.ts b/src/plain.ts\n+const value = 1;\n', ['src/plain.ts'])]);
+    expect(concepts.map((item) => item.id)).not.toContain('typescript.generics');
+    expect(concepts.map((item) => item.id)).not.toContain('typescript.type_aliases');
+  });
+
+  it('labels repo-domain concepts with the inferred term, not the first evidence filename', () => {
+    const concepts = extractConcepts([artifact('diff --git a/docs/agent/AGENT_STATE.md b/docs/agent/AGENT_STATE.md\n+state\n', ['docs/agent/AGENT_STATE.md'])]);
+    expect(concepts.find((item) => item.id === 'repo.docs')?.label).toBe('docs');
+    expect(concepts.find((item) => item.id === 'repo.agent')?.label).toBe('agent');
+  });
 });

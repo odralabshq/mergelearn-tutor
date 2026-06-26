@@ -5,3 +5,6 @@ export * from './core/planner.js';
 export * from './core/render.js';
 export * from './core/store.js';
 export * from './dashboard/html.js';
+export * from './eval/types.js';
+export * from './eval/runner.js';
+export * from './eval/report.js';
