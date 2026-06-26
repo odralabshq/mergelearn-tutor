@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { extractConcepts } from './core/concepts.js';
 import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
+import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
 import { mergeLearningState, recordAnswer } from './core/planner.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderReview, renderToday, stateSummary } from './core/render.js';
 import { initState, loadState, saveState, statePath } from './core/store.js';
@@ -16,10 +17,24 @@ function goalsFrom(value?: string): string[] {
   return value ? value.split(',').map((item) => item.trim()).filter(Boolean) : ['understand this repo', 'learn TypeScript', 'review AI code safely'];
 }
 
+function listFrom(value?: string): string[] | undefined {
+  const items = value?.split(',').map((item) => item.trim()).filter(Boolean) ?? [];
+  return items.length ? items : undefined;
+}
+
+function renderLexicon(lexicon: RepoLexicon): string {
+  const lines = ['Local repo lexicon', '', `Concepts: ${lexicon.concepts.length}`, `Aliases: ${lexicon.aliases.length}`, `Ignores: ${lexicon.ignores.length}`, ''];
+  for (const concept of lexicon.concepts) lines.push(`- concept ${concept.id}: ${concept.label}`);
+  for (const alias of lexicon.aliases) lines.push(`- alias ${alias.conceptId}: ${alias.label}`);
+  for (const ignore of lexicon.ignores) lines.push(`- ignore ${ignore.conceptId ?? '*'} ${ignore.pathPattern ?? ignore.term ?? ''}`.trim());
+  return `${lines.join('\n')}\n`;
+}
+
 async function ingest(repo: string, since: string, limit: number): Promise<void> {
   const state = await loadState(repo);
   const artifacts = await collectCommits(repo, since, limit);
-  const concepts = extractConcepts(artifacts);
+  const lexicon = await loadLexicon(repo);
+  const concepts = applyLexicon(artifacts, extractConcepts(artifacts), lexicon);
   const next = mergeLearningState(state, artifacts, concepts);
   await saveState(repo, next);
   process.stdout.write(`${stateSummary(next)}\nState: ${statePath(repo)}\n`);
@@ -90,7 +105,7 @@ program.command('explain-last-commit')
   .action(async (options: { repo: string }) => {
     const artifact = await collectLastCommit(options.repo);
     if (!artifact) throw new Error('No commits found.');
-    const concepts = extractConcepts([artifact]);
+    const concepts = applyLexicon([artifact], extractConcepts([artifact]), await loadLexicon(options.repo));
     process.stdout.write(`Last commit: ${artifact.externalId.slice(0, 8)} ${artifact.title}\n\n`);
     process.stdout.write(`Concepts touched:\n${concepts.map((concept) => `- ${concept.label}: ${concept.description}`).join('\n')}\n`);
   });
@@ -155,6 +170,70 @@ program.command('correct')
     });
     await saveState(options.repo, next);
     process.stdout.write(`Recorded ${options.type} correction for ${options.concept}.\n`);
+  });
+
+const concept = program.command('concept')
+  .description('Manage local repo lexicon concepts in .skilltrace/lexicon.json');
+
+concept.command('list')
+  .description('List local custom concepts, aliases, and ignores')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderLexicon(await loadLexicon(options.repo)));
+  });
+
+concept.command('add')
+  .description('Add a local repo-specific concept without editing source code')
+  .requiredOption('--id <id>', 'stable concept id, e.g. repo.billing_flow')
+  .requiredOption('--label <text>', 'human-readable label')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--description <text>', 'concept description')
+  .option('--kind <kind>', 'concept kind', 'repo_domain')
+  .option('--difficulty <level>', 'beginner, intermediate, or advanced', 'beginner')
+  .option('--path <csv>', 'comma-separated changed-path matches or globs')
+  .option('--term <csv>', 'comma-separated terms to match in recent diffs/commit text')
+  .action(async (options: { repo: string; id: string; label: string; description?: string; kind: string; difficulty: string; path?: string; term?: string }) => {
+    const lexicon = await loadLexicon(options.repo);
+    const concepts = lexicon.concepts.filter((item) => item.id !== options.id);
+    concepts.push({ id: options.id, label: options.label, description: options.description, kind: options.kind as never, difficulty: options.difficulty as never, pathPatterns: listFrom(options.path), terms: listFrom(options.term) });
+    await saveLexicon(options.repo, { ...lexicon, concepts });
+    process.stdout.write(`Saved local concept ${options.id}. Run ingest to apply it.\n`);
+  });
+
+concept.command('alias')
+  .description('Override an extracted concept label locally')
+  .requiredOption('--concept <id>', 'concept id')
+  .requiredOption('--label <text>', 'local label')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--note <text>', 'optional note')
+  .action(async (options: { repo: string; concept: string; label: string; note?: string }) => {
+    const lexicon = await loadLexicon(options.repo);
+    const aliases = [...lexicon.aliases.filter((alias) => alias.conceptId !== options.concept), { conceptId: options.concept, label: options.label, note: options.note }];
+    await saveLexicon(options.repo, { ...lexicon, aliases });
+    process.stdout.write(`Saved local alias for ${options.concept}.\n`);
+  });
+
+concept.command('ignore')
+  .description('Ignore a noisy concept, path pattern, or term locally')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--concept <id>', 'optional concept id')
+  .option('--path <glob>', 'optional changed-path match or glob')
+  .option('--term <text>', 'optional term')
+  .option('--note <text>', 'optional note')
+  .action(async (options: { repo: string; concept?: string; path?: string; term?: string; note?: string }) => {
+    if (!options.concept && !options.path && !options.term) throw new Error('concept ignore needs --concept, --path, or --term.');
+    const lexicon = await loadLexicon(options.repo);
+    await saveLexicon(options.repo, { ...lexicon, ignores: [...lexicon.ignores, { conceptId: options.concept, pathPattern: options.path, term: options.term, note: options.note }] });
+    process.stdout.write('Saved local ignore rule. Run ingest to apply it.\n');
+  });
+
+concept.command('promote-corrections')
+  .description('Promote existing corrections into local lexicon aliases, concepts, and ignores')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    const next = promoteCorrectionsToLexicon(await loadState(options.repo), await loadLexicon(options.repo));
+    await saveLexicon(options.repo, next);
+    process.stdout.write('Promoted corrections into .skilltrace/lexicon.json. Run ingest to apply them.\n');
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

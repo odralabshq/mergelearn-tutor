@@ -67,3 +67,14 @@ npm run smoke
 - Added `mergelearn-tutor session --repo .` CLI command.
 - Added HTTP integration test for session actions.
 - Dogfooded session server on `/home/adam/mergeLearn` scratch state and removed scratch state afterward.
+
+## 2026-06-26 Batch 6
+
+- Added local repo lexicon support in `.skilltrace/lexicon.json`.
+- Added custom repo concepts matched from changed paths and diff/commit terms.
+- Added local aliases and ignore rules so extractor/planner output can be corrected without source edits.
+- Added correction promotion into lexicon aliases, ignore rules, and pinned concepts.
+- Added CLI commands: `concept list`, `concept add`, `concept alias`, `concept ignore`, and `concept promote-corrections`.
+- Added lexicon tests and CLI coverage for adding/listing a repo-specific concept.
+- Added `docs/LEXICON.md` and README command coverage.
+- Dogfooded on `/home/adam/mergeLearn` with a custom `repo.pr_understanding_guard` concept; it generated 12 evidence refs and a learning card, then scratch `.skilltrace` state was removed.

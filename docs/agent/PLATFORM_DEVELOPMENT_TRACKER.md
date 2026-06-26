@@ -33,14 +33,14 @@ Escalate via Telegram if needed:
 4. Batch 3: AST-backed TypeScript extraction with evidence ranking. Implemented initial AST analyzer.
 5. Batch 4: improved card generation. Implemented.
 6. Batch 5: interactive local review session. Implemented initial local server.
-7. Batch 6: repo lexicon/concept packs. Next.
-8. Batch 7: privacy boundary and outbound preview.
+7. Batch 6: repo lexicon/concept packs. Implemented.
+8. Batch 7: privacy boundary and outbound preview. Next.
 9. Batch 8: optional LLM enrichment experiment, only after privacy boundary.
 10. Batch 9: packaging/public beta readiness.
 
 ## Active slice
 
-Batch 5 is implemented and ready for final verification/commit. Next slice after commit: Batch 6 repo lexicon/concept packs.
+Batch 6 repo lexicon/concept packs is implemented and ready for final verification/commit. Next slice after commit: Batch 7 privacy boundary and outbound preview.
 
 ## Verification baseline
 
@@ -55,3 +55,17 @@ npm run smoke
 ```
 
 All passed.
+
+## Latest completed local batch
+
+Batch 6 added repo lexicon/concept packs:
+
+- local `.skilltrace/lexicon.json` parser/validator
+- custom repo-specific concepts matched from changed paths and terms
+- local aliases for extracted concept labels
+- local ignore rules for noisy concepts/evidence
+- correction promotion into lexicon aliases/ignores/concepts
+- CLI commands under `mergelearn-tutor concept ...`
+- dogfood on `/home/adam/mergeLearn` with `repo.pr_understanding_guard`, then scratch `.skilltrace` cleanup
+
+Next planned slice: Batch 7 privacy boundary and outbound preview.

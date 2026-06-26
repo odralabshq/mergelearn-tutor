@@ -12,6 +12,7 @@ AI coding makes code production faster, but it can create knowledge debt: the re
 
 - Local CLI.
 - Local transparent JSON state in `.skilltrace/state.json`.
+- Local repo lexicon/concept packs in `.skilltrace/lexicon.json`.
 - Deterministic git-history ingestion.
 - Hybrid concept extraction with path/regex rules plus TypeScript AST analysis.
 - Personal concept state and mastery evidence.
@@ -57,6 +58,9 @@ mergelearn-tutor review --repo . --count 5
 mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
 mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "too generic"
 mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
+mergelearn-tutor concept add --repo . --id repo.session_flow --label "Session flow" --term "session,token" --path "src/auth/*"
+mergelearn-tutor concept alias --repo . --concept security.auth_boundary --label "Session policy boundary"
+mergelearn-tutor concept promote-corrections --repo .
 mergelearn-tutor profile --repo .
 mergelearn-tutor debt --repo .
 mergelearn-tutor map --repo .
@@ -95,4 +99,5 @@ npm run smoke
 - `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer details.
 - `docs/CARD_QUALITY.md` — card generation quality rules and dogfood findings.
 - `docs/REVIEW_SESSION.md` — local browser review session and API.
+- `docs/LEXICON.md` — local repo-specific concept packs, aliases, ignores, and correction promotion.
 - `docs/ROADMAP.md` — current platform roadmap.

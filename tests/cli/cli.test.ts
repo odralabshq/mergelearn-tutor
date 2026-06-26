@@ -33,6 +33,8 @@ describe('mergelearn-tutor CLI', () => {
     const repo = await createRepo();
     const init = await cli(['init', '--repo', repo]);
     expect(init.stdout).toContain('Initialized MergeLearn Tutor');
+    const conceptAdd = await cli(['concept', 'add', '--repo', repo, '--id', 'repo.session_flow', '--label', 'Session flow', '--term', 'validateSession', '--path', 'src/auth/*']);
+    expect(conceptAdd.stdout).toContain('Saved local concept repo.session_flow');
     const ingest = await cli(['ingest', '--repo', repo, '--since', '365d']);
     expect(ingest.stdout).toContain('learning cards');
     const today = await cli(['today', '--repo', repo]);
@@ -43,6 +45,9 @@ describe('mergelearn-tutor CLI', () => {
     expect(html).toContain('MergeLearn Tutor');
 
     const state = JSON.parse(await readFile(path.join(repo, '.skilltrace', 'state.json'), 'utf8')) as { learningItems: Array<{ id: string; conceptId: string }>; concepts: Array<{ id: string }> };
+    expect(state.concepts.map((candidate) => candidate.id)).toContain('repo.session_flow');
+    const lexiconList = await cli(['concept', 'list', '--repo', repo]);
+    expect(lexiconList.stdout).toContain('Session flow');
     const item = state.learningItems[0]!;
     const feedback = await cli(['feedback', '--repo', repo, '--item', item.id, '--event', 'marked_wrong', '--note', 'not useful yet']);
     expect(feedback.stdout).toContain('Recorded marked_wrong');
