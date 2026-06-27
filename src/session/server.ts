@@ -203,7 +203,8 @@ function renderTimelineHtml(state: TutorState): string {
 function renderGraphHtml(state: TutorState): string {
   const timeline = buildEvidenceTimeline(state);
   const groups = graphByType(timeline).map((group) => `<section class="graph-column"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, 12).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}</section>`).join('');
-  return pageShell('MergeLearn Tutor Graph', `<section class="hero"><div><p class="eyebrow">Learning graph</p><h1>Courses, docs, questions, cards</h1><p>This is a lightweight graph representation backed by /api/evidence-graph; it can later be swapped for vis-network or Cytoscape without changing the data model.</p></div><div class="hero-card"><strong>${timeline.nodes.length}</strong><span>nodes</span><strong>${timeline.edges.length}</strong><span>edges</span></div></section>${nav()}<section class="graph-grid">${groups}</section>`, 'Graph');
+  const raw = escapeHtml(JSON.stringify({ nodes: timeline.nodes, edges: timeline.edges }, null, 2));
+  return pageShell('MergeLearn Tutor Graph', `<section class="hero"><div><p class="eyebrow">Learning graph</p><h1>Courses, docs, questions, cards</h1><p>This is a lightweight graph representation backed by /api/evidence-graph; it can later be swapped for vis-network or Cytoscape without changing the data model.</p></div><div class="hero-card"><strong>${timeline.nodes.length}</strong><span>nodes</span><strong>${timeline.edges.length}</strong><span>edges</span></div></section>${nav()}<section class="graph-grid">${groups}</section><details class="panel"><summary><strong>Raw graph projection</strong></summary><pre>${raw}</pre></details>`, 'Graph');
 }
 
 function renderProgressHtml(state: TutorState): string {
@@ -222,8 +223,22 @@ function renderHistoryHtml(state: TutorState): string {
   const activeCards = data.cards.filter((card) => card.status !== 'archived');
   const archivedCards = data.cards.filter((card) => card.status === 'archived');
   const cardList = (cards: typeof data.cards) => cards.slice().reverse().map((card) => `<article class="mini-card ${card.status === 'archived' ? 'is-archived' : ''}"><div class="card-topline"><span>${escapeHtml(card.status)}</span><span>gen ${card.generation}</span><span>${escapeHtml(card.source)}</span></div><h3>${escapeHtml(card.title)}</h3><p>${escapeHtml(card.id)}${card.courseId ? ` · course ${escapeHtml(card.courseId)}` : ''}${card.questionId ? ` · question ${escapeHtml(card.questionId)}` : ''}</p><details><summary>${card.events.length} timeline events</summary><ul>${card.events.map((event) => `<li><strong>${escapeHtml(event.eventType)}</strong>${event.correct === undefined ? '' : ` · ${event.correct ? 'correct' : 'missed'}`} ${event.answerText ? `— ${escapeHtml(event.answerText)}` : ''}${event.note ? ` — ${escapeHtml(event.note)}` : ''}</li>`).join('')}</ul></details></article>`).join('');
+  const activity = recentHistoryActivity(state);
   const metrics = `<div class="stats"><div>${data.summary.activeCards}<span>active</span></div><div>${data.summary.archivedCards}<span>archived</span></div><div>${data.summary.batches}<span>batches</span></div><div>${data.summary.events}<span>events</span></div></div>`;
-  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}<section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History');
+  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}<section class="panel"><h2>Recent activity</h2><div class="timeline-list">${activity || '<p>No learning activity yet.</p>'}</div></section><section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History');
+}
+
+function recentHistoryActivity(state: TutorState): string {
+  const cardById = new Map(state.learningItems.map((item) => [item.id, item]));
+  const rows = [
+    ...state.learningEvents.map((event) => {
+      const item = cardById.get(event.itemId);
+      return { at: event.createdAt, kind: event.eventType, title: item?.title ?? event.itemId, detail: event.correct === undefined ? event.note ?? 'review feedback' : event.correct ? 'answered correctly' : 'missed answer' };
+    }),
+    ...state.cardBatches.map((batch) => ({ at: batch.createdAt, kind: `batch_${batch.mode}`, title: batch.id, detail: `${batch.itemIds.length} created · ${batch.archivedItemIds.length} archived${batch.reason ? ` · ${batch.reason}` : ''}` })),
+    ...state.corrections.map((correction) => ({ at: correction.createdAt, kind: correction.correctionType, title: correction.targetId, detail: correction.note ?? correction.replacementLabel ?? 'correction recorded' })),
+  ].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 12);
+  return rows.map((row) => `<article class="timeline-row"><span>${escapeHtml(row.kind)}</span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.detail)}</small></article>`).join('');
 }
 
 function renderPreferencesHtml(preferences: UserPreferences): string {

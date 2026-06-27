@@ -48,6 +48,7 @@ describe('review session server', () => {
 
       const historyHtml = await fetch(`${review.url}/history`).then((res) => res.text());
       expect(historyHtml).toContain('History without the wall of cards');
+      expect(historyHtml).toContain('Recent activity');
       expect(historyHtml).toContain('Raw history JSON');
 
       const history = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { summary: { activeCards: number }; cards: unknown[]; batches: unknown[] };
@@ -73,6 +74,7 @@ describe('review session server', () => {
       expect(timeline.edges.length).toBeGreaterThan(0);
       const graphHtml = await fetch(`${review.url}/graph`).then((res) => res.text());
       expect(graphHtml).toContain('Courses, docs, questions, cards');
+      expect(graphHtml).toContain('Raw graph projection');
 
       const preferences = await fetch(`${review.url}/api/preferences`).then((res) => res.json()) as { review: { mode: string } };
       expect(preferences.review.mode).toBe('snippet_first');
