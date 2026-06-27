@@ -202,6 +202,9 @@ export type LearningEvent = {
   itemId: string;
   conceptId: string;
   eventType: ReviewEventType;
+  evidenceKey?: string;
+  evidencePath?: string;
+  questionPlane?: QuestionPlane;
   answerText?: string;
   correct?: boolean;
   note?: string;

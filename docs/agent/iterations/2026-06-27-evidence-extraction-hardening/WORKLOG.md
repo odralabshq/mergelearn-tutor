@@ -40,3 +40,19 @@ Focused verification passed:
 npm test -- --run tests/core/concepts.test.ts tests/core/typescriptAstAnalyzer.test.ts
 npm run check
 ```
+
+## E3 implementation result
+
+Implemented correction semantics that follow evidence metadata:
+
+- Review events for `marked_wrong_evidence` and `marked_duplicate` now store optional evidence key, evidence path, and question plane metadata.
+- Wrong-evidence regeneration filters rejected evidence before selecting a snippet, so a concept can still produce a card from alternate evidence.
+- If no alternate evidence remains, regenerated cards are blocked from active review.
+- Duplicate feedback is scoped to repeated concept/path/question-plane cards instead of downgrading every future card for the concept.
+
+Focused verification passed:
+
+```bash
+npm test -- --run tests/core/events.test.ts tests/core/planner.test.ts
+npm run check
+```

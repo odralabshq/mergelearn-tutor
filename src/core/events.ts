@@ -1,4 +1,5 @@
 import type { Correction, CorrectionType, LearningEvent, ReviewEventType, TutorState } from './types.js';
+import { deriveEvidenceKey, hasEvidenceContent } from './evidenceIdentity.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
 const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'answered', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate', 'corrected', 'deferred']);
@@ -31,6 +32,7 @@ export function recordReviewEvent(state: TutorState, input: ReviewEventInput): T
     itemId: input.itemId,
     conceptId: item.conceptId,
     eventType: input.eventType,
+    ...eventEvidenceMetadata(item, input.eventType),
     answerText: input.answerText,
     correct: input.correct,
     note: input.note,
@@ -41,6 +43,16 @@ export function recordReviewEvent(state: TutorState, input: ReviewEventInput): T
     return updateConceptStateForEvent(conceptState, input.eventType, input.correct, now);
   });
   return applyCorrections({ ...state, conceptStates, learningEvents: [...state.learningEvents, event] });
+}
+
+function eventEvidenceMetadata(item: TutorState['learningItems'][number], eventType: ReviewEventType): Pick<LearningEvent, 'evidenceKey' | 'evidencePath' | 'questionPlane'> {
+  if (eventType !== 'marked_wrong_evidence' && eventType !== 'marked_duplicate') return {};
+  const primaryEvidence = { commit: item.snippet.commit, path: item.snippet.path, label: item.snippet.label, code: item.snippet.code };
+  return {
+    evidenceKey: hasEvidenceContent(primaryEvidence) ? deriveEvidenceKey(primaryEvidence) : undefined,
+    evidencePath: item.snippet.path,
+    questionPlane: item.questionPlane,
+  };
 }
 
 export function addCorrection(state: TutorState, input: CorrectionInput): TutorState {

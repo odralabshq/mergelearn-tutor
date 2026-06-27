@@ -35,6 +35,16 @@ describe('review events and corrections', () => {
     expect(next.conceptStates[0]?.masteryEstimate).toBe(0.2);
   });
 
+  it('stores evidence metadata for wrong-evidence and duplicate feedback', () => {
+    const wrongEvidence = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_wrong_evidence' });
+    const duplicate = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_duplicate' });
+
+    expect(wrongEvidence.learningEvents[0]?.evidenceKey).toMatch(/^evidence_[a-f0-9]{16}$/);
+    expect(wrongEvidence.learningEvents[0]?.evidencePath).toBe('src/auth.ts');
+    expect(wrongEvidence.learningEvents[0]?.questionPlane).toBe('local_behavior');
+    expect(duplicate.learningEvents[0]?.evidenceKey).toBe(wrongEvidence.learningEvents[0]?.evidenceKey);
+  });
+
   it('records wrong answers as learner misses', () => {
     const next = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_wrong', note: 'learner missed it' });
     expect(next.conceptStates[0]?.failedCount).toBe(1);

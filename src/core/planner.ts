@@ -1,6 +1,6 @@
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { evaluateCardQuality } from './cardQuality.js';
-import type { CardBatchMode, CardQualityResult, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
+import type { CardBatchMode, CardQualityResult, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningEvent, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
 import { applyCorrections, recordReviewEvent } from './events.js';
 import { isUnifiedDiffSnippet } from './diffEvidence.js';
 import { deriveEvidenceKey, hasEvidenceContent } from './evidenceIdentity.js';
@@ -216,9 +216,11 @@ export function generateLearningItems(state: TutorState, preferences: UserPrefer
 function buildLearningItems(state: TutorState, preferences: UserPreferences, count: number, batchId: string, generation: number, source: LearningItemSource, now: string, courseId?: string): LearningItem[] {
   const existing = activeLearningItems(state);
   const selected: LearningItem[] = [];
-  for (const concept of topDueConcepts(state, Math.max(1, count) * 3)
+  for (const originalConcept of topDueConcepts(state, Math.max(1, count) * 3)
     .filter((concept) => conceptMatchesCourse(state, concept, courseId))
   ) {
+    const concept = conceptWithoutRejectedEvidence(state, originalConcept);
+    if (concept.evidence.length === 0) continue;
     if (selected.length >= Math.max(1, count)) break;
     const conceptState = state.conceptStates.find((candidate) => candidate.conceptId === concept.id);
     const acceptedQuestion = acceptedQuestionFor(state, concept.id, courseId);
@@ -260,7 +262,7 @@ function applyPriorFeedbackToQuality(quality: CardQualityResult, item: LearningI
   const warnings = new Set(quality.warnings);
   const scores = { ...quality.scores };
   let verdict = quality.verdict;
-  if (priorEvents.some((event) => event.eventType === 'marked_wrong_evidence' && sharesEvidenceWithEvent(item, event.itemId, state))) {
+  if (priorEvents.some((event) => event.eventType === 'marked_wrong_evidence' && sharesEvidenceWithEvent(item, event, state))) {
     warnings.add('prior wrong-evidence feedback');
     verdict = 'blocked';
   }
@@ -268,7 +270,7 @@ function applyPriorFeedbackToQuality(quality: CardQualityResult, item: LearningI
     warnings.add('prior bad-card feedback');
     if (verdict === 'ready') verdict = 'needs_review';
   }
-  if (priorEvents.some((event) => event.eventType === 'marked_duplicate')) {
+  if (priorEvents.some((event) => event.eventType === 'marked_duplicate' && duplicateFeedbackMatches(item, event, state))) {
     warnings.add('prior duplicate feedback');
     scores.duplicateRisk = Math.max(scores.duplicateRisk, 0.75);
     if (verdict === 'ready') verdict = 'needs_review';
@@ -276,15 +278,23 @@ function applyPriorFeedbackToQuality(quality: CardQualityResult, item: LearningI
   return { verdict, scores, warnings: [...warnings] };
 }
 
-function sharesEvidenceWithEvent(item: LearningItem, eventItemId: string, state: TutorState): boolean {
-  const prior = state.learningItems.find((candidate) => candidate.id === eventItemId);
-  if (!prior) return true;
+function sharesEvidenceWithEvent(item: LearningItem, event: LearningEvent, state: TutorState): boolean {
   const current = evidenceIdentitySet(item);
+  if (event.evidenceKey) return current.contentKeys.has(event.evidenceKey);
+  if (event.evidencePath && current.contentKeys.size === 0) return current.paths.has(event.evidencePath);
+  const prior = state.learningItems.find((candidate) => candidate.id === event.itemId);
+  if (!prior) return true;
   const previous = evidenceIdentitySet(prior);
   if (current.contentKeys.size && previous.contentKeys.size) {
     return [...previous.contentKeys].some((key) => current.contentKeys.has(key));
   }
   return [...previous.paths].some((path) => current.paths.has(path));
+}
+
+function duplicateFeedbackMatches(item: LearningItem, event: LearningEvent, state: TutorState): boolean {
+  if (event.questionPlane && event.questionPlane !== item.questionPlane) return false;
+  if (event.evidencePath) return evidenceIdentitySet(item).paths.has(event.evidencePath);
+  return sharesEvidenceWithEvent(item, event, state);
 }
 
 function evidenceIdentitySet(item: LearningItem): { contentKeys: Set<string>; paths: Set<string> } {
@@ -296,6 +306,18 @@ function evidenceIdentitySet(item: LearningItem): { contentKeys: Set<string>; pa
     if (hasEvidenceContent(evidence)) contentKeys.add(deriveEvidenceKey(evidence));
   }
   return { contentKeys, paths };
+}
+
+function conceptWithoutRejectedEvidence(state: TutorState, concept: Concept): Concept {
+  const wrongEvidenceEvents = state.learningEvents.filter((event) => event.conceptId === concept.id && event.eventType === 'marked_wrong_evidence');
+  if (wrongEvidenceEvents.length === 0) return concept;
+  const rejectedKeys = new Set(wrongEvidenceEvents.map((event) => event.evidenceKey).filter((key): key is string => Boolean(key)));
+  const rejectedPaths = new Set(wrongEvidenceEvents.filter((event) => !event.evidenceKey).map((event) => event.evidencePath).filter((path): path is string => Boolean(path)));
+  const evidence = concept.evidence.filter((item) => {
+    if (hasEvidenceContent(item)) return !rejectedKeys.has(deriveEvidenceKey(item));
+    return !rejectedPaths.has(item.path);
+  });
+  return evidence.length === concept.evidence.length ? concept : { ...concept, evidence };
 }
 
 export function renderCardMarkdown(concept: Concept, state?: ConceptState, plane: QuestionPlane = planeFor(concept, DEFAULT_PREFERENCES), snippet: CodeSnippet = snippetFor(concept, DEFAULT_PREFERENCES)): string {

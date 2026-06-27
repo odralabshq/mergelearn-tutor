@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_PREFERENCES } from '../../src/core/preferences.js';
 import { recordReviewEvent } from '../../src/core/events.js';
 import { activeLearningItems, generateCardBatch, mergeLearningState, recordAnswer } from '../../src/core/planner.js';
 import { createEmptyState } from '../../src/core/store.js';
@@ -120,6 +121,24 @@ describe('planner', () => {
     expect(regenerated.cardBatches.at(-1)?.itemIds).toEqual([]);
   });
 
+  it('uses alternate evidence for a concept after the prior evidence was marked wrong', () => {
+    const twoEvidenceConcept: Concept = {
+      ...concept,
+      evidence: [
+        { commit: 'abc123', path: 'src/auth.ts', label: 'auth', snippet: '+if (!session) return forbidden();' },
+        { commit: 'abc123', path: 'src/billing.ts', label: 'billing auth', snippet: '+return user.permissions.includes("billing");' },
+      ],
+    };
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [twoEvidenceConcept]);
+    const item = activeLearningItems(state)[0]!;
+    const withWrongEvidence = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_wrong_evidence' });
+
+    const regenerated = generateCardBatch(withWrongEvidence, undefined, { count: 1, mode: 'regenerate' });
+
+    expect(activeLearningItems(regenerated)).toHaveLength(1);
+    expect(activeLearningItems(regenerated)[0]?.snippet.path).toBe('src/billing.ts');
+  });
+
   it('still blocks legacy path-only evidence without snippets by path', () => {
     const legacyConcept = { ...concept, evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth' }] };
     const state = mergeLearningState(createEmptyState('/repo'), [artifact], [legacyConcept]);
@@ -149,6 +168,29 @@ describe('planner', () => {
 
     expect(activeLearningItems(regenerated)).toHaveLength(1);
     expect(activeLearningItems(regenerated)[0]?.snippet.code).toContain('permissions');
+  });
+
+  it('downgrades duplicate feedback only when concept, path, and question plane repeat', () => {
+    const preferences = { ...DEFAULT_PREFERENCES, review: { ...DEFAULT_PREFERENCES.review, enabledPlanes: ['risk_and_tests' as const], defaultPlane: 'risk_and_tests' as const } };
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept], preferences);
+    const item = activeLearningItems(state)[0]!;
+    const withDuplicateFeedback = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_duplicate' });
+
+    const regenerated = generateCardBatch(withDuplicateFeedback, preferences, { count: 1, mode: 'regenerate' });
+
+    expect(activeLearningItems(regenerated)[0]?.quality?.verdict).toBe('needs_review');
+    expect(activeLearningItems(regenerated)[0]?.quality?.warnings).toContain('prior duplicate feedback');
+  });
+
+  it('does not downgrade duplicate feedback for a different question plane', () => {
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
+    const item = activeLearningItems(state)[0]!;
+    const withDuplicateFeedback = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_duplicate' });
+
+    const regenerated = generateCardBatch(withDuplicateFeedback, undefined, { count: 1, mode: 'regenerate' });
+
+    expect(activeLearningItems(regenerated)[0]?.questionPlane).not.toBe(item.questionPlane);
+    expect(activeLearningItems(regenerated)[0]?.quality?.warnings).not.toContain('prior duplicate feedback');
   });
 
   it('regenerates prior bad-card concepts as needs-review instead of ready', () => {

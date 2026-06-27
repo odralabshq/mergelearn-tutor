@@ -479,3 +479,9 @@ npm run build
 - Added a normalized concept-finding seam with source, reason, path, confidence, optional symbol, and derived evidence key.
 - Kept public `Concept[]` extraction output compatible by reducing findings back into existing concept/evidence records.
 - Added AST symbol extraction for interface and type-alias findings.
+
+## 2026-06-27 E3: correction semantics follow evidence
+
+- Stored evidence key/path/plane metadata on wrong-evidence and duplicate review events.
+- Planner now avoids rejected evidence while still using alternate evidence for the same concept when available.
+- Duplicate feedback now downgrades repeated concept/path/question-plane cards instead of the whole concept.
