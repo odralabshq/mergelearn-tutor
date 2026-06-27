@@ -56,3 +56,27 @@ Focused verification passed:
 npm test -- --run tests/core/events.test.ts tests/core/planner.test.ts
 npm run check
 ```
+
+## E4 migration boundary result
+
+Decision: keep evidence identity derived-only for `EvidenceRef` and `ConceptFinding`; do not bump `TutorState.version` yet.
+
+Rationale:
+
+- Evidence keys can be deterministically derived from existing commit/path/label/snippet content.
+- Persisting keys on every evidence record would require a broad state migration before the product has proven the final finding schema.
+- E3 only added optional review-event metadata (`evidenceKey`, `evidencePath`, `questionPlane`) for newly recorded wrong-evidence/duplicate feedback.
+- Legacy state remains valid because old learning events can omit those optional fields and planner matching still falls back to prior item/path behavior.
+
+Added compatibility coverage:
+
+```bash
+npm test -- --run tests/core/storeDashboard.test.ts
+npm run check
+```
+
+Next dependency-safe queue:
+
+1. Wait for external scientific-effectiveness deep research reports, then convert evidence-backed recommendations into product tasks.
+2. In parallel or after that, continue JSON store hardening only when a persisted finding/evidence schema is justified: explicit state versioning, event append/export/import, and migration fixtures.
+3. Use the research output to decide whether the next product batch should prioritize evaluation instrumentation, learning-loop UX, or richer code-extraction semantics.

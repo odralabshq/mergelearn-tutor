@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -27,5 +27,31 @@ describe('local state and dashboard', () => {
     expect(html).toContain('Auth boundary');
     expect(html).toContain('Progress map');
     expect(html).toContain('if (!session)');
+  });
+
+  it('loads legacy review events without persisted evidence metadata', async () => {
+    const repo = await mkdtemp(path.join(os.tmpdir(), 'mergelearn-tutor-legacy-state-'));
+    const state = mergeLearningState(createEmptyState(repo), [artifact], [concept]);
+    await saveState(repo, {
+      ...state,
+      learningEvents: [{
+        id: 'event_legacy',
+        itemId: state.learningItems[0]!.id,
+        conceptId: 'security.auth_boundary',
+        eventType: 'marked_wrong_evidence',
+        createdAt: state.createdAt,
+      }],
+    });
+    const raw = JSON.parse(await readFile(statePath(repo), 'utf8'));
+    delete raw.learningEvents[0].evidenceKey;
+    delete raw.learningEvents[0].evidencePath;
+    delete raw.learningEvents[0].questionPlane;
+    await writeFile(statePath(repo), `${JSON.stringify(raw, null, 2)}\n`);
+
+    const loaded = await loadState(repo);
+
+    expect(loaded.version).toBe(1);
+    expect(loaded.learningEvents[0]?.eventType).toBe('marked_wrong_evidence');
+    expect(loaded.learningEvents[0]?.evidenceKey).toBeUndefined();
   });
 });

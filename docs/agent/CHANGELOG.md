@@ -485,3 +485,10 @@ npm run build
 - Stored evidence key/path/plane metadata on wrong-evidence and duplicate review events.
 - Planner now avoids rejected evidence while still using alternate evidence for the same concept when available.
 - Duplicate feedback now downgrades repeated concept/path/question-plane cards instead of the whole concept.
+
+## 2026-06-27 E4: evidence identity migration boundary
+
+- Reassessed the store boundary after evidence-key and finding-shape changes.
+- Kept evidence keys derived-only for evidence/finding records and avoided a state-version bump.
+- Added a legacy-state compatibility test for review events without persisted evidence metadata.
+- Created a local-only external Deep Research packet for scientific evaluation of MergeLearn Tutor effectiveness.
