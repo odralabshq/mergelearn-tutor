@@ -61,6 +61,9 @@ describe('review session server', () => {
 
       const coursesHtml = await fetch(`${review.url}/courses`).then((res) => res.text());
       expect(coursesHtml).toContain('Courses organize goals');
+      expect(coursesHtml).toContain('Course setup guide');
+      expect(coursesHtml).toContain('Turn repo evidence into a focused track');
+      expect(coursesHtml).toContain('title, e.g. Understand session auth');
       expect(coursesHtml).toContain('Learn auth');
 
       const questionsDraft = await fetch(`${review.url}/api/questions/draft`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ courseId: 'learn-auth', provider: 'fake', count: 1 }) }).then((res) => res.json()) as { ok: boolean; questions: { summary: { draft: number }; questions: Array<{ id: string }> } };
@@ -73,6 +76,10 @@ describe('review session server', () => {
 
       const questionsHtml = await fetch(`${review.url}/questions`).then((res) => res.text());
       expect(questionsHtml).toContain('Evidence-bound LLM-style questions');
+      expect(questionsHtml).toContain('Question workflow');
+      expect(questionsHtml).toContain('Draft, accept, then review');
+      expect(questionsHtml).toContain('Target course');
+      expect(questionsHtml).toContain('learn-auth');
       const timeline = await fetch(`${review.url}/api/evidence-timeline`).then((res) => res.json()) as { nodes: unknown[]; edges: unknown[] };
       expect(timeline.nodes.length).toBeGreaterThan(0);
       expect(timeline.edges.length).toBeGreaterThan(0);

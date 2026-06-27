@@ -74,6 +74,15 @@ Archived cards stay in history.
 
 Use Courses to define what you are trying to learn.
 
+The browser page now starts with a `Course setup guide`. Use it to move from a fuzzy topic to a focused learning track:
+
+1. Pick a concrete learning outcome.
+2. Scope material and docs paths.
+3. Draft course questions.
+4. Generate course-specific review cards.
+
+The course form includes examples and safe defaults. Leave the id blank if you want MergeLearn Tutor to generate one from the title.
+
 A course contains:
 
 - course id
@@ -103,6 +112,8 @@ Use Courses when you want the tutor to connect material, goals, and accepted que
 ![Questions page](assets/screenshots/questions.png)
 
 Use Questions to manage the question bank.
+
+The `Question workflow` panel explains the staging model: draft locally, accept only useful prompts, and then let accepted questions feed review cards. If at least one course exists, choose the target course from the `Target course` selector before drafting in the browser.
 
 What this page shows:
 
