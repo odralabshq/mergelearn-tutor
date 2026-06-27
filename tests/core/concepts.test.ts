@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { extractConcepts } from '../../src/core/concepts.js';
+import { extractConceptFindings, extractConcepts } from '../../src/core/concepts.js';
 import type { CommitArtifact } from '../../src/core/types.js';
 
 function artifact(diff: string, changedFiles = ['src/auth/session.ts']): CommitArtifact {
@@ -48,5 +48,18 @@ describe('concept extraction', () => {
     expect(snippet).toContain('-export function validateSession');
     expect(snippet).toContain('+export async function validateSession');
     expect(snippet).not.toContain('diff --git');
+  });
+
+  it('normalizes concept findings with source, reason, path, and evidence identity', () => {
+    const diff = 'diff --git a/src/auth/session.ts b/src/auth/session.ts\n+export type SessionEvent = { type: "login"; token: string } | { type: "logout" };';
+    const findings = extractConceptFindings([artifact(diff)]);
+    const unionFinding = findings.find((finding) => finding.conceptId === 'typescript.union_types');
+    const repoFinding = findings.find((finding) => finding.conceptId === 'repo.auth');
+
+    expect(unionFinding).toMatchObject({ source: 'ast', path: 'src/auth/session.ts' });
+    expect(unionFinding?.reason).toContain('union');
+    expect(unionFinding?.evidenceKey).toMatch(/^evidence_[a-f0-9]{16}$/);
+    expect(unionFinding?.confidence).toBeGreaterThan(0.8);
+    expect(repoFinding).toMatchObject({ source: 'repo_domain', path: 'src/auth/session.ts' });
   });
 });

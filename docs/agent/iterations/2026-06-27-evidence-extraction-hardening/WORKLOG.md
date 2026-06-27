@@ -24,3 +24,19 @@ Focused verification passed:
 npm test -- --run tests/core/evidenceIdentity.test.ts tests/core/planner.test.ts
 npm run check
 ```
+
+## E2 implementation result
+
+Implemented a normalized concept finding seam while preserving public concept output:
+
+- Added `ConceptFinding` / `ConceptFindingSource` and `extractConceptFindings()`.
+- Findings include concept ID, source (`ast`, `regex`, `path`, `repo_domain`), reason, path, commit, snippet, optional symbol, confidence, and evidence key.
+- `extractConcepts()` now reduces findings back into the existing `Concept[]` shape, so callers and persisted state remain compatible.
+- TypeScript AST analyzer now carries symbol names for interface/type-alias findings.
+
+Focused verification passed:
+
+```bash
+npm test -- --run tests/core/concepts.test.ts tests/core/typescriptAstAnalyzer.test.ts
+npm run check
+```

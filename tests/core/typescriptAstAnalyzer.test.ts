@@ -15,6 +15,8 @@ describe('TypeScript AST analyzer', () => {
     expect(ids).toContain('typescript.union_types');
     expect(ids).toContain('typescript.generics');
     expect(ids).toContain('typescript.async_await');
+    expect(findings.find((finding) => finding.conceptId === 'typescript.interfaces')?.symbol).toBe('User');
+    expect(findings.find((finding) => finding.conceptId === 'typescript.union_types')?.symbol).toBe('Result');
   });
 
   it('detects React hook calls in TSX snippets', () => {

@@ -473,3 +473,9 @@ npm run build
 
 - Added a derived evidence key helper based on commit, path, label, and snippet/code hash.
 - Wrong-evidence regeneration now distinguishes changed snippets on the same path while preserving path fallback for legacy path-only evidence.
+
+## 2026-06-27 E2: normalized concept findings
+
+- Added a normalized concept-finding seam with source, reason, path, confidence, optional symbol, and derived evidence key.
+- Kept public `Concept[]` extraction output compatible by reducing findings back into existing concept/evidence records.
+- Added AST symbol extraction for interface and type-alias findings.
