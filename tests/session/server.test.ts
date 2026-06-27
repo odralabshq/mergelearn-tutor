@@ -138,7 +138,16 @@ describe('review session server', () => {
       expect(preferences.review.mode).toBe('snippet_first');
 
       const preferencesHtml = await fetch(`${review.url}/preferences`).then((res) => res.text());
-      expect(preferencesHtml).toContain('Do you want language mechanics questions?');
+      expect(preferencesHtml).toContain('Question preferences setup');
+      expect(preferencesHtml).toContain('Setup wizard');
+      expect(preferencesHtml).toContain('Start with a recommended mix');
+      expect(preferencesHtml).toContain('Daily code comprehension');
+      expect(preferencesHtml).toContain('Risk and test review');
+      expect(preferencesHtml).toContain('Repo onboarding');
+      expect(preferencesHtml).toContain('data-action="preferences-preset"');
+      expect(preferencesHtml).toContain('Back to Plan Builder');
+      expect(preferencesHtml).toContain('Draft questions next');
+      expect(preferencesHtml).toContain('Language mechanics');
       expect(preferencesHtml).toContain('Example: What could break');
 
       const updatedPrefs = await fetch(`${review.url}/api/preferences`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ review: { snippetLineCount: 8, showExplanationsByDefault: true } }) }).then((res) => res.json()) as { ok: boolean; preferences: { review: { snippetLineCount: number } } };

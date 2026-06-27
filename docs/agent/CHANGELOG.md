@@ -469,6 +469,24 @@ npm test
 npm run build
 ```
 
+## 2026-06-27 Autonomous cycle 9: Preferences setup wizard
+
+- Reworked `/preferences` from a flat checkbox list into a setup wizard with three recommended local question mixes: `Daily code comprehension`, `Risk and test review`, and `Repo onboarding`.
+- Added preset buttons that update enabled question planes, snippet length, explanation defaults, and a live local summary before the user saves preferences.
+- Added clear links back to Plan Builder and Questions so preferences connect to the setup-to-review workflow without enabling remote LLM calls.
+- Updated session-server regression coverage and the user manual for the recommended preference mixes.
+- Captured before screenshots for all primary pages and an after screenshot for the affected Preferences page.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+git diff --check
+```
+
 ## 2026-06-27 E1: stable evidence identity
 
 - Added a derived evidence key helper based on commit, path, label, and snippet/code hash.

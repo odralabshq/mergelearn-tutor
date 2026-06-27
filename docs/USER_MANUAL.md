@@ -254,7 +254,15 @@ mergelearn-tutor progress --repo .
 
 ![Preferences page](assets/screenshots/preferences.png)
 
-Use Preferences to choose question types.
+Use Preferences to choose the question mix before drafting questions or generating cards. The page now starts with a setup wizard so you do not have to understand every question plane first.
+
+Recommended mixes:
+
+- `Daily code comprehension` — a focused default for recent changes: local behavior, file role, and risk/testing.
+- `Risk and test review` — emphasizes failure modes, coverage, and architecture flow before refactors or PR review.
+- `Repo onboarding` — turns explanations on and adds repo vocabulary/architecture prompts for unfamiliar codebases.
+
+Click `Use this mix`, optionally adjust the individual categories, then save. The preset only writes local preferences in `.skilltrace/preferences.json`; it does not enable remote LLM calls. Return to `Plan Builder` when you want to continue the setup path, or open `Questions` to draft evidence-bound prompts with the saved mix.
 
 Question planes:
 
