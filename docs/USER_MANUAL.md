@@ -65,6 +65,7 @@ How to use it:
 4. Choose `I knew it`, `Partly`, or `Missed it`.
 5. Use `Bad card` or `Wrong evidence` when the tutor is wrong. These quality flags do not count as learner failure.
 6. The confidence choice is saved before reveal so History can show calibration between confidence and later correctness.
+7. Correct or missed answers automatically schedule delayed probes for 2 and 7 days later. Use History or `mergelearn-tutor delayed list --repo .` to see what is due.
 
 Queue controls:
 

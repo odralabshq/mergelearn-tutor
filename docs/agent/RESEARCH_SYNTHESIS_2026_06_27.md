@@ -14,8 +14,8 @@ Bottom line: the product direction is credible, but the strongest evidence suppo
 
 Recommended next implementation order:
 
-1. Add confidence-before-reveal events and calibration summaries.
-2. Add delayed recall scheduling/probes at 2 and 7 days.
+1. Add confidence-before-reveal events and calibration summaries. Done in `0bfd659`.
+2. Add delayed recall scheduling/probes at 2 and 7 days. Started after independent review gate; automatic probe scheduling and completion APIs/CLI now exist locally.
 3. Add active-control/passive-review mode for experiments.
 4. Add transfer/debugging/localisation card templates.
 5. Add opt-in code-free event export for studies.

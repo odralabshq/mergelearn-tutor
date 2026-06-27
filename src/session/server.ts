@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { summarizeCalibration } from '../core/calibration.js';
 import { coursesSummary, upsertCourse } from '../core/courses.js';
 import { evaluateCardQuality } from '../core/cardQuality.js';
+import { completeDelayedProbe, delayedProbeSummary, dueDelayedProbes } from '../core/delayedProbes.js';
 import { diffSnippetCss, renderDiffSnippetHtml } from '../core/diffView.js';
 import { buildEvidenceTimeline, graphByType } from '../core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from '../core/events.js';
@@ -50,6 +51,7 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
   if (method === 'GET' && url.pathname === '/api/progress') return sendJson(res, 200, buildProgressGraph(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/calibration') return sendJson(res, 200, summarizeCalibration(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/delayed-probes') return sendJson(res, 200, delayedProbeData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/cards/history') return sendJson(res, 200, cardHistoryData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/courses') return sendJson(res, 200, { courses: coursesSummary(await loadState(repoPath)) });
   if (method === 'GET' && url.pathname === '/api/questions') return sendJson(res, 200, questionBankData(await loadState(repoPath)));
@@ -97,6 +99,13 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
     await saveState(repoPath, next);
     return sendJson(res, 200, { ok: true, state: summarizeState(next) });
   }
+  if (method === 'POST' && url.pathname === '/api/delayed-probes/complete') {
+    const body = await readJson(req) as { probeId?: string; answer?: string; correct?: boolean };
+    if (!body.probeId || !body.answer) return sendJson(res, 400, { ok: false, error: 'probeId and answer are required' });
+    const next = completeDelayedProbe(await loadState(repoPath), { probeId: body.probeId, answerText: body.answer, correct: Boolean(body.correct) });
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, state: summarizeState(next), delayedProbes: delayedProbeData(next) });
+  }
   if (method === 'POST' && url.pathname === '/feedback') {
     const body = await readJson(req) as { itemId?: string; eventType?: ReviewEventType; confidenceBeforeReveal?: number; note?: string };
     if (!body.itemId || !body.eventType) return sendJson(res, 400, { ok: false, error: 'itemId and eventType are required' });
@@ -117,7 +126,17 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
 function summarizeState(state: TutorState): Record<string, number> {
   const active = activeLearningItems(state).length;
   const archived = state.learningItems.filter((item) => item.status === 'archived').length;
-  return { concepts: state.concepts.length, cards: state.learningItems.length, activeCards: active, archivedCards: archived, batches: state.cardBatches.length, events: state.learningEvents.length, corrections: state.corrections.length };
+  return { concepts: state.concepts.length, cards: state.learningItems.length, activeCards: active, archivedCards: archived, batches: state.cardBatches.length, events: state.learningEvents.length, delayedProbes: (state.delayedProbes ?? []).length, corrections: state.corrections.length };
+}
+
+function delayedProbeData(state: TutorState) {
+  const due = dueDelayedProbes(state);
+  return {
+    summary: delayedProbeSummary(state),
+    due,
+    upcoming: (state.delayedProbes ?? []).filter((probe) => probe.status === 'scheduled' && !due.some((dueProbe) => dueProbe.id === probe.id)),
+    completed: (state.delayedProbes ?? []).filter((probe) => probe.status === 'completed'),
+  };
 }
 
 function cardHistoryData(state: TutorState) {
@@ -545,7 +564,8 @@ function renderHistorySourceAudit(state: TutorState): string {
   const acceptedQuestionCards = state.learningItems.filter((item) => item.questionId).length;
   const qualityEvents = state.learningEvents.filter((event) => ['marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate'].includes(event.eventType)).length;
   const calibration = summarizeCalibration(state);
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Why did these cards exist?</h2><p>Use this before inspecting individual cards: it separates broad repo evidence, course-scoped generation, accepted-question cards, and card-quality feedback.</p></div><a class="ghost" href="/">Change Review source</a></div><div class="mini-grid"><article class="mini-card"><strong>${broadCards}</strong><p>All due repo evidence cards</p><small>Cards without a course id came from the broad queue.</small></article><article class="mini-card"><strong>${courseCards}</strong><p>Course-scoped cards</p><small>These should show a course id on the card and in history.</small></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p><small>These were generated from approved prompts in the question bank.</small></article><article class="mini-card"><strong>${qualityEvents}</strong><p>Card-quality events</p><small>Bad-card/wrong-evidence/duplicate feedback is audited without lowering mastery.</small></article><article class="mini-card"><strong>${calibration.pairedCount}</strong><p>Calibrated answers</p><small>Confidence ${score(calibration.averageConfidence)} · accuracy ${score(calibration.accuracy)} · Brier ${calibration.brierScore.toFixed(2)}</small></article></div></section>`;
+  const delayed = delayedProbeSummary(state);
+  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Why did these cards exist?</h2><p>Use this before inspecting individual cards: it separates broad repo evidence, course-scoped generation, accepted-question cards, delayed probes, and card-quality feedback.</p></div><a class="ghost" href="/">Change Review source</a></div><div class="mini-grid"><article class="mini-card"><strong>${broadCards}</strong><p>All due repo evidence cards</p><small>Cards without a course id came from the broad queue.</small></article><article class="mini-card"><strong>${courseCards}</strong><p>Course-scoped cards</p><small>These should show a course id on the card and in history.</small></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p><small>These were generated from approved prompts in the question bank.</small></article><article class="mini-card"><strong>${qualityEvents}</strong><p>Card-quality events</p><small>Bad-card/wrong-evidence/duplicate feedback is audited without lowering mastery.</small></article><article class="mini-card"><strong>${delayed.due}</strong><p>Delayed probes due</p><small>${delayed.scheduled} scheduled · ${delayed.completed} completed · <a href="/api/delayed-probes">Open delayed-probe JSON</a></small></article><article class="mini-card"><strong>${calibration.pairedCount}</strong><p>Calibrated answers</p><small>Confidence ${score(calibration.averageConfidence)} · accuracy ${score(calibration.accuracy)} · Brier ${calibration.brierScore.toFixed(2)}</small></article></div></section>`;
 }
 
 function recentHistoryActivity(state: TutorState): string {

@@ -15,13 +15,14 @@ export type QuestionPlane = 'language_mechanics' | 'local_behavior' | 'file_role
 export type LearningItemStatus = 'active' | 'archived';
 export type LearningItemSource = 'ingest' | 'manual_generate' | 'regenerate';
 export type CardBatchMode = 'initial' | 'more' | 'regenerate';
-export type ReviewEventType = 'shown' | 'revealed' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
+export type ReviewEventType = 'shown' | 'revealed' | 'answered' | 'delayed_probe_completed' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 export type ManualRatingTargetType = 'concept' | 'card';
 export type QuestionBankStatus = 'draft' | 'accepted' | 'rejected' | 'active' | 'archived';
 export type QuestionAuthorType = 'deterministic' | 'llm';
 export type QuestionProvider = 'deterministic' | 'fake' | 'local';
 export type CardQualityVerdict = 'ready' | 'needs_review' | 'blocked';
+export type DelayedProbeStatus = 'scheduled' | 'completed';
 
 export type CardQualityResult = {
   verdict: CardQualityVerdict;
@@ -212,6 +213,18 @@ export type LearningEvent = {
   createdAt: string;
 };
 
+export type DelayedProbe = {
+  id: string;
+  sourceItemId: string;
+  conceptId: string;
+  intervalDays: 2 | 7;
+  dueAt: string;
+  status: DelayedProbeStatus;
+  scheduledAt: string;
+  completedAt?: string;
+  correct?: boolean;
+};
+
 export type Correction = {
   id: string;
   targetType: 'concept' | 'card';
@@ -252,6 +265,7 @@ export type TutorState = {
   questionBank: QuestionBankEntry[];
   questionDraftBatches: QuestionDraftBatch[];
   learningEvents: LearningEvent[];
+  delayedProbes?: DelayedProbe[];
   corrections: Correction[];
   manualRatings: ManualRating[];
 };

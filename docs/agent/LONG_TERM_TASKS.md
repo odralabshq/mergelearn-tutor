@@ -23,8 +23,8 @@ Source: `docs/research/deep-research-report.md` plus current local product state
 ## Scientific effectiveness research loop
 
 7. External Deep Research packet on platform effectiveness. Status: returned reports analyzed in `docs/agent/RESEARCH_SYNTHESIS_2026_06_27.md`; report 3 was a placeholder because prior outputs were not attached.
-8. Confidence-before-reveal and calibration summaries. Status: active short-term batch in `docs/agent/iterations/2026-06-27-scientific-calibration/`.
-9. Delayed recall probes at 2 and 7 days. Status: next after calibration foundation.
+8. Confidence-before-reveal and calibration summaries. Status: complete locally in `0bfd659`.
+9. Delayed recall probes at 2 and 7 days. Status: active batch; automatic scheduling/completion state, API, History summary, and CLI surface are being verified.
 10. Active-control passive-review mode for experiments. Status: pending after delayed-probe metadata exists.
 11. Transfer/debugging/localisation task families. Status: pending after core measurement loop.
 12. Opt-in code-free study export. Status: pending; must preserve local-first/no-telemetry default.

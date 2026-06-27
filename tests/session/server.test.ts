@@ -87,6 +87,7 @@ describe('review session server', () => {
       expect(historyHtml).toContain('Source audit');
       expect(historyHtml).toContain('All due repo evidence cards');
       expect(historyHtml).toContain('Card-quality events');
+      expect(historyHtml).toContain('Delayed probes due');
       expect(historyHtml).toContain('Recent activity');
       expect(historyHtml).toContain('Raw history JSON');
 
@@ -177,12 +178,16 @@ describe('review session server', () => {
       expect(reveal.ok).toBe(true);
       expect(reveal.state.events).toBe(1);
 
-      const answer = await fetch(`${review.url}/answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', answer: 'Auth gates access to sensitive behavior.', correct: true }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
+      const answer = await fetch(`${review.url}/answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', answer: 'Auth gates access to sensitive behavior.', correct: true }) }).then((res) => res.json()) as { ok: boolean; state: { events: number; delayedProbes: number } };
       expect(answer.ok).toBe(true);
       expect(answer.state.events).toBe(2);
+      expect(answer.state.delayedProbes).toBe(2);
       const calibration = await fetch(`${review.url}/api/calibration`).then((res) => res.json()) as { pairedCount: number; accuracy: number };
       expect(calibration.pairedCount).toBe(1);
       expect(calibration.accuracy).toBe(1);
+      const delayed = await fetch(`${review.url}/api/delayed-probes`).then((res) => res.json()) as { summary: { scheduled: number; completed: number; due: number } };
+      expect(delayed.summary.scheduled).toBe(2);
+      expect(delayed.summary.completed).toBe(0);
 
       const feedback = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_useful' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(feedback.ok).toBe(true);

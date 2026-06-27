@@ -1,8 +1,9 @@
 import type { Correction, CorrectionType, LearningEvent, ReviewEventType, TutorState } from './types.js';
+import { scheduleDelayedProbesForAnswer } from './delayedProbes.js';
 import { deriveEvidenceKey, hasEvidenceContent } from './evidenceIdentity.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
-const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'revealed', 'answered', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate', 'corrected', 'deferred']);
+const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'revealed', 'answered', 'delayed_probe_completed', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate', 'corrected', 'deferred']);
 const VALID_CORRECTION_TYPES = new Set<CorrectionType>(['wrong_concept', 'wrong_evidence', 'duplicate', 'better_label', 'not_useful', 'pin_important']);
 
 export type ReviewEventInput = {
@@ -45,7 +46,7 @@ export function recordReviewEvent(state: TutorState, input: ReviewEventInput): T
     if (conceptState.conceptId !== item.conceptId) return conceptState;
     return updateConceptStateForEvent(conceptState, input.eventType, input.correct, now);
   });
-  return applyCorrections({ ...state, conceptStates, learningEvents: [...state.learningEvents, event] });
+  return scheduleDelayedProbesForAnswer(applyCorrections({ ...state, conceptStates, learningEvents: [...state.learningEvents, event] }), event);
 }
 
 function eventEvidenceMetadata(item: TutorState['learningItems'][number], eventType: ReviewEventType): Pick<LearningEvent, 'evidenceKey' | 'evidencePath' | 'questionPlane'> {
@@ -115,7 +116,7 @@ function updateConceptStateForEvent<T extends TutorState['conceptStates'][number
   if (eventType === 'marked_useful') return { ...conceptState, importance: clamp(conceptState.importance + 0.1, 0, 1), repoRelevance: clamp(conceptState.repoRelevance + 0.1, 0, 1) };
   if (eventType === 'skipped' || eventType === 'marked_unsure' || eventType === 'deferred') return { ...conceptState, failedCount: conceptState.failedCount + 1, confidence: clamp(conceptState.confidence - 0.08, 0, 1), nextReviewAt: addDays(now, 1) };
   if (eventType === 'marked_wrong') return { ...conceptState, failedCount: conceptState.failedCount + 1, masteryEstimate: clamp(conceptState.masteryEstimate - 0.1, 0, 1), confidence: clamp(conceptState.confidence - 0.15, 0, 1), nextReviewAt: addDays(now, 1) };
-  if (eventType === 'answered' || eventType === 'marked_correct') {
+  if (eventType === 'answered' || eventType === 'marked_correct' || eventType === 'delayed_probe_completed') {
     const isCorrect = correct ?? eventType === 'marked_correct';
     return {
       ...conceptState,

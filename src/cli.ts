@@ -3,6 +3,7 @@ import { Command } from 'commander';
 
 import { extractConcepts } from './core/concepts.js';
 import { coursesSummary, upsertCourse } from './core/courses.js';
+import { completeDelayedProbe, delayedProbeSummary, dueDelayedProbes } from './core/delayedProbes.js';
 import { enrichLearningItems, renderEnrichmentComparison } from './core/enrichment.js';
 import { buildEvidenceTimeline } from './core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from './core/events.js';
@@ -61,6 +62,15 @@ function renderQuestions(state: Awaited<ReturnType<typeof loadState>>): string {
   const summary = questionSummary(state);
   const lines = ['Question bank', '', `Total: ${summary.total}`, `Draft: ${summary.draft}`, `Accepted: ${summary.accepted}`, `Rejected: ${summary.rejected}`, `Draft batches: ${summary.batches}`, `Network used: ${summary.networkUsed ? 'yes' : 'no'}`, ''];
   for (const entry of state.questionBank.slice(-12).reverse()) lines.push(`- ${entry.id} [${entry.status}] ${entry.prompt}\n  course: ${entry.courseId ?? 'none'} · concept: ${entry.conceptId} · provider: ${entry.author.provider}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function renderDelayedProbes(state: Awaited<ReturnType<typeof loadState>>): string {
+  const summary = delayedProbeSummary(state);
+  const due = dueDelayedProbes(state);
+  const lines = ['Delayed recall probes', '', `Total: ${summary.total}`, `Scheduled: ${summary.scheduled}`, `Completed: ${summary.completed}`, `Due now: ${summary.due}`, ''];
+  for (const probe of due.slice(0, 12)) lines.push(`- ${probe.id}: ${probe.intervalDays}-day probe for ${probe.sourceItemId}\n  concept: ${probe.conceptId}\n  due: ${probe.dueAt}`);
+  if (due.length === 0) lines.push('No delayed probes are due right now.');
   return `${lines.join('\n')}\n`;
 }
 
@@ -378,6 +388,28 @@ program.command('feedback')
     const next = recordReviewEvent(await loadState(options.repo), { itemId: options.item, eventType, confidenceBeforeReveal: options.confidence ? Number.parseInt(options.confidence, 10) : undefined, note: options.note });
     await saveState(options.repo, next);
     process.stdout.write(`Recorded ${options.event} for ${options.item}.\n`);
+  });
+
+const delayed = program.command('delayed')
+  .description('Manage delayed recall probes');
+
+delayed.command('list')
+  .description('List due delayed recall probes')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderDelayedProbes(await loadState(options.repo)));
+  });
+
+delayed.command('complete')
+  .description('Record a delayed recall probe answer')
+  .requiredOption('--probe <id>', 'delayed probe id')
+  .requiredOption('--answer <text>', 'plain-English delayed answer')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--correct', 'mark delayed answer correct', false)
+  .action(async (options: { repo: string; probe: string; answer: string; correct: boolean }) => {
+    const next = completeDelayedProbe(await loadState(options.repo), { probeId: options.probe, answerText: options.answer, correct: options.correct });
+    await saveState(options.repo, next);
+    process.stdout.write(`Completed delayed probe ${options.probe}.\n`);
   });
 
 program.command('rate')

@@ -517,3 +517,9 @@ git diff --check
 - Added the `2026-06-27-scientific-calibration` implementation batch.
 - Added confidence-before-reveal `revealed` review events and calibration summaries.
 - Exposed calibration through `/api/calibration`, History, browser Review confidence controls, and CLI feedback `--confidence`.
+
+## 2026-06-27 Delayed recall probes
+
+- Folded the independent scout reviews into the scientific calibration worklog.
+- Added 2-day and 7-day delayed probe scheduling after answered cards.
+- Added delayed-probe due/completion helpers, `/api/delayed-probes`, History summary, and CLI `delayed list` / `delayed complete`.
