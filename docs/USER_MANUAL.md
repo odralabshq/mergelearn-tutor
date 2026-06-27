@@ -63,8 +63,10 @@ How to use it:
 
 Queue controls:
 
-- `Generate 5 more` adds cards without deleting the current queue.
-- `Regenerate 5` archives the current active queue and creates a new focused queue.
+- `Review source` lets you keep the default broad queue (`All due repo evidence`) or target a specific course.
+- When a course is selected, generation uses that course's scoped evidence and accepted questions where they match.
+- `Generate 5 focused cards` adds cards without deleting the current queue.
+- `Regenerate from source` archives the current active queue and creates a new focused queue from the selected source.
 
 Archived cards stay in history.
 

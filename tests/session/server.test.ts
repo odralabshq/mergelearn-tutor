@@ -46,6 +46,10 @@ describe('review session server', () => {
       expect(html).toContain('From empty repo to useful review cards');
       expect(html).toContain('1 course ready');
       expect(html).toContain('Open Questions');
+      expect(html).toContain('Review source');
+      expect(html).toContain('All due repo evidence');
+      expect(html).toContain('Learn auth · 0 accepted · 0 active');
+      expect(html).toContain('Generate 5 focused cards');
 
       const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
       expect(progress.nodes.length).toBeGreaterThan(0);
@@ -101,9 +105,14 @@ describe('review session server', () => {
       expect(updatedPrefs.ok).toBe(true);
       expect(updatedPrefs.preferences.review.snippetLineCount).toBe(8);
 
-      const generated = await fetch(`${review.url}/api/cards/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 1, mode: 'more' }) }).then((res) => res.json()) as { ok: boolean; state: { activeCards: number; archivedCards: number } };
+      const generated = await fetch(`${review.url}/api/cards/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 1, mode: 'more', courseId: 'learn-auth' }) }).then((res) => res.json()) as { ok: boolean; state: { activeCards: number; archivedCards: number } };
       expect(generated.ok).toBe(true);
       expect(generated.state.activeCards).toBe(2);
+      const courseHistory = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { cards: Array<{ courseId?: string; questionId?: string }> };
+      expect(courseHistory.cards.some((card) => card.courseId === 'learn-auth' && card.questionId === firstQuestion.id)).toBe(true);
+      const focusedReviewHtml = await fetch(review.url).then((res) => res.text());
+      expect(focusedReviewHtml).toContain('course learn-auth');
+      expect(focusedReviewHtml).toContain('accepted question');
 
       const regenerated = await fetch(`${review.url}/api/cards/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 1, mode: 'regenerate' }) }).then((res) => res.json()) as { ok: boolean; state: { activeCards: number; archivedCards: number } };
       expect(regenerated.ok).toBe(true);
