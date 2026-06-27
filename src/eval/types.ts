@@ -1,5 +1,15 @@
 import type { EnrichmentProvider } from '../core/enrichment.js';
-import type { CardQualityResult, ConceptKind, Difficulty, LearningItemType } from '../core/types.js';
+import type { CardQualityResult, ConceptKind, Difficulty, LearningItemType, ManualRating } from '../core/types.js';
+
+export type ManualRatingAverages = Partial<Record<'relevance' | 'evidence' | 'answerability' | 'usefulness' | 'repeatability', number>>;
+
+export type ManualRatingEvaluationSummary = {
+  ratingCount: number;
+  conceptRatingCount: number;
+  cardRatingCount: number;
+  manualRatingCoverageRate: number;
+  averages: ManualRatingAverages;
+};
 
 export type EvaluationRepoSpec = {
   id: string;
@@ -9,6 +19,7 @@ export type EvaluationRepoSpec = {
   limit: number;
   expectedConceptIds?: string[];
   enrichmentProvider?: EnrichmentProvider;
+  manualRatings?: ManualRating[];
 };
 
 export type EnrichmentEvaluation = {
@@ -48,6 +59,9 @@ export type EvaluationScores = {
   qualityNeedsReviewCardRate: number;
   qualityBlockedCardRate: number;
   duplicateRiskCardRate: number;
+  manualRatingCount: number;
+  manualRatingCoverageRate: number;
+  manualRatingAverages: ManualRatingAverages;
   expectedConceptHitRate: number | null;
 };
 
@@ -62,6 +76,7 @@ export type EvaluatedRepo = {
   missingExpectedConcepts: string[];
   warnings: string[];
   scores: EvaluationScores;
+  manualRatingSummary: ManualRatingEvaluationSummary;
   enrichment?: EnrichmentEvaluation;
 };
 
@@ -76,6 +91,9 @@ export type EvaluationAggregate = {
   qualityNeedsReviewCardRate: number;
   qualityBlockedCardRate: number;
   duplicateRiskCardRate: number;
+  manualRatingCount: number;
+  manualRatingCoverageRate: number;
+  manualRatingAverages: ManualRatingAverages;
   expectedConceptHitRate: number | null;
 };
 

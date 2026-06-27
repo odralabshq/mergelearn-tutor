@@ -12,6 +12,18 @@ describe('evaluation harness', () => {
   it('evaluates fixture repos and reports expected concept coverage', async () => {
     const specs = await createAllEvalFixtures();
     specs[0]!.enrichmentProvider = 'fake';
+    specs[0]!.manualRatings = [
+      {
+        id: 'rating_fixture_auth_relevance',
+        targetType: 'concept',
+        targetId: 'security.auth_boundary',
+        conceptId: 'security.auth_boundary',
+        relevance: 5,
+        evidence: 4,
+        note: 'manual calibration seed for auth fixture',
+        createdAt: '2026-01-01T00:00:00.000Z',
+      },
+    ];
     const run = await evaluateRepos(specs);
     expect(run.repos).toHaveLength(3);
     expect(run.repos[0]?.enrichment?.provenanceOk).toBe(true);
@@ -23,12 +35,20 @@ describe('evaluation harness', () => {
     expect(run.aggregate.qualityReadyCardRate).toBeGreaterThan(0);
     expect(run.aggregate.qualityBlockedCardRate).toBe(0);
     expect(run.aggregate.duplicateRiskCardRate).toBeGreaterThanOrEqual(0);
+    expect(run.aggregate.manualRatingCount).toBe(1);
+    expect(run.aggregate.manualRatingCoverageRate).toBeGreaterThan(0);
+    expect(run.aggregate.manualRatingAverages.relevance).toBe(5);
+    expect(run.aggregate.manualRatingAverages.evidence).toBe(4);
+    expect(run.repos[0]?.manualRatingSummary.ratingCount).toBe(1);
     expect(run.repos[0]?.cardFindings[0]?.quality.verdict).toMatch(/ready|needs_review/);
     expect(run.aggregate.expectedConceptHitRate).toBeGreaterThanOrEqual(0.8);
     const markdown = renderEvaluationMarkdown(run);
     expect(markdown).toContain('MergeLearn Tutor Evaluation Report');
     expect(markdown).toContain('Quality ready card rate');
     expect(markdown).toContain('duplicate risk');
+    expect(markdown).toContain('Manual rating calibration');
+    expect(markdown).toContain('Manual rating coverage');
+    expect(markdown).toContain('Average relevance: 5.0/5');
     expect(markdown).toContain('Manual rating rubric');
   });
 

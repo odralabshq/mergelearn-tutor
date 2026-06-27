@@ -434,3 +434,9 @@ Observed full-suite result:
 - Regenerated cards reusing evidence previously marked `marked_wrong_evidence` are blocked from active review.
 - Regenerated cards for concepts previously marked `marked_bad_card` enter as `needs_review` with a warning instead of `ready`.
 - Prior duplicate feedback raises duplicate-risk warnings on future generated cards.
+
+## 2026-06-27 C2: rating-aware evaluation calibration
+
+- Added manual rating summaries to eval specs, per-repo scores, aggregate scores, and Markdown reports.
+- Reports now show manual rating coverage and per-field averages next to deterministic card-quality metrics.
+- Added fixture coverage proving ratings calibrate quality without changing learner mastery or planner behavior.

@@ -44,6 +44,7 @@ Current automated metrics:
 - ready / needs-review / blocked card-quality rates
 - average duplicate-risk score
 - average card-quality score
+- manual rating count, coverage, and per-field averages when ratings are provided to an eval spec
 - expected concept hit rate for fixtures
 - missing expected concepts
 - warnings for empty/no-output cases
@@ -75,6 +76,8 @@ Use concept ratings for relevance and evidence correctness. Use card ratings for
 | Session would be worth repeating |  |  |
 
 Manual rating is required because the product is about perceived learning value, not only extraction mechanics.
+
+When eval specs include `manualRatings`, the report also renders a `Manual rating calibration` section. This keeps deterministic quality gates honest by showing how much human-rated evidence exists, which dimensions have averages, and where coverage is still too sparse to tune thresholds confidently.
 
 ## Batch 1 dogfood result
 

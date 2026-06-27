@@ -63,3 +63,19 @@ Visual assessment:
 
 - Page is readable and useful as a bridge from setup to review.
 - No blocking visual issue found.
+
+## C2 implementation result
+
+Implemented rating-aware eval calibration:
+
+- Eval specs can now carry `manualRatings`.
+- Per-repo and aggregate eval output includes manual rating count, target coverage, and per-field averages.
+- Markdown reports render a `Manual rating calibration` section before per-repo details.
+- Deterministic quality remains a guardrail; manual usefulness stays the product-quality target.
+
+Focused verification passed:
+
+```bash
+npm test -- --run tests/eval/evaluationHarness.test.ts
+npm run check
+```

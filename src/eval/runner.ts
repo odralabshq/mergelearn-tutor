@@ -4,7 +4,9 @@ import { enrichLearningItems } from '../core/enrichment.js';
 import { collectCommits } from '../core/git.js';
 import { activeLearningItems, mergeLearningState } from '../core/planner.js';
 import { createEmptyState } from '../core/store.js';
-import type { EvaluationAggregate, EvaluatedRepo, EvaluationRepoSpec, EvaluationRun } from './types.js';
+import type { EvaluationAggregate, EvaluatedRepo, EvaluationRepoSpec, EvaluationRun, ManualRatingAverages, ManualRatingEvaluationSummary } from './types.js';
+
+const MANUAL_RATING_FIELDS = ['relevance', 'evidence', 'answerability', 'usefulness', 'repeatability'] as const;
 
 function rate(numerator: number, denominator: number): number {
   return denominator === 0 ? 0 : Number((numerator / denominator).toFixed(4));
@@ -36,6 +38,7 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
     answerableHeuristic: item.evidence.length > 0 && item.prompt.trim().length >= 20 && item.expectedFocus.length > 0,
     quality: evaluateCardQuality(item, activeCards.filter((candidate) => candidate.id !== item.id)),
   }));
+  const manualRatingSummary = summarizeManualRatings(spec.manualRatings ?? [], concepts.length + activeCards.length);
   const conceptIds = new Set(concepts.map((concept) => concept.id));
   const expectedConceptHits = [...expected].filter((id) => conceptIds.has(id));
   const missingExpectedConcepts = [...expected].filter((id) => !conceptIds.has(id));
@@ -61,8 +64,12 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
       qualityNeedsReviewCardRate: rate(cardFindings.filter((item) => item.quality.verdict === 'needs_review').length, cardFindings.length),
       qualityBlockedCardRate: rate(cardFindings.filter((item) => item.quality.verdict === 'blocked').length, cardFindings.length),
       duplicateRiskCardRate: rate(cardFindings.filter((item) => item.quality.scores.duplicateRisk >= 0.75).length, cardFindings.length),
+      manualRatingCount: manualRatingSummary.ratingCount,
+      manualRatingCoverageRate: manualRatingSummary.manualRatingCoverageRate,
+      manualRatingAverages: manualRatingSummary.averages,
       expectedConceptHitRate: expected.size === 0 ? null : rate(expectedConceptHits.length, expected.size),
     },
+    manualRatingSummary,
     enrichment,
   };
 }
@@ -93,6 +100,9 @@ function aggregate(repos: EvaluatedRepo[]): EvaluationAggregate {
   const qualityNeedsReview = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.verdict === 'needs_review').length, 0);
   const qualityBlocked = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.verdict === 'blocked').length, 0);
   const duplicateRisk = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.scores.duplicateRisk >= 0.75).length, 0);
+  const manualRatingCount = repos.reduce((sum, repo) => sum + repo.manualRatingSummary.ratingCount, 0);
+  const manualRatedTargets = repos.reduce((sum, repo) => sum + Math.round(repo.manualRatingSummary.manualRatingCoverageRate * (repo.conceptCount + repo.cardCount)), 0);
+  const manualRatings = repos.flatMap((repo) => repo.spec.manualRatings ?? []);
   const expectedRepos = repos.filter((repo) => repo.scores.expectedConceptHitRate !== null);
   return {
     repoCount: repos.length,
@@ -105,6 +115,29 @@ function aggregate(repos: EvaluatedRepo[]): EvaluationAggregate {
     qualityNeedsReviewCardRate: rate(qualityNeedsReview, totalCards),
     qualityBlockedCardRate: rate(qualityBlocked, totalCards),
     duplicateRiskCardRate: rate(duplicateRisk, totalCards),
+    manualRatingCount,
+    manualRatingCoverageRate: rate(manualRatedTargets, totalConcepts + totalCards),
+    manualRatingAverages: averageManualRatings(manualRatings),
     expectedConceptHitRate: expectedRepos.length === 0 ? null : rate(expectedRepos.reduce((sum, repo) => sum + (repo.scores.expectedConceptHitRate ?? 0), 0), expectedRepos.length),
   };
+}
+
+function summarizeManualRatings(ratings: EvaluationRepoSpec['manualRatings'], targetCount: number): ManualRatingEvaluationSummary {
+  const safeRatings = ratings ?? [];
+  return {
+    ratingCount: safeRatings.length,
+    conceptRatingCount: safeRatings.filter((rating) => rating.targetType === 'concept').length,
+    cardRatingCount: safeRatings.filter((rating) => rating.targetType === 'card').length,
+    manualRatingCoverageRate: rate(new Set(safeRatings.map((rating) => `${rating.targetType}:${rating.targetId}`)).size, targetCount),
+    averages: averageManualRatings(safeRatings),
+  };
+}
+
+function averageManualRatings(ratings: NonNullable<EvaluationRepoSpec['manualRatings']>): ManualRatingAverages {
+  const averages: ManualRatingAverages = {};
+  for (const field of MANUAL_RATING_FIELDS) {
+    const values = ratings.map((rating) => rating[field]).filter((value): value is number => value !== undefined);
+    if (values.length > 0) averages[field] = Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+  }
+  return averages;
 }

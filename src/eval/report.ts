@@ -15,7 +15,18 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
   lines.push(`- Quality needs-review card rate: ${percent(run.aggregate.qualityNeedsReviewCardRate)}`);
   lines.push(`- Quality blocked card rate: ${percent(run.aggregate.qualityBlockedCardRate)}`);
   lines.push(`- Duplicate-risk card rate: ${percent(run.aggregate.duplicateRiskCardRate)}`);
+  lines.push(`- Manual rating coverage: ${percent(run.aggregate.manualRatingCoverageRate)} (${run.aggregate.manualRatingCount} ratings)`);
+  for (const line of ratingAverageLines(run.aggregate.manualRatingAverages)) lines.push(`- ${line}`);
   lines.push(`- Expected concept hit rate: ${run.aggregate.expectedConceptHitRate === null ? 'n/a' : percent(run.aggregate.expectedConceptHitRate)}`);
+  lines.push('', '## Manual rating calibration', '');
+  lines.push('Manual ratings are human judgments used to calibrate deterministic quality gates; they do not change learner mastery.');
+  if (run.aggregate.manualRatingCount === 0) {
+    lines.push('', '- Manual rating coverage: 0% (no ratings yet)');
+  } else {
+    lines.push('', `- Manual rating coverage: ${percent(run.aggregate.manualRatingCoverageRate)}`);
+    lines.push(`- Ratings captured: ${run.aggregate.manualRatingCount}`);
+    for (const line of ratingAverageLines(run.aggregate.manualRatingAverages)) lines.push(`- ${line}`);
+  }
   for (const repo of run.repos) {
     lines.push('', `## ${repo.spec.name}`, '', `Path: \`${repo.spec.repoPath}\``, '');
     lines.push(`- Artifacts: ${repo.artifactCount}`);
@@ -25,6 +36,8 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
     lines.push(`- Answerable card heuristic rate: ${percent(repo.scores.answerableCardRate)}`);
     lines.push(`- Quality ready card rate: ${percent(repo.scores.qualityReadyCardRate)}`);
     lines.push(`- Quality blocked card rate: ${percent(repo.scores.qualityBlockedCardRate)}`);
+    lines.push(`- Manual rating coverage: ${percent(repo.scores.manualRatingCoverageRate)} (${repo.scores.manualRatingCount} ratings)`);
+    for (const line of ratingAverageLines(repo.scores.manualRatingAverages)) lines.push(`- ${line}`);
     lines.push(`- Expected hits: ${repo.expectedConceptHits.length ? repo.expectedConceptHits.join(', ') : 'none'}`);
     if (repo.missingExpectedConcepts.length) lines.push(`- Missing expected: ${repo.missingExpectedConcepts.join(', ')}`);
     if (repo.enrichment) lines.push(`- Enrichment: ${repo.enrichment.provider}; cards ${repo.enrichment.enrichedCardCount}; network used: no; provenance: ${repo.enrichment.provenanceOk ? 'ok' : 'needs review'}`);
@@ -54,4 +67,15 @@ export async function writeEvaluationOutputs(run: EvaluationRun, outDir: string)
 
 function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
+}
+
+function ratingAverageLines(averages: EvaluationRun['aggregate']['manualRatingAverages']): string[] {
+  const labels = [
+    ['relevance', 'Average relevance'],
+    ['evidence', 'Average evidence'],
+    ['answerability', 'Average answerability'],
+    ['usefulness', 'Average usefulness'],
+    ['repeatability', 'Average repeatability'],
+  ] as const;
+  return labels.flatMap(([field, label]) => averages[field] === undefined ? [] : [`${label}: ${averages[field]!.toFixed(1)}/5`]);
 }
