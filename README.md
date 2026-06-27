@@ -81,6 +81,7 @@ The browser session is the easiest way to understand the product.
 
 | Page | Purpose |
 |---|---|
+| Workbench | Command-center view for next action, metrics, and interactive learning map. |
 | Review | Answer active-recall cards from real code snippets. |
 | Courses | Define learning goals, material paths, docs, and question planes. |
 | Questions | Draft fake/local LLM-style questions and accept or reject them. |

@@ -63,7 +63,17 @@ describe('review session server', () => {
       expect(html).toContain('Current local plan snapshot');
       expect(html).toContain('id="shell-concepts"');
       expect(html).toContain('Primary navigation');
+      expect(html).toContain('Workbench');
       expect(html).toContain('No remote LLM calls');
+
+      const workbenchHtml = await fetch(`${review.url}/workbench`).then((res) => res.text());
+      expect(workbenchHtml).toContain('Learning Workbench');
+      expect(workbenchHtml).toContain('Interactive map');
+      expect(workbenchHtml).toContain('data-action="workbench-filter"');
+      const workbench = await fetch(`${review.url}/api/workbench`).then((res) => res.json()) as { metrics: { activeCards: number }; filters: unknown[]; nodes: unknown[] };
+      expect(workbench.metrics.activeCards).toBe(1);
+      expect(workbench.filters.length).toBeGreaterThan(0);
+      expect(workbench.nodes.length).toBeGreaterThan(0);
 
       const planHtml = await fetch(`${review.url}/plan`).then((res) => res.text());
       expect(planHtml).toContain('Plan Builder connects setup to daily review');

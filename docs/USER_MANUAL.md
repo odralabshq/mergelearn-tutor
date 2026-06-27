@@ -40,9 +40,29 @@ The checklist is state-aware: completed steps show current counts, while incompl
 
 The `Plan Builder` page is the consolidated browser view for that same path. Open it when you want one place to answer: what evidence exists locally, which course goal is active, whether accepted questions are ready, and what the next review action should be. It also repeats the local-only guardrails: the plan view does not enable remote LLM calls, publish data, or run target repo code.
 
-Every browser page includes the shared app shell at the top. Use it to jump between Review, Plan Builder, Courses, Questions, Timeline, Graph, Study, History, Progress, and Preferences, and to check the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
+Every browser page includes the shared app shell at the top. Use it to jump between Workbench, Review, Plan Builder, Courses, Questions, Timeline, Graph, Study, History, Progress, and Preferences, and to check the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
 
-## 3. Review page
+## 3. Workbench page
+
+Use Workbench as the command center. It combines the next action, active-card count, due delayed probes, weak concepts, study-control assignments, and a filterable visual map.
+
+The first version intentionally uses existing local data only:
+
+- progress concepts and weak-concept status;
+- active cards;
+- review events;
+- study assignments;
+- evidence graph links.
+
+Click filter chips such as `Due probes`, `Weak concepts`, `Study controls`, or `Evidence links` to focus the map. Click a visual node to populate the detail strip.
+
+API endpoint:
+
+```text
+/api/workbench
+```
+
+## 4. Review page
 
 ![Review page](assets/screenshots/review.png)
 
@@ -76,7 +96,7 @@ Queue controls:
 
 Archived cards stay in history.
 
-## 4. Courses page
+## 5. Courses page
 
 ![Courses page](assets/screenshots/courses.png)
 
@@ -115,7 +135,7 @@ mergelearn-tutor course create \
 
 Use Courses when you want the tutor to connect material, goals, and accepted questions instead of only reviewing the latest commits.
 
-## 5. Questions page
+## 6. Questions page
 
 ![Questions page](assets/screenshots/questions.png)
 
@@ -148,7 +168,7 @@ mergelearn-tutor questions accept --repo . --id <question-id>
 
 Important: `fake` and `local` providers are no-network. Remote LLM question drafting is intentionally not enabled yet.
 
-## 6. Timeline page
+## 7. Timeline page
 
 ![Timeline page](assets/screenshots/timeline.png)
 
@@ -172,7 +192,7 @@ CLI equivalent:
 mergelearn-tutor timeline --repo .
 ```
 
-## 7. Graph page
+## 8. Graph page
 
 ![Graph page](assets/screenshots/graph.png)
 
@@ -200,7 +220,7 @@ API endpoint:
 /api/evidence-graph
 ```
 
-## 8. Study page
+## 9. Study page
 
 Use Study to run a small local active-control pilot before making learning-effectiveness claims.
 
@@ -227,7 +247,7 @@ API endpoints:
 /api/study/passive-review/complete
 ```
 
-## 9. History page
+## 10. History page
 
 ![History page](assets/screenshots/history.png)
 
@@ -258,7 +278,7 @@ API endpoint:
 /api/cards/history
 ```
 
-## 10. Progress page
+## 11. Progress page
 
 ![Progress page](assets/screenshots/progress.png)
 
@@ -279,7 +299,7 @@ CLI equivalent:
 mergelearn-tutor progress --repo .
 ```
 
-## 11. Preferences page
+## 12. Preferences page
 
 ![Preferences page](assets/screenshots/preferences.png)
 
@@ -311,7 +331,7 @@ mergelearn-tutor preferences show --repo .
 mergelearn-tutor preferences set --repo . --planes local_behavior,risk_and_tests --snippet-lines 12
 ```
 
-## 12. Static dashboard
+## 13. Static dashboard
 
 You can also generate a static HTML dashboard:
 
@@ -327,7 +347,7 @@ Open:
 
 The local browser session is more interactive, but the dashboard is useful when you want a portable HTML artifact.
 
-## 13. Data files
+## 14. Data files
 
 MergeLearn Tutor writes local state under the target repository:
 
@@ -341,7 +361,7 @@ MergeLearn Tutor writes local state under the target repository:
 
 Delete `.skilltrace/` if you want to remove all tutor state from the target repository.
 
-## 14. Recommended daily workflow
+## 15. Recommended daily workflow
 
 ```bash
 mergelearn-tutor ingest --repo . --since 7d
@@ -351,7 +371,7 @@ mergelearn-tutor session --repo .
 
 Then spend 3-5 minutes on the Review page.
 
-## 14. Recommended weekly workflow
+## 16. Recommended weekly workflow
 
 ```bash
 mergelearn-tutor ratings --repo .
@@ -361,7 +381,7 @@ mergelearn-tutor timeline --repo .
 
 Use the results to decide whether the tutor is producing useful questions or if you should add a repo lexicon entry.
 
-## 15. Troubleshooting
+## 17. Troubleshooting
 
 If no cards appear:
 
@@ -382,7 +402,7 @@ If the UI looks stale:
 3. Start `node dist/cli.js session --repo /path/to/repo` again.
 4. Hard-refresh the browser tab.
 
-## 16. What is intentionally not enabled yet
+## 18. What is intentionally not enabled yet
 
 - remote LLM question generation
 - cloud sync

@@ -45,7 +45,7 @@ Source: `docs/research/deep-research-report.md` plus current local product state
 ## Evidence UX tasks
 
 20. Timeline/Graph filters, focus mode, node detail drawer, why-this-card trace. Status: started; timeline/graph filters exist, node detail drawer and deeper why trace remain.
-21. Interactive UI concept map and study dashboard inspired by Obsidian graph view, GitLens provenance, Linear project focus, Anki stats, and Duolingo progress loops. Status: brief complete in `docs/agent/UI_INTERACTIVE_COMPONENTS_2026_06_27.md`; implementation should start with `/workbench` after active-control foundation.
+21. Interactive UI concept map and study dashboard inspired by Obsidian graph view, GitLens provenance, Linear project focus, Anki stats, and Duolingo progress loops. Status: implementation started with local `/workbench` and `/api/workbench` command-center slice.
 22. Keep graph secondary: provenance and explainability, not homepage.
 
 ## Release tasks

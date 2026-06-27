@@ -81,3 +81,10 @@ Focused verification passed after crash recovery:
 npm test -- --run tests/core/study.test.ts tests/core/events.test.ts tests/session/server.test.ts tests/cli/cli.test.ts
 npm run check
 ```
+
+## Interactive Workbench implementation result so far
+
+- Added `buildWorkbenchSummary` to combine progress, evidence graph, calibration, delayed probes, and study assignments without new persistent state.
+- Added `/workbench` and `/api/workbench`.
+- Added a filterable visual map with node click detail and local-only data.
+- Updated README and user manual with the Workbench page.

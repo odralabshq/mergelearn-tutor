@@ -530,3 +530,9 @@ git diff --check
 - Added passive-review completion events that do not raise mastery.
 - Added `/api/study`, browser Study page, and CLI `study assign/list/passive-complete`.
 - Added long-term tasks for industry-inspired interactive UI brainstorming and implementation.
+
+## 2026-06-27 Interactive Workbench
+
+- Added Workbench command-center route and API.
+- Added local visual nodes and filter chips for active cards, weak concepts, study controls, and evidence links.
+- Added `buildWorkbenchSummary` tests and server route coverage.
