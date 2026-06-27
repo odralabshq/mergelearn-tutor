@@ -1,4 +1,5 @@
 import { extractConcepts } from '../core/concepts.js';
+import { evaluateCardQuality } from '../core/cardQuality.js';
 import { enrichLearningItems } from '../core/enrichment.js';
 import { collectCommits } from '../core/git.js';
 import { activeLearningItems, mergeLearningState } from '../core/planner.js';
@@ -33,6 +34,7 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
     evidenceCount: item.evidence.length,
     expectedFocusCount: item.expectedFocus.length,
     answerableHeuristic: item.evidence.length > 0 && item.prompt.trim().length >= 20 && item.expectedFocus.length > 0,
+    quality: evaluateCardQuality(item, activeCards.filter((candidate) => candidate.id !== item.id)),
   }));
   const conceptIds = new Set(concepts.map((concept) => concept.id));
   const expectedConceptHits = [...expected].filter((id) => conceptIds.has(id));
@@ -55,6 +57,10 @@ export async function evaluateRepo(spec: EvaluationRepoSpec): Promise<EvaluatedR
     scores: {
       groundedConceptRate: rate(conceptFindings.filter((item) => item.grounded).length, conceptFindings.length),
       answerableCardRate: rate(cardFindings.filter((item) => item.answerableHeuristic).length, cardFindings.length),
+      qualityReadyCardRate: rate(cardFindings.filter((item) => item.quality.verdict === 'ready').length, cardFindings.length),
+      qualityNeedsReviewCardRate: rate(cardFindings.filter((item) => item.quality.verdict === 'needs_review').length, cardFindings.length),
+      qualityBlockedCardRate: rate(cardFindings.filter((item) => item.quality.verdict === 'blocked').length, cardFindings.length),
+      duplicateRiskCardRate: rate(cardFindings.filter((item) => item.quality.scores.duplicateRisk >= 0.75).length, cardFindings.length),
       expectedConceptHitRate: expected.size === 0 ? null : rate(expectedConceptHits.length, expected.size),
     },
     enrichment,
@@ -83,6 +89,10 @@ function aggregate(repos: EvaluatedRepo[]): EvaluationAggregate {
   const totalCards = repos.reduce((sum, repo) => sum + repo.cardCount, 0);
   const grounded = repos.reduce((sum, repo) => sum + repo.conceptFindings.filter((item) => item.grounded).length, 0);
   const answerable = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.answerableHeuristic).length, 0);
+  const qualityReady = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.verdict === 'ready').length, 0);
+  const qualityNeedsReview = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.verdict === 'needs_review').length, 0);
+  const qualityBlocked = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.verdict === 'blocked').length, 0);
+  const duplicateRisk = repos.reduce((sum, repo) => sum + repo.cardFindings.filter((item) => item.quality.scores.duplicateRisk >= 0.75).length, 0);
   const expectedRepos = repos.filter((repo) => repo.scores.expectedConceptHitRate !== null);
   return {
     repoCount: repos.length,
@@ -91,6 +101,10 @@ function aggregate(repos: EvaluatedRepo[]): EvaluationAggregate {
     totalCards,
     groundedConceptRate: rate(grounded, totalConcepts),
     answerableCardRate: rate(answerable, totalCards),
+    qualityReadyCardRate: rate(qualityReady, totalCards),
+    qualityNeedsReviewCardRate: rate(qualityNeedsReview, totalCards),
+    qualityBlockedCardRate: rate(qualityBlocked, totalCards),
+    duplicateRiskCardRate: rate(duplicateRisk, totalCards),
     expectedConceptHitRate: expectedRepos.length === 0 ? null : rate(expectedRepos.reduce((sum, repo) => sum + (repo.scores.expectedConceptHitRate ?? 0), 0), expectedRepos.length),
   };
 }

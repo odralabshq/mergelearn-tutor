@@ -376,3 +376,36 @@ npm test
 npm run build
 git diff --check
 ```
+
+## 2026-06-27 Quality foundation batch: deterministic card gates
+
+- Added a deterministic card-quality module scoring evidence, answerability, specificity, duplicate risk, and source diversity.
+- Integrated quality verdicts into evaluation aggregates and Markdown reports.
+- Attached quality results to generated review cards and filtered `blocked` cards out of active review.
+- Added Review and Questions quality badges/panels so users can inspect why a card or draft question is trustworthy before reviewing or accepting it.
+- Created `docs/agent/LONG_TERM_TASKS.md` and `docs/agent/iterations/2026-06-27-quality-foundation/` to track long-term and short-term autonomous work.
+- Preserved the canonical research input at `docs/research/deep-research-report.md` and removed the stale typo-path report.
+
+Verified:
+
+```bash
+npm test -- --run tests/core/cardQuality.test.ts tests/core/planner.test.ts tests/eval/evaluationHarness.test.ts tests/session/server.test.ts
+npm run check
+npm run build
+```
+
+Final verification passed:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run smoke:package
+git diff --check
+```
+
+Observed full-suite result:
+
+- 19 test files passed.
+- 60 tests passed.
+- Package smoke passed with 121 files checked.

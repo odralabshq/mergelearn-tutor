@@ -40,6 +40,8 @@ describe('review session server', () => {
       expect(html).toContain('export function auth');
       expect(html).toContain('What happens in this snippet?');
       expect(html).toContain('Reveal explanation');
+      expect(html).toContain('Quality gate');
+      expect(html).toContain('quality');
       expect(html).toContain('I knew it');
       expect(html).toContain('marked_bad_card');
       expect(html).toContain('Start here');
@@ -89,6 +91,8 @@ describe('review session server', () => {
       const questionsHtml = await fetch(`${review.url}/questions`).then((res) => res.text());
       expect(questionsHtml).toContain('Evidence-bound LLM-style questions');
       expect(questionsHtml).toContain('Question workflow');
+      expect(questionsHtml).toContain('Quality gate');
+      expect(questionsHtml).toContain('Evidence ');
       expect(questionsHtml).toContain('Draft, accept, then review');
       expect(questionsHtml).toContain('Target course');
       expect(questionsHtml).toContain('learn-auth');

@@ -1,4 +1,5 @@
 import { DEFAULT_PREFERENCES } from './preferences.js';
+import { evaluateCardQuality } from './cardQuality.js';
 import type { CardBatchMode, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
 import { applyCorrections, recordReviewEvent } from './events.js';
 import { isUnifiedDiffSnippet } from './diffEvidence.js';
@@ -212,19 +213,21 @@ export function generateLearningItems(state: TutorState, preferences: UserPrefer
 }
 
 function buildLearningItems(state: TutorState, preferences: UserPreferences, count: number, batchId: string, generation: number, source: LearningItemSource, now: string, courseId?: string): LearningItem[] {
-  return topDueConcepts(state, Math.max(1, count) * 3)
+  const existing = activeLearningItems(state);
+  const selected: LearningItem[] = [];
+  for (const concept of topDueConcepts(state, Math.max(1, count) * 3)
     .filter((concept) => conceptMatchesCourse(state, concept, courseId))
-    .slice(0, Math.max(1, count))
-    .map((concept) => {
+  ) {
+    if (selected.length >= Math.max(1, count)) break;
     const conceptState = state.conceptStates.find((candidate) => candidate.conceptId === concept.id);
-    const accepted = acceptedQuestionFor(state, concept.id, courseId);
-    const questionPlane = accepted?.questionPlane ?? rotatePlane(concept, preferences, generation);
+    const acceptedQuestion = acceptedQuestionFor(state, concept.id, courseId);
+    const questionPlane = acceptedQuestion?.questionPlane ?? rotatePlane(concept, preferences, generation);
     const snippet = snippetFor(concept, preferences);
-    const prompt = accepted?.prompt ?? promptFor(concept, questionPlane, snippet);
-    const explanation = accepted?.expectedAnswer ?? explanationFor(concept, questionPlane, snippet);
-    const focus = accepted?.expectedFocus ?? expectedFocus(concept, questionPlane);
-    return {
-      id: stableId('item', [batchId, concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane, accepted?.id ?? '', String(generation)]),
+    const prompt = acceptedQuestion?.prompt ?? promptFor(concept, questionPlane, snippet);
+    const explanation = acceptedQuestion?.expectedAnswer ?? explanationFor(concept, questionPlane, snippet);
+    const focus = acceptedQuestion?.expectedFocus ?? expectedFocus(concept, questionPlane);
+    const item: LearningItem = {
+      id: stableId('item', [batchId, concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane, acceptedQuestion?.id ?? '', String(generation)]),
       conceptId: concept.id,
       type: itemTypeFor(concept),
       questionPlane,
@@ -240,12 +243,15 @@ function buildLearningItems(state: TutorState, preferences: UserPreferences, cou
       createdAt: now,
       status: 'active',
       courseId,
-      questionId: accepted?.id,
+      questionId: acceptedQuestion?.id,
       batchId,
       generation,
       source,
     };
-  });
+    const quality = evaluateCardQuality(item, [...existing, ...selected]);
+    if (quality.verdict !== 'blocked') selected.push({ ...item, quality });
+  }
+  return selected;
 }
 
 export function renderCardMarkdown(concept: Concept, state?: ConceptState, plane: QuestionPlane = planeFor(concept, DEFAULT_PREFERENCES), snippet: CodeSnippet = snippetFor(concept, DEFAULT_PREFERENCES)): string {

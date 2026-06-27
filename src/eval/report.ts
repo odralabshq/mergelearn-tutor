@@ -11,6 +11,10 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
   lines.push(`- Cards: ${run.aggregate.totalCards}`);
   lines.push(`- Grounded concept rate: ${percent(run.aggregate.groundedConceptRate)}`);
   lines.push(`- Answerable card heuristic rate: ${percent(run.aggregate.answerableCardRate)}`);
+  lines.push(`- Quality ready card rate: ${percent(run.aggregate.qualityReadyCardRate)}`);
+  lines.push(`- Quality needs-review card rate: ${percent(run.aggregate.qualityNeedsReviewCardRate)}`);
+  lines.push(`- Quality blocked card rate: ${percent(run.aggregate.qualityBlockedCardRate)}`);
+  lines.push(`- Duplicate-risk card rate: ${percent(run.aggregate.duplicateRiskCardRate)}`);
   lines.push(`- Expected concept hit rate: ${run.aggregate.expectedConceptHitRate === null ? 'n/a' : percent(run.aggregate.expectedConceptHitRate)}`);
   for (const repo of run.repos) {
     lines.push('', `## ${repo.spec.name}`, '', `Path: \`${repo.spec.repoPath}\``, '');
@@ -19,6 +23,8 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
     lines.push(`- Cards: ${repo.cardCount}`);
     lines.push(`- Grounded concept rate: ${percent(repo.scores.groundedConceptRate)}`);
     lines.push(`- Answerable card heuristic rate: ${percent(repo.scores.answerableCardRate)}`);
+    lines.push(`- Quality ready card rate: ${percent(repo.scores.qualityReadyCardRate)}`);
+    lines.push(`- Quality blocked card rate: ${percent(repo.scores.qualityBlockedCardRate)}`);
     lines.push(`- Expected hits: ${repo.expectedConceptHits.length ? repo.expectedConceptHits.join(', ') : 'none'}`);
     if (repo.missingExpectedConcepts.length) lines.push(`- Missing expected: ${repo.missingExpectedConcepts.join(', ')}`);
     if (repo.enrichment) lines.push(`- Enrichment: ${repo.enrichment.provider}; cards ${repo.enrichment.enrichedCardCount}; network used: no; provenance: ${repo.enrichment.provenanceOk ? 'ok' : 'needs review'}`);
@@ -29,7 +35,8 @@ export function renderEvaluationMarkdown(run: EvaluationRun): string {
     }
     lines.push('', '### Top cards', '');
     for (const card of repo.cardFindings.slice(0, 8)) {
-      lines.push(`- ${card.title} — ${card.answerableHeuristic ? 'answerable' : 'needs review'}; evidence ${card.evidenceCount}`);
+      const warningText = card.quality.warnings.length ? `; warnings: ${card.quality.warnings.join(', ')}` : '';
+      lines.push(`- ${card.title} — ${card.quality.verdict}; evidence ${card.evidenceCount}; duplicate risk ${percent(card.quality.scores.duplicateRisk)}${warningText}`);
     }
   }
   lines.push('', '## Manual rating rubric', '', 'Persist ratings with:', '', '```bash', 'mergelearn-tutor rate --repo <repo> --item <card-id> --answerability 5 --usefulness 4 --note "grounded and clear"', 'mergelearn-tutor rate --repo <repo> --concept <concept-id> --relevance 5 --evidence 4', 'mergelearn-tutor ratings --repo <repo>', '```', '', '| Item | Rating 1-5 | Notes |', '|---|---:|---|', '| Top concepts are relevant |  |  |', '| Evidence paths are correct |  |  |', '| Cards are answerable |  |  |', '| Cards teach something useful |  |  |', '| Session would be worth repeating |  |  |');

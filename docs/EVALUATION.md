@@ -41,6 +41,9 @@ Current automated metrics:
 - card count
 - grounded concept rate
 - answerable card heuristic rate
+- ready / needs-review / blocked card-quality rates
+- average duplicate-risk score
+- average card-quality score
 - expected concept hit rate for fixtures
 - missing expected concepts
 - warnings for empty/no-output cases
@@ -49,7 +52,7 @@ A concept is considered grounded when it has at least one evidence path.
 
 A card is considered answerable by heuristic when it has evidence, a non-trivial prompt, and expected focus terms.
 
-These are not final product-quality metrics. They are baseline guardrails that catch obvious regressions.
+These are not final product-quality metrics. The quality metrics come from the deterministic gate in `src/core/cardQuality.ts`; they are baseline guardrails that catch obvious regressions before screenshots or UI polish hide weak cards.
 
 ## Manual rating rubric
 
@@ -113,10 +116,12 @@ Pause UI/packaging work if:
 - more than 20% of cards are irrelevant or unanswerable
 - dogfood reports show repeated duplicate/noisy repo-domain concepts
 - users cannot understand why a card was generated
+- blocked card-quality rate increases after extraction/planner changes
+- duplicate-risk average increases without a matching product reason
 
 ## Next evaluation improvements
 
 1. Compare before/after reports across extractor changes.
 2. Add fixture repos for backend/API and config-heavy projects.
-3. Add evidence snippet scoring.
-4. Add duplicate concept detection.
+3. Calibrate card-quality thresholds against manual usefulness ratings.
+4. Add duplicate concept detection and correction-history-aware scoring.

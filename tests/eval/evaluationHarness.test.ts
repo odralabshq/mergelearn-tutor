@@ -20,9 +20,15 @@ describe('evaluation harness', () => {
     expect(run.aggregate.totalCards).toBeGreaterThanOrEqual(6);
     expect(run.aggregate.groundedConceptRate).toBe(1);
     expect(run.aggregate.answerableCardRate).toBe(1);
+    expect(run.aggregate.qualityReadyCardRate).toBeGreaterThan(0);
+    expect(run.aggregate.qualityBlockedCardRate).toBe(0);
+    expect(run.aggregate.duplicateRiskCardRate).toBeGreaterThanOrEqual(0);
+    expect(run.repos[0]?.cardFindings[0]?.quality.verdict).toMatch(/ready|needs_review/);
     expect(run.aggregate.expectedConceptHitRate).toBeGreaterThanOrEqual(0.8);
     const markdown = renderEvaluationMarkdown(run);
     expect(markdown).toContain('MergeLearn Tutor Evaluation Report');
+    expect(markdown).toContain('Quality ready card rate');
+    expect(markdown).toContain('duplicate risk');
     expect(markdown).toContain('Manual rating rubric');
   });
 

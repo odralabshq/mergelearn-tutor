@@ -1,5 +1,5 @@
 import type { EnrichmentProvider } from '../core/enrichment.js';
-import type { ConceptKind, Difficulty, LearningItemType } from '../core/types.js';
+import type { CardQualityResult, ConceptKind, Difficulty, LearningItemType } from '../core/types.js';
 
 export type EvaluationRepoSpec = {
   id: string;
@@ -38,11 +38,16 @@ export type CardEvaluation = {
   evidenceCount: number;
   expectedFocusCount: number;
   answerableHeuristic: boolean;
+  quality: CardQualityResult;
 };
 
 export type EvaluationScores = {
   groundedConceptRate: number;
   answerableCardRate: number;
+  qualityReadyCardRate: number;
+  qualityNeedsReviewCardRate: number;
+  qualityBlockedCardRate: number;
+  duplicateRiskCardRate: number;
   expectedConceptHitRate: number | null;
 };
 
@@ -67,6 +72,10 @@ export type EvaluationAggregate = {
   totalCards: number;
   groundedConceptRate: number;
   answerableCardRate: number;
+  qualityReadyCardRate: number;
+  qualityNeedsReviewCardRate: number;
+  qualityBlockedCardRate: number;
+  duplicateRiskCardRate: number;
   expectedConceptHitRate: number | null;
 };
 

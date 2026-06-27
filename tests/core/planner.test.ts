@@ -17,6 +17,7 @@ describe('planner', () => {
     expect(state.learningItems[0]?.expectedFocus).toContain('failure mode');
     expect(state.learningItems[0]?.whyShown).toContain('Snippet-first');
     expect(state.learningItems[0]?.bodyMarkdown).toContain('Code snippet');
+    expect(state.learningItems[0]?.quality?.verdict).toMatch(/ready|needs_review/);
   });
 
   it('does not generate cards without evidence', () => {
@@ -79,5 +80,31 @@ describe('planner', () => {
     expect(regenerated.learningItems.find((item) => item.id === firstItem.id)?.status).toBe('archived');
     expect(activeLearningItems(regenerated)).toHaveLength(1);
     expect(regenerated.learningItems.length).toBeGreaterThan(activeLearningItems(regenerated).length);
+  });
+
+  it('does not add blocked low-quality accepted questions to active review', () => {
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
+    const withBadQuestion = {
+      ...state,
+      questionBank: [{
+        id: 'q_bad',
+        conceptId: concept.id,
+        questionPlane: 'risk_and_tests' as const,
+        prompt: 'Explain this.',
+        expectedAnswer: '',
+        expectedFocus: [],
+        difficulty: 'advanced' as const,
+        evidence: concept.evidence,
+        status: 'accepted' as const,
+        author: { type: 'deterministic' as const, provider: 'fake' as const, promptVersion: 'test' },
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      }],
+    };
+
+    const regenerated = generateCardBatch(withBadQuestion, undefined, { count: 1, mode: 'regenerate' });
+    expect(activeLearningItems(regenerated)).toHaveLength(0);
+    expect(regenerated.cardBatches.at(-1)?.requestedCount).toBe(1);
+    expect(regenerated.cardBatches.at(-1)?.itemIds).toEqual([]);
   });
 });

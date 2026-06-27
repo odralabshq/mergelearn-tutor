@@ -30,6 +30,27 @@ Every new card should include:
 8. Website snippets should render as diff-like blocks with visible line numbers and add/delete markers.
 9. Snippet extraction should preserve compact unified diff context: hunk headers, additions, deletions, and nearby context lines.
 10. Card-quality feedback such as `marked_bad_card` or `marked_wrong_evidence` must not reduce learner mastery; only wrong answers should.
+11. New review cards pass through a deterministic quality gate before entering the active queue.
+12. Cards with a `blocked` verdict are excluded from active review; `needs_review` cards may appear with warnings.
+13. Review and Questions pages must expose quality verdicts and score reasons so the learner can decide whether a card/question is trustworthy.
+
+## Deterministic quality gate
+
+The gate scores each generated card without remote services. It is a guardrail, not a final human usefulness score.
+
+Verdicts:
+
+- `ready`: evidence, prompt, answer, specificity, and duplication checks look acceptable.
+- `needs_review`: the card is probably usable but has warnings such as single-source evidence.
+- `blocked`: the card is too weak to enter active review.
+
+Scores:
+
+- `evidence`: evidence and snippet availability.
+- `answerability`: prompt, explanation, and expected-focus sufficiency.
+- `specificity`: whether the prompt is concrete and tied to the evidence path.
+- `duplicateRisk`: similarity to currently active cards.
+- `sourceDiversity`: whether multiple evidence paths support the card.
 
 ## Current card fields
 
@@ -70,6 +91,6 @@ why_shown_missing 0
 ## Remaining work
 
 1. Add line/hunk locations to evidence.
-2. Add duplicate/noisy card detection.
-3. Use correction history and manual ratings in prompt generation.
+2. Feed user corrections and manual ratings into future card generation.
+3. Calibrate score thresholds against manual ratings and real repo fixtures.
 4. Add richer end-of-session UX metrics.

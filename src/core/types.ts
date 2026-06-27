@@ -21,6 +21,19 @@ export type ManualRatingTargetType = 'concept' | 'card';
 export type QuestionBankStatus = 'draft' | 'accepted' | 'rejected' | 'active' | 'archived';
 export type QuestionAuthorType = 'deterministic' | 'llm';
 export type QuestionProvider = 'deterministic' | 'fake' | 'local';
+export type CardQualityVerdict = 'ready' | 'needs_review' | 'blocked';
+
+export type CardQualityResult = {
+  verdict: CardQualityVerdict;
+  scores: {
+    evidence: number;
+    answerability: number;
+    specificity: number;
+    duplicateRisk: number;
+    sourceDiversity: number;
+  };
+  warnings: string[];
+};
 
 export type EvidenceRef = {
   commit?: string;
@@ -101,6 +114,7 @@ export type LearningItem = {
   expectedFocus: string[];
   whyShown?: string;
   evidence: EvidenceRef[];
+  quality?: CardQualityResult;
   difficulty: Difficulty;
   createdAt: string;
   status: LearningItemStatus;
