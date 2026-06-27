@@ -351,3 +351,10 @@ npm test
 npm run build
 git diff --check
 ```
+
+## 2026-06-27 Research packet: next improvements
+
+- Created `docs/research/2026-06-27-next-improvements/` as a deep research handoff packet for deciding the next best platform improvements.
+- Captured fresh screenshots for Review, Courses, Questions, Timeline, Graph, History, Progress, and Preferences.
+- Added a current-state brief, source packet, research prompts, main recommendation packet, and design-system scaffold.
+- Main recommendation: consolidate the current surface around a Learning Plan/Plan Builder, add a deterministic Card Quality Gate, clarify repo/source targeting, and professionalize the app shell before adding more pages.
