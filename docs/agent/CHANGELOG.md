@@ -377,6 +377,24 @@ npm run build
 git diff --check
 ```
 
+## 2026-06-27 Autonomous cycle 7: Plan Builder path
+
+- Added a `/plan` Plan Builder page that consolidates the local evidence → course goal → accepted questions → review cards path into one browser view.
+- Added state-aware next-best-action copy, course snapshots, and local-only guardrails so users can see what to do next without enabling remote LLM calls or leaving the local session.
+- Linked the Plan Builder from the Review `Start here` panel and shared navigation.
+- Updated session-server regression coverage and the user manual for the consolidated planning path.
+- Captured before screenshots for all primary pages and after screenshots for Review, Plan Builder, Courses, and Questions.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+git diff --check
+```
+
 ## 2026-06-27 Quality foundation batch: deterministic card gates
 
 - Added a deterministic card-quality module scoring evidence, answerability, specificity, duplicate risk, and source diversity.
