@@ -128,3 +128,4 @@ Pause UI/packaging work if:
 2. Add fixture repos for backend/API and config-heavy projects.
 3. Calibrate card-quality thresholds against manual usefulness ratings.
 4. Add duplicate concept detection and correction-history-aware scoring.
+5. Add confidence-calibration reporting to eval runs once reveal/answer event fixtures exist.

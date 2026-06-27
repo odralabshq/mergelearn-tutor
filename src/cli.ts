@@ -369,12 +369,13 @@ program.command('answer')
 program.command('feedback')
   .description('Mark a card useful, wrong, skipped, unsure, deferred, or quality-problem')
   .requiredOption('--item <id>', 'learning item id')
-  .requiredOption('--event <type>', 'shown, skipped, marked_unsure, marked_wrong, marked_useful, marked_bad_card, marked_wrong_evidence, marked_duplicate, marked_correct, or deferred')
+  .requiredOption('--event <type>', 'shown, revealed, skipped, marked_unsure, marked_wrong, marked_useful, marked_bad_card, marked_wrong_evidence, marked_duplicate, marked_correct, or deferred')
   .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--confidence <1-5>', 'confidence before reveal; required for --event revealed')
   .option('--note <text>', 'optional note')
-  .action(async (options: { repo: string; item: string; event: string; note?: string }) => {
+  .action(async (options: { repo: string; item: string; event: string; confidence?: string; note?: string }) => {
     const eventType = options.event as Parameters<typeof recordReviewEvent>[1]['eventType'];
-    const next = recordReviewEvent(await loadState(options.repo), { itemId: options.item, eventType, note: options.note });
+    const next = recordReviewEvent(await loadState(options.repo), { itemId: options.item, eventType, confidenceBeforeReveal: options.confidence ? Number.parseInt(options.confidence, 10) : undefined, note: options.note });
     await saveState(options.repo, next);
     process.stdout.write(`Recorded ${options.event} for ${options.item}.\n`);
   });

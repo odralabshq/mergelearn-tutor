@@ -22,32 +22,35 @@ Source: `docs/research/deep-research-report.md` plus current local product state
 
 ## Scientific effectiveness research loop
 
-7. External Deep Research packet on platform effectiveness. Status: local-only packet created at `docs/agent/research-packets/2026-06-27-scientific-effectiveness/`; waiting for user-returned reports.
-8. Integrate returned research reports into the task queue: map evidence to current design, avoid unsupported claims, and prioritize next-level product/evaluation tasks.
-9. Add measurement instrumentation recommended by the research: pre/post checks, delayed recall, confidence calibration, usefulness/answerability trends, and proof packages for skeptical developers or buyers.
+7. External Deep Research packet on platform effectiveness. Status: returned reports analyzed in `docs/agent/RESEARCH_SYNTHESIS_2026_06_27.md`; report 3 was a placeholder because prior outputs were not attached.
+8. Confidence-before-reveal and calibration summaries. Status: active short-term batch in `docs/agent/iterations/2026-06-27-scientific-calibration/`.
+9. Delayed recall probes at 2 and 7 days. Status: next after calibration foundation.
+10. Active-control passive-review mode for experiments. Status: pending after delayed-probe metadata exists.
+11. Transfer/debugging/localisation task families. Status: pending after core measurement loop.
+12. Opt-in code-free study export. Status: pending; must preserve local-first/no-telemetry default.
 
 ## Habit-loop tasks
 
-10. Proper local Today session: one-card mode, reveal/self-grade, bad-card action, shortcuts, due reasons.
-11. Rename/de-emphasize Courses as Plans or Focus Areas in UI.
-12. Progress becomes next-review guidance, not only passive mastery report.
-13. Weekly digest: concepts changed repeatedly but weakly understood.
+13. Proper local Today session: one-card mode, reveal/self-grade, bad-card action, shortcuts, due reasons.
+14. Rename/de-emphasize Courses as Plans or Focus Areas in UI.
+15. Progress becomes next-review guidance, not only passive mastery report.
+16. Weekly digest: concepts changed repeatedly but weakly understood.
 
 ## Source/repo tasks
 
-14. Explicit source manager: repos, paths, docs, language, recency, branch/source scope.
-15. Workspace index of known repos without silent scanning.
-16. Multi-repo plans only after single-repo value is proven.
+17. Explicit source manager: repos, paths, docs, language, recency, branch/source scope.
+18. Workspace index of known repos without silent scanning.
+19. Multi-repo plans only after single-repo value is proven.
 
 ## Evidence UX tasks
 
-17. Timeline/Graph filters, focus mode, node detail drawer, why-this-card trace. Status: started; timeline/graph filters exist, node detail drawer and deeper why trace remain.
-18. Keep graph secondary: provenance and explainability, not homepage.
+20. Timeline/Graph filters, focus mode, node detail drawer, why-this-card trace. Status: started; timeline/graph filters exist, node detail drawer and deeper why trace remain.
+21. Keep graph secondary: provenance and explainability, not homepage.
 
 ## Release tasks
 
-19. OSS readiness: license decision, clean quickstart, sample workflow, install smoke.
-20. Optional LLM enrichment later: explicit preview, per-repo opt-in, redaction, no truth adjudication.
+22. OSS readiness: license decision, clean quickstart, sample workflow, install smoke.
+23. Optional LLM enrichment later: explicit preview, per-repo opt-in, redaction, no truth adjudication.
 
 ## Completed local iteration milestones
 

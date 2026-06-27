@@ -40,6 +40,9 @@ describe('review session server', () => {
       expect(html).toContain('export function auth');
       expect(html).toContain('What happens in this snippet?');
       expect(html).toContain('Reveal explanation');
+      expect(html).toContain('Before reveal: how confident are you?');
+      expect(html).toContain('Guessing');
+      expect(html).toContain('Certain');
       expect(html).toContain('Quality gate');
       expect(html).toContain('Show quality scores');
       expect(html).toContain('class="quality-details"');
@@ -90,6 +93,8 @@ describe('review session server', () => {
       const history = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { summary: { activeCards: number }; cards: unknown[]; batches: unknown[] };
       expect(history.summary.activeCards).toBe(1);
       expect(history.cards).toHaveLength(1);
+      const initialCalibration = await fetch(`${review.url}/api/calibration`).then((res) => res.json()) as { pairedCount: number };
+      expect(initialCalibration.pairedCount).toBe(0);
 
       const coursesHtml = await fetch(`${review.url}/courses`).then((res) => res.text());
       expect(coursesHtml).toContain('Courses organize goals');
@@ -168,17 +173,24 @@ describe('review session server', () => {
       expect(regenerated.state.activeCards).toBe(1);
       expect(regenerated.state.archivedCards).toBeGreaterThan(0);
 
+      const reveal = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'revealed', confidenceBeforeReveal: 5 }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
+      expect(reveal.ok).toBe(true);
+      expect(reveal.state.events).toBe(1);
+
       const answer = await fetch(`${review.url}/answer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', answer: 'Auth gates access to sensitive behavior.', correct: true }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(answer.ok).toBe(true);
-      expect(answer.state.events).toBe(1);
+      expect(answer.state.events).toBe(2);
+      const calibration = await fetch(`${review.url}/api/calibration`).then((res) => res.json()) as { pairedCount: number; accuracy: number };
+      expect(calibration.pairedCount).toBe(1);
+      expect(calibration.accuracy).toBe(1);
 
       const feedback = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_useful' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(feedback.ok).toBe(true);
-      expect(feedback.state.events).toBe(2);
+      expect(feedback.state.events).toBe(3);
 
       const badCard = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_bad_card' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(badCard.ok).toBe(true);
-      expect(badCard.state.events).toBe(3);
+      expect(badCard.state.events).toBe(4);
 
       const correction = await fetch(`${review.url}/correct`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conceptId: 'repo.auth', correctionType: 'better_label', replacementLabel: 'session auth' }) }).then((res) => res.json()) as { ok: boolean; state: { corrections: number } };
       expect(correction.ok).toBe(true);

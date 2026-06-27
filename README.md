@@ -135,6 +135,7 @@ mergelearn-tutor review --repo . --count 5
 mergelearn-tutor cards generate --repo . --count 5 --mode more
 mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
 mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
+mergelearn-tutor feedback --repo . --item <id> --event revealed --confidence 4
 mergelearn-tutor feedback --repo . --item <id> --event marked_bad_card --note "wrong evidence"
 mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
 mergelearn-tutor course create --repo . --id <id> --title "..." --goal "..." --materials "src/**" --docs "docs/**"

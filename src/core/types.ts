@@ -15,7 +15,7 @@ export type QuestionPlane = 'language_mechanics' | 'local_behavior' | 'file_role
 export type LearningItemStatus = 'active' | 'archived';
 export type LearningItemSource = 'ingest' | 'manual_generate' | 'regenerate';
 export type CardBatchMode = 'initial' | 'more' | 'regenerate';
-export type ReviewEventType = 'shown' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
+export type ReviewEventType = 'shown' | 'revealed' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 export type ManualRatingTargetType = 'concept' | 'card';
 export type QuestionBankStatus = 'draft' | 'accepted' | 'rejected' | 'active' | 'archived';
@@ -205,6 +205,7 @@ export type LearningEvent = {
   evidenceKey?: string;
   evidencePath?: string;
   questionPlane?: QuestionPlane;
+  confidenceBeforeReveal?: number;
   answerText?: string;
   correct?: boolean;
   note?: string;

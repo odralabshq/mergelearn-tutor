@@ -510,3 +510,10 @@ git diff --check
 - Kept evidence keys derived-only for evidence/finding records and avoided a state-version bump.
 - Added a legacy-state compatibility test for review events without persisted evidence metadata.
 - Created a local-only external Deep Research packet for scientific evaluation of MergeLearn Tutor effectiveness.
+
+## 2026-06-27 Scientific calibration foundation
+
+- Analyzed returned Deep Research reports and created `docs/agent/RESEARCH_SYNTHESIS_2026_06_27.md`.
+- Added the `2026-06-27-scientific-calibration` implementation batch.
+- Added confidence-before-reveal `revealed` review events and calibration summaries.
+- Exposed calibration through `/api/calibration`, History, browser Review confidence controls, and CLI feedback `--confidence`.

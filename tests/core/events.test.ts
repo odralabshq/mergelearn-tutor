@@ -45,6 +45,20 @@ describe('review events and corrections', () => {
     expect(duplicate.learningEvents[0]?.evidenceKey).toBe(wrongEvidence.learningEvents[0]?.evidenceKey);
   });
 
+  it('requires confidence before reveal and stores it without changing mastery', () => {
+    expect(() => recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'revealed' })).toThrow(/confidence/i);
+
+    const next = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'revealed', confidenceBeforeReveal: 4 });
+
+    expect(next.learningEvents[0]).toMatchObject({
+      eventType: 'revealed',
+      confidenceBeforeReveal: 4,
+      evidencePath: 'src/auth.ts',
+      questionPlane: 'local_behavior',
+    });
+    expect(next.conceptStates[0]?.masteryEstimate).toBe(0.2);
+  });
+
   it('records wrong answers as learner misses', () => {
     const next = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_wrong', note: 'learner missed it' });
     expect(next.conceptStates[0]?.failedCount).toBe(1);

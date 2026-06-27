@@ -2,7 +2,7 @@ import type { Correction, CorrectionType, LearningEvent, ReviewEventType, TutorS
 import { deriveEvidenceKey, hasEvidenceContent } from './evidenceIdentity.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
-const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'answered', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate', 'corrected', 'deferred']);
+const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'revealed', 'answered', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate', 'corrected', 'deferred']);
 const VALID_CORRECTION_TYPES = new Set<CorrectionType>(['wrong_concept', 'wrong_evidence', 'duplicate', 'better_label', 'not_useful', 'pin_important']);
 
 export type ReviewEventInput = {
@@ -10,6 +10,7 @@ export type ReviewEventInput = {
   eventType: ReviewEventType;
   answerText?: string;
   correct?: boolean;
+  confidenceBeforeReveal?: number;
   note?: string;
 };
 
@@ -24,6 +25,7 @@ export type CorrectionInput = {
 
 export function recordReviewEvent(state: TutorState, input: ReviewEventInput): TutorState {
   if (!VALID_REVIEW_EVENTS.has(input.eventType)) throw new Error(`Unknown review event type: ${input.eventType}`);
+  if (input.eventType === 'revealed' && !validConfidence(input.confidenceBeforeReveal)) throw new Error('revealed event requires confidenceBeforeReveal from 1 to 5.');
   const item = state.learningItems.find((candidate) => candidate.id === input.itemId);
   if (!item) throw new Error(`Unknown learning item: ${input.itemId}`);
   const now = nowIso();
@@ -33,6 +35,7 @@ export function recordReviewEvent(state: TutorState, input: ReviewEventInput): T
     conceptId: item.conceptId,
     eventType: input.eventType,
     ...eventEvidenceMetadata(item, input.eventType),
+    confidenceBeforeReveal: input.confidenceBeforeReveal,
     answerText: input.answerText,
     correct: input.correct,
     note: input.note,
@@ -46,13 +49,18 @@ export function recordReviewEvent(state: TutorState, input: ReviewEventInput): T
 }
 
 function eventEvidenceMetadata(item: TutorState['learningItems'][number], eventType: ReviewEventType): Pick<LearningEvent, 'evidenceKey' | 'evidencePath' | 'questionPlane'> {
-  if (eventType !== 'marked_wrong_evidence' && eventType !== 'marked_duplicate') return {};
+  if (eventType !== 'marked_wrong_evidence' && eventType !== 'marked_duplicate' && eventType !== 'revealed') return {};
   const primaryEvidence = { commit: item.snippet.commit, path: item.snippet.path, label: item.snippet.label, code: item.snippet.code };
   return {
     evidenceKey: hasEvidenceContent(primaryEvidence) ? deriveEvidenceKey(primaryEvidence) : undefined,
     evidencePath: item.snippet.path,
     questionPlane: item.questionPlane,
   };
+}
+
+function validConfidence(value: number | undefined): boolean {
+  const score = value ?? 0;
+  return Number.isInteger(score) && score >= 1 && score <= 5;
 }
 
 export function addCorrection(state: TutorState, input: CorrectionInput): TutorState {
@@ -102,7 +110,7 @@ function correctionAwarePriority(conceptState: TutorState['conceptStates'][numbe
 }
 
 function updateConceptStateForEvent<T extends TutorState['conceptStates'][number]>(conceptState: T, eventType: ReviewEventType, correct: boolean | undefined, now: string): T {
-  if (eventType === 'shown') return conceptState;
+  if (eventType === 'shown' || eventType === 'revealed') return conceptState;
   if (eventType === 'marked_bad_card' || eventType === 'marked_wrong_evidence' || eventType === 'marked_duplicate') return conceptState;
   if (eventType === 'marked_useful') return { ...conceptState, importance: clamp(conceptState.importance + 0.1, 0, 1), repoRelevance: clamp(conceptState.repoRelevance + 0.1, 0, 1) };
   if (eventType === 'skipped' || eventType === 'marked_unsure' || eventType === 'deferred') return { ...conceptState, failedCount: conceptState.failedCount + 1, confidence: clamp(conceptState.confidence - 0.08, 0, 1), nextReviewAt: addDays(now, 1) };

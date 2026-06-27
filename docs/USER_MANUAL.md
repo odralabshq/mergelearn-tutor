@@ -64,6 +64,7 @@ How to use it:
 3. Click `Reveal explanation`.
 4. Choose `I knew it`, `Partly`, or `Missed it`.
 5. Use `Bad card` or `Wrong evidence` when the tutor is wrong. These quality flags do not count as learner failure.
+6. The confidence choice is saved before reveal so History can show calibration between confidence and later correctness.
 
 Queue controls:
 
