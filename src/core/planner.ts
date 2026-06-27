@@ -3,6 +3,7 @@ import { evaluateCardQuality } from './cardQuality.js';
 import type { CardBatchMode, CardQualityResult, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
 import { applyCorrections, recordReviewEvent } from './events.js';
 import { isUnifiedDiffSnippet } from './diffEvidence.js';
+import { deriveEvidenceKey, hasEvidenceContent } from './evidenceIdentity.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
 function importanceFor(concept: Concept): number {
@@ -278,8 +279,23 @@ function applyPriorFeedbackToQuality(quality: CardQualityResult, item: LearningI
 function sharesEvidenceWithEvent(item: LearningItem, eventItemId: string, state: TutorState): boolean {
   const prior = state.learningItems.find((candidate) => candidate.id === eventItemId);
   if (!prior) return true;
-  const paths = new Set([item.snippet.path, ...item.evidence.map((evidence) => evidence.path)]);
-  return [prior.snippet.path, ...prior.evidence.map((evidence) => evidence.path)].some((path) => paths.has(path));
+  const current = evidenceIdentitySet(item);
+  const previous = evidenceIdentitySet(prior);
+  if (current.contentKeys.size && previous.contentKeys.size) {
+    return [...previous.contentKeys].some((key) => current.contentKeys.has(key));
+  }
+  return [...previous.paths].some((path) => current.paths.has(path));
+}
+
+function evidenceIdentitySet(item: LearningItem): { contentKeys: Set<string>; paths: Set<string> } {
+  const contentKeys = new Set<string>();
+  const paths = new Set<string>();
+  const snippetEvidence = { commit: item.snippet.commit, path: item.snippet.path, label: item.snippet.label, code: item.snippet.code };
+  for (const evidence of [snippetEvidence, ...item.evidence]) {
+    paths.add(evidence.path);
+    if (hasEvidenceContent(evidence)) contentKeys.add(deriveEvidenceKey(evidence));
+  }
+  return { contentKeys, paths };
 }
 
 export function renderCardMarkdown(concept: Concept, state?: ConceptState, plane: QuestionPlane = planeFor(concept, DEFAULT_PREFERENCES), snippet: CodeSnippet = snippetFor(concept, DEFAULT_PREFERENCES)): string {

@@ -120,6 +120,37 @@ describe('planner', () => {
     expect(regenerated.cardBatches.at(-1)?.itemIds).toEqual([]);
   });
 
+  it('still blocks legacy path-only evidence without snippets by path', () => {
+    const legacyConcept = { ...concept, evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth' }] };
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [legacyConcept]);
+    const item = activeLearningItems(state)[0]!;
+    const withWrongEvidence = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_wrong_evidence' });
+
+    const regenerated = generateCardBatch(withWrongEvidence, undefined, { count: 1, mode: 'regenerate' });
+
+    expect(activeLearningItems(regenerated)).toHaveLength(0);
+    expect(regenerated.cardBatches.at(-1)?.itemIds).toEqual([]);
+  });
+
+  it('allows regenerated cards to use the same path when the rejected evidence snippet changed', () => {
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
+    const item = activeLearningItems(state)[0]!;
+    const withWrongEvidence = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_wrong_evidence' });
+    const changedEvidence = {
+      ...concept,
+      evidence: [{ commit: 'abc123', path: 'src/auth.ts', label: 'auth', snippet: '+return user.permissions.includes("billing");' }],
+    };
+    const withChangedEvidence = {
+      ...withWrongEvidence,
+      concepts: withWrongEvidence.concepts.map((candidate) => candidate.id === concept.id ? changedEvidence : candidate),
+    };
+
+    const regenerated = generateCardBatch(withChangedEvidence, undefined, { count: 1, mode: 'regenerate' });
+
+    expect(activeLearningItems(regenerated)).toHaveLength(1);
+    expect(activeLearningItems(regenerated)[0]?.snippet.code).toContain('permissions');
+  });
+
   it('regenerates prior bad-card concepts as needs-review instead of ready', () => {
     const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
     const item = activeLearningItems(state)[0]!;
