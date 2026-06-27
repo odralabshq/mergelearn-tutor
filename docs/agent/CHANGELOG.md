@@ -332,3 +332,22 @@ npm test
 npm run build
 git diff --check
 ```
+
+## 2026-06-27 Autonomous cycle 5: Progress and History audit guides
+
+- Added a `Progress guide` to `/progress` explaining what changes mastery numbers: visible card generation, answered review events, source scope, and raw-progress debugging.
+- Improved empty and unchanged progress groups with explicit no-concepts copy instead of empty lists.
+- Added a `Source audit` panel to `/history` that separates broad repo evidence cards, course-scoped cards, accepted-question cards, and card-quality feedback.
+- Clarified History empty states for recent activity, batches, active cards, and archived cards so users know which Review action populates each section.
+- Updated session-server regression coverage and the user manual for the new Progress/History audit panels.
+- Captured before screenshots for all primary pages and after screenshots for the affected Progress and History pages.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+git diff --check
+```

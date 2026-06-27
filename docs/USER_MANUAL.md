@@ -208,6 +208,13 @@ The page is summary-first:
 
 Use this page when you want to confirm that regeneration preserved old cards and events.
 
+The `Source audit` panel explains why cards exist before you inspect individual cards:
+
+- `All due repo evidence cards` came from the broad Review source.
+- `Course-scoped cards` came from a selected course and should show a course id.
+- `Accepted-question cards` came from approved question-bank prompts.
+- `Card-quality events` are audited separately from mastery, so bad-card/wrong-evidence feedback does not count as a missed answer.
+
 API endpoint:
 
 ```text
@@ -221,6 +228,13 @@ API endpoint:
 Use Progress to inspect concept mastery.
 
 The page groups concepts by type and shows review status. It is not the main habit loop; it is an inspection page for understanding what the tutor thinks you are learning.
+
+The `Progress guide` explains what changes the numbers when the map is empty or unchanged:
+
+- generating cards creates source-visible study items;
+- answered review events update mastery;
+- course/question source scope explains why a card exists, not whether you know it;
+- raw CLI progress stays collapsed for debugging and audits.
 
 CLI equivalent:
 

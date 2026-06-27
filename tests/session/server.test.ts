@@ -54,8 +54,16 @@ describe('review session server', () => {
       const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
       expect(progress.nodes.length).toBeGreaterThan(0);
 
+      const progressHtml = await fetch(`${review.url}/progress`).then((res) => res.text());
+      expect(progressHtml).toContain('Progress guide');
+      expect(progressHtml).toContain('What changes these numbers?');
+      expect(progressHtml).toContain('Separate source scope from mastery');
+
       const historyHtml = await fetch(`${review.url}/history`).then((res) => res.text());
       expect(historyHtml).toContain('History without the wall of cards');
+      expect(historyHtml).toContain('Source audit');
+      expect(historyHtml).toContain('All due repo evidence cards');
+      expect(historyHtml).toContain('Card-quality events');
       expect(historyHtml).toContain('Recent activity');
       expect(historyHtml).toContain('Raw history JSON');
 

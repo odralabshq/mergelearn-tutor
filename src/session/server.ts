@@ -378,10 +378,48 @@ function renderProgressHtml(state: TutorState): string {
   const graph = buildProgressGraph(state);
   const groups = graph.nodes.filter((node) => node.kind === 'group').map((group) => {
     const children = graph.edges.filter((edge) => edge.type === 'group' && edge.from === group.id).map((edge) => graph.nodes.find((node) => node.id === edge.to)).filter(Boolean);
-    return `<section class="panel"><h2>${escapeHtml(group.label)}</h2><ul>${children.map((child) => `<li>${escapeHtml(child!.label)} — ${Math.round(child!.mastery * 100)}% mastery, ${escapeHtml(child!.status.replace(/_/g, ' '))}</li>`).join('')}</ul></section>`;
+    const rows = children.map((child) => `<li>${escapeHtml(child!.label)} — ${Math.round(child!.mastery * 100)}% mastery, ${escapeHtml(child!.status.replace(/_/g, ' '))}</li>`).join('');
+    return `<section class="panel"><h2>${escapeHtml(group.label)}</h2>${rows ? `<ul>${rows}</ul>` : '<p>No concepts in this group yet.</p>'}</section>`;
   }).join('');
   const stats = `<div class="stats"><div>${graph.summary.new}<span>new</span></div><div>${graph.summary.learning}<span>learning</span></div><div>${graph.summary.confident}<span>confident</span></div><div>${graph.summary.needs_review}<span>needs review</span></div></div>`;
-  return pageShell('MergeLearn Tutor Progress', `<section class="hero"><div><p class="eyebrow">Learning map</p><h1>Progress map</h1><p>Track what you have seen, what needs review, and which concepts are becoming confident.</p></div></section>${nav()}${stats}${groups}<details class="panel"><summary>Show raw CLI progress</summary><pre>${escapeHtml(renderProgress(state))}</pre></details>`, 'Progress map');
+  return pageShell('MergeLearn Tutor Progress', `<section class="hero"><div><p class="eyebrow">Learning map</p><h1>Progress map</h1><p>Track what you have seen, what needs review, and which concepts are becoming confident.</p></div></section>${nav()}${stats}${renderProgressGuide(state)}${groups}<details class="panel"><summary>Show raw CLI progress</summary><pre>${escapeHtml(renderProgress(state))}</pre></details>`, 'Progress map');
+}
+
+function renderProgressGuide(state: TutorState): string {
+  const answeredEvents = state.learningEvents.filter((event) => event.eventType === 'answered');
+  const active = activeLearningItems(state).length;
+  const courseCards = state.learningItems.filter((item) => item.courseId).length;
+  const acceptedQuestionCards = state.learningItems.filter((item) => item.questionId).length;
+  const steps = [
+    {
+      label: 'Generate cards from a visible source',
+      done: state.learningItems.length > 0,
+      detail: state.learningItems.length > 0 ? `${active} active · ${state.learningItems.length - active} archived cards are counted in this map.` : 'Use Review source to generate the first broad or course-scoped queue.',
+      href: '/',
+      action: 'Open Review',
+    },
+    {
+      label: 'Answer from memory',
+      done: answeredEvents.length > 0,
+      detail: answeredEvents.length > 0 ? `${answeredEvents.length} answered events are updating mastery estimates.` : 'Reveal/grade cards after answering; feedback-only card-quality events do not reduce mastery.',
+      href: '/history',
+      action: 'Audit answers',
+    },
+    {
+      label: 'Separate source scope from mastery',
+      done: courseCards > 0 || acceptedQuestionCards > 0,
+      detail: `${courseCards} course-scoped cards · ${acceptedQuestionCards} accepted-question cards. Source explains why a card exists; answers explain mastery.`,
+      href: '/history',
+      action: 'Check source audit',
+    },
+    {
+      label: 'Use raw progress only when debugging',
+      done: state.concepts.length > 0,
+      detail: `${state.concepts.length} concepts are grouped below; raw CLI progress stays collapsed for audit detail.`,
+    },
+  ];
+  const items = steps.map((step, index) => `<li class="onboarding-step ${step.done ? 'is-done' : ''}"><span>${step.done ? '✓' : index + 1}</span><div><strong>${escapeHtml(step.label)}</strong><p>${escapeHtml(step.detail)}</p>${step.href ? `<a href="${step.href}">${escapeHtml(step.action)}</a>` : ''}</div></li>`).join('');
+  return `<section class="panel onboarding-panel"><div class="section-head"><div><p class="eyebrow">Progress guide</p><h2>What changes these numbers?</h2><p>Progress is driven by review events, not by the source filter alone. Use this panel to understand the next action when the map looks empty or unchanged.</p></div><a class="ghost" href="/api/progress">Open progress JSON</a></div><ol class="onboarding-steps">${items}</ol></section>`;
 }
 
 function renderHistoryHtml(state: TutorState): string {
@@ -392,7 +430,15 @@ function renderHistoryHtml(state: TutorState): string {
   const cardList = (cards: typeof data.cards) => cards.slice().reverse().map((card) => `<article class="mini-card ${card.status === 'archived' ? 'is-archived' : ''}"><div class="card-topline"><span>${escapeHtml(card.status)}</span><span>gen ${card.generation}</span><span>${escapeHtml(card.source)}</span></div><h3>${escapeHtml(card.title)}</h3><p>${escapeHtml(card.id)}${card.courseId ? ` · course ${escapeHtml(card.courseId)}` : ''}${card.questionId ? ` · question ${escapeHtml(card.questionId)}` : ''}</p><details><summary>${card.events.length} timeline events</summary><ul>${card.events.map((event) => `<li><strong>${escapeHtml(event.eventType)}</strong>${event.correct === undefined ? '' : ` · ${event.correct ? 'correct' : 'missed'}`} ${event.answerText ? `— ${escapeHtml(event.answerText)}` : ''}${event.note ? ` — ${escapeHtml(event.note)}` : ''}</li>`).join('')}</ul></details></article>`).join('');
   const activity = recentHistoryActivity(state);
   const metrics = `<div class="stats"><div>${data.summary.activeCards}<span>active</span></div><div>${data.summary.archivedCards}<span>archived</span></div><div>${data.summary.batches}<span>batches</span></div><div>${data.summary.events}<span>events</span></div></div>`;
-  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}<section class="panel"><h2>Recent activity</h2><div class="timeline-list">${activity || '<p>No learning activity yet.</p>'}</div></section><section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History');
+  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}${renderHistorySourceAudit(state)}<section class="panel"><h2>Recent activity</h2><div class="timeline-list">${activity || '<p>No learning activity yet. Generate cards, answer one, or mark card quality to start the audit trail.</p>'}</div></section><section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet. Use Review source to generate a queue; batch details will appear here.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards. Generate cards from all evidence or a selected course on Review.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards. Regenerate from source to preserve the old queue here.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History');
+}
+
+function renderHistorySourceAudit(state: TutorState): string {
+  const broadCards = state.learningItems.filter((item) => !item.courseId).length;
+  const courseCards = state.learningItems.filter((item) => item.courseId).length;
+  const acceptedQuestionCards = state.learningItems.filter((item) => item.questionId).length;
+  const qualityEvents = state.learningEvents.filter((event) => ['marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate'].includes(event.eventType)).length;
+  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Why did these cards exist?</h2><p>Use this before inspecting individual cards: it separates broad repo evidence, course-scoped generation, accepted-question cards, and card-quality feedback.</p></div><a class="ghost" href="/">Change Review source</a></div><div class="mini-grid"><article class="mini-card"><strong>${broadCards}</strong><p>All due repo evidence cards</p><small>Cards without a course id came from the broad queue.</small></article><article class="mini-card"><strong>${courseCards}</strong><p>Course-scoped cards</p><small>These should show a course id on the card and in history.</small></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p><small>These were generated from approved prompts in the question bank.</small></article><article class="mini-card"><strong>${qualityEvents}</strong><p>Card-quality events</p><small>Bad-card/wrong-evidence/duplicate feedback is audited without lowering mastery.</small></article></div></section>`;
 }
 
 function recentHistoryActivity(state: TutorState): string {
