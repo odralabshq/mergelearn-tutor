@@ -175,7 +175,43 @@ function renderSessionHtml(state: TutorState, preferences: UserPreferences): str
     </article>`).join('\n');
   const hero = `<section class="hero"><div><p class="eyebrow">Local code learning queue</p><h1>Review your recent code as flashcards</h1><p>Generate focused snippets, answer from the diff, and keep your history local.</p></div><div class="hero-card"><strong>${active.length}</strong><span>active cards</span><strong>${archived}</strong><span>archived cards</span></div></section>`;
   const controls = `<section class="toolbar"><div><strong>Card queue</strong><p>${latestBatch ? `Latest batch ${escapeHtml(latestBatch.id)} · ${latestBatch.mode}` : 'No generated batch yet.'}</p><div class="progress-track"><span id="session-progress" style="width:0%"></span></div></div><div><button data-action="generate-cards" data-mode="more">Generate 5 more</button><button data-action="generate-cards" data-mode="regenerate">Regenerate 5</button><a class="ghost" href="/courses">Courses</a><a class="ghost" href="/questions">Questions</a><a class="ghost" href="/timeline">Timeline</a><a class="ghost" href="/graph">Graph</a><a class="ghost" href="/history">History</a></div></section>`;
-  return pageShell('MergeLearn Tutor Review', `${hero}${controls}<section class="review-grid">${cards || '<p>No cards yet. Run ingest first.</p>'}</section>`, 'Ready');
+  return pageShell('MergeLearn Tutor Review', `${hero}${renderStartHerePanel(state)}${controls}<section class="review-grid">${cards || '<p>No cards yet. Follow Start here to ingest evidence and generate your first cards.</p>'}</section>`, 'Ready');
+}
+
+function renderStartHerePanel(state: TutorState): string {
+  const active = activeLearningItems(state).length;
+  const acceptedQuestions = state.questionBank.filter((entry) => entry.status === 'accepted').length;
+  const draftQuestions = state.questionBank.filter((entry) => entry.status === 'draft').length;
+  const steps = [
+    {
+      label: 'Ingest repo evidence',
+      done: state.artifacts.length > 0 && state.concepts.length > 0,
+      detail: state.concepts.length > 0 ? `${state.concepts.length} concepts from ${state.artifacts.length} commits/docs` : 'Run init + ingest to build the local skill graph.',
+      action: 'node dist/cli.js init --repo . && node dist/cli.js ingest --repo . --since 30d',
+    },
+    {
+      label: 'Create a course goal',
+      done: state.courses.length > 0,
+      detail: state.courses.length > 0 ? `${state.courses.length} course${state.courses.length === 1 ? '' : 's'} ready` : 'Add the topic, code paths, and docs you want the tutor to emphasize.',
+      action: 'Open Courses',
+      href: '/courses',
+    },
+    {
+      label: 'Draft and accept questions',
+      done: acceptedQuestions > 0,
+      detail: acceptedQuestions > 0 ? `${acceptedQuestions} accepted · ${draftQuestions} draft` : draftQuestions > 0 ? `${draftQuestions} drafts waiting for review` : 'Use fake/local drafting; no remote LLM calls are made.',
+      action: 'Open Questions',
+      href: '/questions',
+    },
+    {
+      label: 'Generate and review cards',
+      done: active > 0,
+      detail: active > 0 ? `${active} active cards in today’s queue` : 'Generate cards once evidence, goals, or accepted questions exist.',
+      action: 'Generate 5 more',
+    },
+  ];
+  const items = steps.map((step, index) => `<li class="onboarding-step ${step.done ? 'is-done' : ''}"><span>${step.done ? '✓' : index + 1}</span><div><strong>${escapeHtml(step.label)}</strong><p>${escapeHtml(step.detail)}</p>${step.href ? `<a href="${step.href}">${escapeHtml(step.action)}</a>` : `<code>${escapeHtml(step.action)}</code>`}</div></li>`).join('');
+  return `<section class="panel onboarding-panel"><div class="section-head"><div><p class="eyebrow">Start here</p><h2>From empty repo to useful review cards</h2><p>Follow this local-only path when you are setting up a repo for the first time, then come back here for daily recall.</p></div><a class="ghost" href="/preferences">Tune questions</a></div><ol class="onboarding-steps">${items}</ol></section>`;
 }
 
 function renderCoursesHtml(state: TutorState): string {
@@ -316,6 +352,7 @@ a{color:#7dd3fc}.status{position:sticky;top:0;z-index:5;background:#020617cc;bac
 button:first-child,.actions button:first-child{background:linear-gradient(135deg,#38bdf8,#22c55e);border:0;color:#03111f}.nav a:hover,.ghost:hover,button:hover,.nav a:focus-visible,.ghost:focus-visible,button:focus-visible{transform:translateY(-2px);border-color:#7dd3fc;box-shadow:0 12px 28px #38bdf833;background:#24344f;outline:0}button:first-child:hover,.actions button:first-child:hover{box-shadow:0 16px 34px #22c55e33}button:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
 .card,.panel{background:linear-gradient(180deg,#111827,#0f172a);border:1px solid #30415c;border-radius:24px;padding:24px;margin:18px 0;box-shadow:0 16px 50px #0005}.review-grid{display:grid;gap:20px}.card.completed{border-color:#22c55e88;background:linear-gradient(180deg,#10251d,#0f172a)}.card-topline{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.card-topline span,.eyebrow{border:1px solid #315071;border-radius:999px;padding:5px 10px;color:#bae6fd;background:#0b2740;text-transform:uppercase;font-size:12px;font-weight:800;letter-spacing:.08em}.eyebrow{display:inline-flex}.why{color:#a8b3c7}.snippet-head{display:flex;justify-content:space-between;gap:12px;margin:14px 0 0;padding:10px 12px;background:#020617;border:1px solid #1e293b;border-radius:14px 14px 0 0;color:#93c5fd;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
 .question-box,.reveal-panel{border:1px solid #334155;border-radius:18px;background:#0b1220;padding:16px;margin:16px 0}.reveal-panel{background:#081b2d}.is-hidden{display:none}.label{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#67e8f9;font-weight:900;margin:0 0 8px}textarea,input{width:100%;border:1px solid #334155;border-radius:16px;background:#020617;color:#e2e8f0;padding:14px;font:inherit}textarea{min-height:96px;resize:vertical}.actions{display:flex;flex-wrap:wrap;gap:8px}.progress-track{height:9px;max-width:340px;background:#020617;border:1px solid #1e293b;border-radius:999px;margin-top:10px;overflow:hidden}.progress-track span{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#22c55e);transition:width .2s ease}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.stats div,.mini-card{border:1px solid #30415c;border-radius:20px;background:#0f172a;padding:18px}.stats div{font-size:30px;font-weight:900}.stats span{display:block;color:#93a4b8;font-size:13px;font-weight:700}.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.mini-card h3{margin:.5rem 0}.mini-card p,.mini-card small{color:#9fb0c8}.question-card h3{font-size:17px;line-height:1.18;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}.mini-card.is-archived{opacity:.74}.timeline-list{display:grid;gap:10px}.timeline-row{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(120px,.55fr);gap:12px;align-items:center;border:1px solid #263854;border-radius:16px;background:#0b1220;padding:12px}.timeline-row span{color:#67e8f9;text-transform:uppercase;font-size:12px;font-weight:900}.timeline-row small,.graph-node small{color:#9fb0c8}.section-head{display:flex;justify-content:space-between;gap:18px;align-items:start}.section-head h2{margin:.1rem 0}.section-head p{color:#9fb0c8;margin:.4rem 0 0}.graph-map-panel{overflow:hidden}.graph-legend{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 16px}.graph-legend span{border:1px solid #315071;border-radius:999px;background:#0b2740;color:#bae6fd;padding:7px 10px;font-size:12px;font-weight:800}.graph-map{width:100%;height:auto;border:1px solid #263854;border-radius:22px;background:radial-gradient(circle at 20% 10%,#38bdf814,transparent 24rem),#07111f}.graph-lane-bg{fill:#0f172acc;stroke:#263854}.graph-lane-title{fill:#bae6fd;font-size:15px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.graph-edge{fill:none;stroke:#38bdf8;stroke-width:2;stroke-opacity:.5;marker-end:url(#arrow)}.graph-map-node rect{fill:#0b1220;stroke:#38bdf866;stroke-width:1.5}.graph-map-node:hover rect{stroke:#22c55e;fill:#0f2137}.graph-node-type{fill:#67e8f9;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em}.graph-node-label{fill:#e2e8f0;font-size:12px;font-weight:800}.graph-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.graph-column{border:1px solid #30415c;border-radius:24px;background:#101827;padding:18px}.graph-node{border:1px solid #263854;border-radius:16px;background:#0b1220;padding:12px;margin:10px 0;display:grid;gap:6px}.graph-node strong{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.choices{display:grid;gap:12px;margin:14px 0}.choice{display:flex;gap:12px;padding:14px;border:1px solid #334155;border-radius:18px;background:#0b1220}.choice input{width:auto}.choice small{display:block;color:#93a4b8;margin-top:4px}pre{overflow:auto;background:#020617;border:1px solid #1e293b;border-radius:16px;padding:16px}
+.onboarding-panel{background:linear-gradient(135deg,#0d1b2f,#102338 64%,#082f49)}.onboarding-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;list-style:none;margin:18px 0 0;padding:0}.onboarding-step{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;border:1px solid #315071;border-radius:18px;background:#07111fcc;padding:14px}.onboarding-step>span{display:grid;place-items:center;width:32px;height:32px;border-radius:999px;background:#1e293b;color:#bae6fd;font-weight:900}.onboarding-step.is-done>span{background:#14532d;color:#bbf7d0}.onboarding-step p{color:#b6c2d4;margin:.35rem 0}.onboarding-step code{display:block;white-space:normal;word-break:break-word;color:#fef3c7;background:#020617;border:1px solid #334155;border-radius:10px;padding:8px;font-size:12px}
 @media(max-width:760px){main{padding:20px 14px 60px}.hero{grid-template-columns:1fr;padding:22px}.hero h1{font-size:34px}.toolbar{position:static}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 ${diffSnippetCss()}`;
 }

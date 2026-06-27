@@ -277,3 +277,20 @@ npm run build
 npm run smoke:package
 git diff --check
 ```
+
+## 2026-06-27 Autonomous cycle 2: first-use Start here path
+
+- Added a state-aware `Start here` panel to the Review page that explains the local path from empty repo to useful cards: ingest evidence, create a course, draft/accept questions, then generate/review cards.
+- The panel shows completed-step counts for concepts, courses, accepted/draft questions, and active cards, with direct links to Courses, Questions, and Preferences.
+- Replaced the bare no-card empty state with guidance to follow the Start here path.
+- Updated session-server regression coverage and the user manual first-run instructions.
+- Captured before screenshots for all primary pages and an after screenshot for the affected Review page.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+```

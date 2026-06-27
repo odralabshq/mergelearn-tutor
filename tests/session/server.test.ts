@@ -42,6 +42,10 @@ describe('review session server', () => {
       expect(html).toContain('Reveal explanation');
       expect(html).toContain('I knew it');
       expect(html).toContain('marked_bad_card');
+      expect(html).toContain('Start here');
+      expect(html).toContain('From empty repo to useful review cards');
+      expect(html).toContain('1 course ready');
+      expect(html).toContain('Open Questions');
 
       const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
       expect(progress.nodes.length).toBeGreaterThan(0);

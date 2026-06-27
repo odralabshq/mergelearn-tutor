@@ -29,6 +29,15 @@ node dist/cli.js session --repo /path/to/your/repo
 
 Open the printed local URL in your browser.
 
+The Review page also includes a `Start here` panel. Use it as the browser checklist from an empty repo to a useful learning queue:
+
+1. Ingest repo evidence so concepts are extracted from recent commits and docs.
+2. Create a course goal that names the material and docs you care about.
+3. Draft fake/local questions and accept the useful ones.
+4. Generate cards and review them from memory.
+
+The checklist is state-aware: completed steps show current counts, while incomplete steps point to the next local CLI command or browser page.
+
 ## 3. Review page
 
 ![Review page](assets/screenshots/review.png)
