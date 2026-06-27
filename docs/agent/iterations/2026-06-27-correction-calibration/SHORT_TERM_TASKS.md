@@ -83,3 +83,10 @@ npm run build
 npm run smoke:package
 git diff --check
 ```
+
+## Batch completion status
+
+- C1 correction-aware generation: complete.
+- C2 rating-aware quality calibration: complete.
+- C3 quality feedback UX tightening: complete.
+- C4 post-batch assessment: complete with next batch created at `../2026-06-27-evidence-extraction-hardening/SHORT_TERM_TASKS.md`.

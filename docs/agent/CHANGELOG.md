@@ -446,3 +446,9 @@ Observed full-suite result:
 - Collapsed detailed quality scores behind `Show quality scores` on Review and Questions cards.
 - Kept verdicts and warnings visible while reducing question-card height and repetition.
 - Captured updated Review and Questions screenshots after a rebuild and browser smoke check.
+
+## 2026-06-27 C4: correction calibration reassessment
+
+- Marked the correction-calibration batch complete after fresh full verification.
+- Reassessed the long-term queue: quality and correction loops are now usable; stable evidence identity and richer extraction findings are the next dependency-safe foundation.
+- Created the next batch at `docs/agent/iterations/2026-06-27-evidence-extraction-hardening/SHORT_TERM_TASKS.md`.

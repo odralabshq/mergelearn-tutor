@@ -108,3 +108,39 @@ Visual assessment:
 - Review quality panels are compact and readable.
 - Question cards are less cluttered while quality status remains understandable.
 - No blocking visual issue found.
+
+## C4 post-batch assessment
+
+Batch result:
+
+- C1 made bad-card, wrong-evidence, and duplicate feedback affect future card generation.
+- C2 added manual rating summaries to eval reports without mixing ratings into deterministic quality verdicts.
+- C3 reduced quality-panel density by collapsing score chips while keeping verdicts and warnings visible.
+- Plan Builder added a single browser path from local evidence to courses, accepted questions, and review cards.
+
+Fresh verification evidence after final code edits:
+
+```bash
+npm run check
+npm test
+npm run build
+git diff --check
+```
+
+Observed:
+
+- 19 test files passed.
+- 62 tests passed.
+- Build passed.
+- `git diff --check` passed.
+
+Reassessment:
+
+- The static quality/correction loop is now good enough to justify deeper evidence work.
+- The next blocker is stable evidence identity: wrong-evidence feedback currently works for regenerated cards in the same state, but it is not durable enough across richer re-ingest/extraction changes.
+- AST extraction still emits only concept IDs and reasons, so downstream UI cannot explain symbol/source/finding confidence.
+- Store versioning should wait until the evidence/finding shape is chosen.
+
+Next batch created:
+
+- `docs/agent/iterations/2026-06-27-evidence-extraction-hardening/SHORT_TERM_TASKS.md`
