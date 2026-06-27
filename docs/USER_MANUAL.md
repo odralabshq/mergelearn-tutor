@@ -40,6 +40,8 @@ The checklist is state-aware: completed steps show current counts, while incompl
 
 The `Plan Builder` page is the consolidated browser view for that same path. Open it when you want one place to answer: what evidence exists locally, which course goal is active, whether accepted questions are ready, and what the next review action should be. It also repeats the local-only guardrails: the plan view does not enable remote LLM calls, publish data, or run target repo code.
 
+Every browser page includes the shared app shell at the top. Use it to jump between Review, Plan Builder, Courses, Questions, Timeline, Graph, History, Progress, and Preferences, and to check the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
+
 ## 3. Review page
 
 ![Review page](assets/screenshots/review.png)

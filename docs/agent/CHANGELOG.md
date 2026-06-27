@@ -452,3 +452,24 @@ Observed full-suite result:
 - Marked the correction-calibration batch complete after fresh full verification.
 - Reassessed the long-term queue: quality and correction loops are now usable; stable evidence identity and richer extraction findings are the next dependency-safe foundation.
 - Created the next batch at `docs/agent/iterations/2026-06-27-evidence-extraction-hardening/SHORT_TERM_TASKS.md`.
+
+## 2026-06-27 Autonomous cycle 8: shared app shell
+
+- Added a shared top-level app shell to every local browser page with professional navigation across Review, Plan Builder, Courses, Questions, Timeline, Graph, History, Progress, and Preferences.
+- Added a local plan snapshot that reads `/api/state` in-browser and shows concept count, course count, accepted-question count, active-card count, and the next recommended action without remote calls.
+- Marked the active navigation item with `aria-current="page"` and documented the shared shell in the user manual.
+- Updated session-server regression coverage for the app shell and captured before/after screenshots for all primary pages.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+```
+
+## 2026-06-27 E1: stable evidence identity
+
+- Added a derived evidence key helper based on commit, path, label, and snippet/code hash.
+- Wrong-evidence regeneration now distinguishes changed snippets on the same path while preserving path fallback for legacy path-only evidence.

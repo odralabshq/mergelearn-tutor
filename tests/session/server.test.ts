@@ -56,6 +56,11 @@ describe('review session server', () => {
       expect(html).toContain('All due repo evidence');
       expect(html).toContain('Learn auth · 0 accepted · 0 active');
       expect(html).toContain('Generate 5 focused cards');
+      expect(html).toContain('Local learning workbench');
+      expect(html).toContain('Current local plan snapshot');
+      expect(html).toContain('id="shell-concepts"');
+      expect(html).toContain('Primary navigation');
+      expect(html).toContain('No remote LLM calls');
 
       const planHtml = await fetch(`${review.url}/plan`).then((res) => res.text());
       expect(planHtml).toContain('Plan Builder connects setup to daily review');
