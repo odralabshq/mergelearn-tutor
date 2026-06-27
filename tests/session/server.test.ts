@@ -189,13 +189,28 @@ describe('review session server', () => {
       expect(delayed.summary.scheduled).toBe(2);
       expect(delayed.summary.completed).toBe(0);
 
+      const studyHtml = await fetch(`${review.url}/study`).then((res) => res.text());
+      expect(studyHtml).toContain('Active-control pilot');
+      expect(studyHtml).toContain('Assign next pilot set');
+      const studyCards = await fetch(`${review.url}/api/cards/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 2, mode: 'more' }) }).then((res) => res.json()) as { ok: boolean };
+      expect(studyCards.ok).toBe(true);
+      const studyAssigned = await fetch(`${review.url}/api/study/assign`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ seed: 'test-pilot', count: 2 }) }).then((res) => res.json()) as { ok: boolean; state: { studyAssignments: number }; study: { summary: { mergelearn: number; activeControl: number; completed: number }; assignments: Array<{ id: string; condition: string }> } };
+      expect(studyAssigned.ok).toBe(true);
+      expect(studyAssigned.state.studyAssignments).toBe(2);
+      expect(studyAssigned.study.summary.mergelearn).toBe(1);
+      expect(studyAssigned.study.summary.activeControl).toBe(1);
+      const passive = studyAssigned.study.assignments.find((assignment) => assignment.condition === 'active_control')!;
+      const passiveDone = await fetch(`${review.url}/api/study/passive-review/complete`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ assignmentId: passive.id, durationMs: 60000, note: 'read the packet' }) }).then((res) => res.json()) as { ok: boolean; study: { summary: { completed: number } } };
+      expect(passiveDone.ok).toBe(true);
+      expect(passiveDone.study.summary.completed).toBe(1);
+
       const feedback = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_useful' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(feedback.ok).toBe(true);
-      expect(feedback.state.events).toBe(3);
+      expect(feedback.state.events).toBe(4);
 
       const badCard = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_bad_card' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(badCard.ok).toBe(true);
-      expect(badCard.state.events).toBe(4);
+      expect(badCard.state.events).toBe(5);
 
       const correction = await fetch(`${review.url}/correct`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conceptId: 'repo.auth', correctionType: 'better_label', replacementLabel: 'session auth' }) }).then((res) => res.json()) as { ok: boolean; state: { corrections: number } };
       expect(correction.ok).toBe(true);

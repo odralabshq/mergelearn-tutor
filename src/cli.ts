@@ -15,6 +15,7 @@ import { draftQuestionsForCourse, questionSummary, updateQuestionStatus } from '
 import { createOutboundPreview, loadPrivacyConfig, renderOutboundPreview, savePrivacyConfig, type PrivacyConfig, type PrivacyProvider } from './core/privacy.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderProgress, renderReview, renderToday, stateSummary } from './core/render.js';
 import { recordManualRating, renderManualRatingSummary } from './core/ratings.js';
+import { assignStudyConditions, completePassiveReview, studySummary } from './core/study.js';
 import { initState, loadState, saveState, statePath } from './core/store.js';
 import { writeDashboard } from './dashboard/html.js';
 import { startReviewServer } from './session/server.js';
@@ -71,6 +72,14 @@ function renderDelayedProbes(state: Awaited<ReturnType<typeof loadState>>): stri
   const lines = ['Delayed recall probes', '', `Total: ${summary.total}`, `Scheduled: ${summary.scheduled}`, `Completed: ${summary.completed}`, `Due now: ${summary.due}`, ''];
   for (const probe of due.slice(0, 12)) lines.push(`- ${probe.id}: ${probe.intervalDays}-day probe for ${probe.sourceItemId}\n  concept: ${probe.conceptId}\n  due: ${probe.dueAt}`);
   if (due.length === 0) lines.push('No delayed probes are due right now.');
+  return `${lines.join('\n')}\n`;
+}
+
+function renderStudyAssignments(state: Awaited<ReturnType<typeof loadState>>): string {
+  const summary = studySummary(state);
+  const lines = ['Active-control study assignments', '', `Total: ${summary.total}`, `MergeLearn active recall: ${summary.mergelearn}`, `Active-control passive review: ${summary.activeControl}`, `Completed: ${summary.completed}`, `Pending: ${summary.pending}`, ''];
+  for (const assignment of (state.studyAssignments ?? []).slice(-12).reverse()) lines.push(`- ${assignment.id} [${assignment.condition}, ${assignment.status}] ${assignment.itemId}\n  concept: ${assignment.conceptId}\n  seed: ${assignment.seed}`);
+  if ((state.studyAssignments ?? []).length === 0) lines.push('No study assignments yet. Run study assign after generating cards.');
   return `${lines.join('\n')}\n`;
 }
 
@@ -410,6 +419,39 @@ delayed.command('complete')
     const next = completeDelayedProbe(await loadState(options.repo), { probeId: options.probe, answerText: options.answer, correct: options.correct });
     await saveState(options.repo, next);
     process.stdout.write(`Completed delayed probe ${options.probe}.\n`);
+  });
+
+const study = program.command('study')
+  .description('Manage active-control/passive-review study assignments');
+
+study.command('list')
+  .description('List study assignments and active-control balance')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderStudyAssignments(await loadState(options.repo)));
+  });
+
+study.command('assign')
+  .description('Assign active cards into MergeLearn active-recall and passive-review controls')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--seed <text>', 'stable local pilot seed', 'local-pilot')
+  .option('-n, --count <count>', 'number of active cards to assign', '6')
+  .action(async (options: { repo: string; seed: string; count: string }) => {
+    const next = assignStudyConditions(await loadState(options.repo), { seed: options.seed, count: Number.parseInt(options.count, 10) });
+    await saveState(options.repo, next);
+    process.stdout.write(renderStudyAssignments(next));
+  });
+
+study.command('passive-complete')
+  .description('Mark an active-control passive-review assignment complete without changing mastery')
+  .requiredOption('--assignment <id>', 'study assignment id')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--duration-ms <ms>', 'optional review duration in milliseconds')
+  .option('--note <text>', 'optional passive-review note')
+  .action(async (options: { repo: string; assignment: string; durationMs?: string; note?: string }) => {
+    const next = completePassiveReview(await loadState(options.repo), { assignmentId: options.assignment, durationMs: options.durationMs ? Number.parseInt(options.durationMs, 10) : undefined, note: options.note });
+    await saveState(options.repo, next);
+    process.stdout.write(`Completed passive-review assignment ${options.assignment}.\n`);
   });
 
 program.command('rate')

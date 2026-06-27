@@ -12,6 +12,7 @@ import { loadPreferences, normalizePreferences, savePreferences } from '../core/
 import { buildProgressGraph } from '../core/progress.js';
 import { draftQuestionsForCourse, questionSummary, updateQuestionStatus } from '../core/questions.js';
 import { renderProgress, renderToday } from '../core/render.js';
+import { assignStudyConditions, completePassiveReview, studySummary } from '../core/study.js';
 import { loadState, saveState } from '../core/store.js';
 import type { CardQualityResult, CorrectionType, EvidenceTimelineNode, LearningItem, QuestionBankEntry, ReviewEventType, TutorState, UserPreferences } from '../core/types.js';
 
@@ -47,11 +48,13 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/graph') return sendHtml(res, 200, renderGraphHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/progress') return sendHtml(res, 200, renderProgressHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/history') return sendHtml(res, 200, renderHistoryHtml(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/study') return sendHtml(res, 200, renderStudyHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/preferences') return sendHtml(res, 200, renderPreferencesHtml(await loadPreferences(repoPath)));
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
   if (method === 'GET' && url.pathname === '/api/progress') return sendJson(res, 200, buildProgressGraph(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/calibration') return sendJson(res, 200, summarizeCalibration(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/delayed-probes') return sendJson(res, 200, delayedProbeData(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/study') return sendJson(res, 200, studyData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/cards/history') return sendJson(res, 200, cardHistoryData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/courses') return sendJson(res, 200, { courses: coursesSummary(await loadState(repoPath)) });
   if (method === 'GET' && url.pathname === '/api/questions') return sendJson(res, 200, questionBankData(await loadState(repoPath)));
@@ -106,6 +109,19 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
     await saveState(repoPath, next);
     return sendJson(res, 200, { ok: true, state: summarizeState(next), delayedProbes: delayedProbeData(next) });
   }
+  if (method === 'POST' && url.pathname === '/api/study/assign') {
+    const body = await readJson(req) as { seed?: string; count?: number };
+    const next = assignStudyConditions(await loadState(repoPath), { seed: body.seed, count: body.count });
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, state: summarizeState(next), study: studyData(next) });
+  }
+  if (method === 'POST' && url.pathname === '/api/study/passive-review/complete') {
+    const body = await readJson(req) as { assignmentId?: string; durationMs?: number; note?: string };
+    if (!body.assignmentId) return sendJson(res, 400, { ok: false, error: 'assignmentId is required' });
+    const next = completePassiveReview(await loadState(repoPath), { assignmentId: body.assignmentId, durationMs: body.durationMs, note: body.note });
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, state: summarizeState(next), study: studyData(next) });
+  }
   if (method === 'POST' && url.pathname === '/feedback') {
     const body = await readJson(req) as { itemId?: string; eventType?: ReviewEventType; confidenceBeforeReveal?: number; note?: string };
     if (!body.itemId || !body.eventType) return sendJson(res, 400, { ok: false, error: 'itemId and eventType are required' });
@@ -126,7 +142,7 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
 function summarizeState(state: TutorState): Record<string, number> {
   const active = activeLearningItems(state).length;
   const archived = state.learningItems.filter((item) => item.status === 'archived').length;
-  return { concepts: state.concepts.length, cards: state.learningItems.length, activeCards: active, archivedCards: archived, batches: state.cardBatches.length, events: state.learningEvents.length, delayedProbes: (state.delayedProbes ?? []).length, corrections: state.corrections.length };
+  return { concepts: state.concepts.length, cards: state.learningItems.length, activeCards: active, archivedCards: archived, batches: state.cardBatches.length, events: state.learningEvents.length, delayedProbes: (state.delayedProbes ?? []).length, studyAssignments: (state.studyAssignments ?? []).length, corrections: state.corrections.length };
 }
 
 function delayedProbeData(state: TutorState) {
@@ -136,6 +152,13 @@ function delayedProbeData(state: TutorState) {
     due,
     upcoming: (state.delayedProbes ?? []).filter((probe) => probe.status === 'scheduled' && !due.some((dueProbe) => dueProbe.id === probe.id)),
     completed: (state.delayedProbes ?? []).filter((probe) => probe.status === 'completed'),
+  };
+}
+
+function studyData(state: TutorState) {
+  return {
+    summary: studySummary(state),
+    assignments: state.studyAssignments ?? [],
   };
 }
 
@@ -547,6 +570,25 @@ function renderProgressGuide(state: TutorState): string {
   return `<section class="panel onboarding-panel"><div class="section-head"><div><p class="eyebrow">Progress guide</p><h2>What changes these numbers?</h2><p>Progress is driven by review events, not by the source filter alone. Use this panel to understand the next action when the map looks empty or unchanged.</p></div><a class="ghost" href="/api/progress">Open progress JSON</a></div><ol class="onboarding-steps">${items}</ol></section>`;
 }
 
+function renderStudyHtml(state: TutorState): string {
+  const data = studyData(state);
+  const assignments = data.assignments;
+  const rows = assignments.slice().reverse().map((assignment) => {
+    const item = state.learningItems.find((candidate) => candidate.id === assignment.itemId);
+    const action = assignment.condition === 'active_control' && assignment.status === 'assigned'
+      ? `<button data-action="complete-passive-review" data-assignment-id="${escapeHtml(assignment.id)}">Mark passive review done</button>`
+      : '';
+    return `<article class="mini-card ${assignment.status === 'completed' ? 'completed' : ''}"><div class="card-topline"><span>${escapeHtml(assignment.condition.replace('_', ' '))}</span><span>${escapeHtml(assignment.status)}</span><span>${escapeHtml(assignment.seed)}</span></div><h3>${escapeHtml(item?.title ?? assignment.itemId)}</h3><p>${escapeHtml(assignment.itemId)} · concept ${escapeHtml(assignment.conceptId)}</p><small>${escapeHtml(assignment.assignedAt)}${assignment.completedAt ? ` · completed ${escapeHtml(assignment.completedAt)}` : ''}</small>${action}</article>`;
+  }).join('');
+  const summary = data.summary;
+  const body = `<section class="hero"><div><p class="eyebrow">Experiment mode</p><h1>Active-control pilot</h1><p>Assign comparable cards to MergeLearn active recall or passive-review controls. This gives future evaluations a baseline stronger than “no treatment”.</p></div><div class="hero-card"><strong>${summary.total}</strong><span>assignments</span><strong>${summary.completed}</strong><span>completed</span></div></section>${nav()}<section class="panel"><div class="section-head"><div><p class="eyebrow">Crossover assignment</p><h2>Build a local active-control set</h2><p>MergeLearn assignments use the normal answer-first review flow. Active-control assignments ask the learner to passively read the same evidence and mark the control review complete without changing mastery.</p></div><button data-action="assign-study">Assign next pilot set</button></div><div class="mini-grid"><article class="mini-card"><strong>${summary.mergelearn}</strong><p>MergeLearn active recall</p><small>Answer, reveal, self-grade, calibration, delayed probes.</small></article><article class="mini-card"><strong>${summary.activeControl}</strong><p>Active-control passive review</p><small>Read evidence without retrieval practice; useful baseline for experiments.</small></article><article class="mini-card"><strong>${summary.pending}</strong><p>Pending assignments</p><small>Complete these before comparing delayed outcomes.</small></article><article class="mini-card"><strong>${summary.passiveCompleted}</strong><p>Passive controls complete</p><small>Recorded as events without increasing mastery.</small></article></div></section><section class="panel"><div class="section-head"><div><h2>Assignments</h2><p>Use this as a pilot ledger. It is intentionally local and inspectable.</p></div><a class="ghost" href="/api/study">Open study JSON</a></div><div class="mini-grid">${rows || '<p>No study assignments yet. Assign a pilot set after generating review cards.</p>'}</div></section>${studyPageScript()}`;
+  return pageShell('MergeLearn Tutor Study', body, 'Active-control study');
+}
+
+function studyPageScript(): string {
+  return `<script>document.addEventListener('click',async function(event){var button=event.target.closest('button[data-action="assign-study"],button[data-action="complete-passive-review"]');if(!button)return;if(button.dataset.action==='assign-study'){button.disabled=true;var res=await fetch('/api/study/assign',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({seed:'browser-pilot',count:6})});var json=await res.json();if(json.ok)location.reload();else document.getElementById('status').textContent=json.error||'Study assignment failed';}if(button.dataset.action==='complete-passive-review'){button.disabled=true;var done=await fetch('/api/study/passive-review/complete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({assignmentId:button.dataset.assignmentId,durationMs:120000,note:'browser passive review'})});var body=await done.json();if(body.ok)location.reload();else document.getElementById('status').textContent=body.error||'Passive review failed';}});</script>`;
+}
+
 function renderHistoryHtml(state: TutorState): string {
   const data = cardHistoryData(state);
   const batches = data.batches.map((batch) => `<article class="mini-card"><strong>${escapeHtml(batch.mode)}</strong><p>${escapeHtml(batch.id)} · ${batch.itemIds.length} created · ${batch.archivedItemIds.length} archived</p><small>${escapeHtml(batch.createdAt)}</small></article>`).join('');
@@ -565,7 +607,8 @@ function renderHistorySourceAudit(state: TutorState): string {
   const qualityEvents = state.learningEvents.filter((event) => ['marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate'].includes(event.eventType)).length;
   const calibration = summarizeCalibration(state);
   const delayed = delayedProbeSummary(state);
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Why did these cards exist?</h2><p>Use this before inspecting individual cards: it separates broad repo evidence, course-scoped generation, accepted-question cards, delayed probes, and card-quality feedback.</p></div><a class="ghost" href="/">Change Review source</a></div><div class="mini-grid"><article class="mini-card"><strong>${broadCards}</strong><p>All due repo evidence cards</p><small>Cards without a course id came from the broad queue.</small></article><article class="mini-card"><strong>${courseCards}</strong><p>Course-scoped cards</p><small>These should show a course id on the card and in history.</small></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p><small>These were generated from approved prompts in the question bank.</small></article><article class="mini-card"><strong>${qualityEvents}</strong><p>Card-quality events</p><small>Bad-card/wrong-evidence/duplicate feedback is audited without lowering mastery.</small></article><article class="mini-card"><strong>${delayed.due}</strong><p>Delayed probes due</p><small>${delayed.scheduled} scheduled · ${delayed.completed} completed · <a href="/api/delayed-probes">Open delayed-probe JSON</a></small></article><article class="mini-card"><strong>${calibration.pairedCount}</strong><p>Calibrated answers</p><small>Confidence ${score(calibration.averageConfidence)} · accuracy ${score(calibration.accuracy)} · Brier ${calibration.brierScore.toFixed(2)}</small></article></div></section>`;
+  const study = studySummary(state);
+  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Why did these cards exist?</h2><p>Use this before inspecting individual cards: it separates broad repo evidence, course-scoped generation, accepted-question cards, delayed probes, study controls, and card-quality feedback.</p></div><a class="ghost" href="/">Change Review source</a></div><div class="mini-grid"><article class="mini-card"><strong>${broadCards}</strong><p>All due repo evidence cards</p><small>Cards without a course id came from the broad queue.</small></article><article class="mini-card"><strong>${courseCards}</strong><p>Course-scoped cards</p><small>These should show a course id on the card and in history.</small></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p><small>These were generated from approved prompts in the question bank.</small></article><article class="mini-card"><strong>${qualityEvents}</strong><p>Card-quality events</p><small>Bad-card/wrong-evidence/duplicate feedback is audited without lowering mastery.</small></article><article class="mini-card"><strong>${delayed.due}</strong><p>Delayed probes due</p><small>${delayed.scheduled} scheduled · ${delayed.completed} completed · <a href="/api/delayed-probes">Open delayed-probe JSON</a></small></article><article class="mini-card"><strong>${study.total}</strong><p>Study assignments</p><small>${study.mergelearn} active recall · ${study.activeControl} passive controls · <a href="/study">Open Study</a></small></article><article class="mini-card"><strong>${calibration.pairedCount}</strong><p>Calibrated answers</p><small>Confidence ${score(calibration.averageConfidence)} · accuracy ${score(calibration.accuracy)} · Brier ${calibration.brierScore.toFixed(2)}</small></article></div></section>`;
 }
 
 function recentHistoryActivity(state: TutorState): string {
@@ -607,7 +650,7 @@ function nav(): string {
 }
 
 function appNav(): string {
-  return '<nav class="app-nav" aria-label="Primary navigation"><a href="/">Review</a><a href="/plan">Plan Builder</a><a href="/courses">Courses</a><a href="/questions">Questions</a><a href="/timeline">Timeline</a><a href="/graph">Graph</a><a href="/history">History</a><a href="/progress">Progress</a><a href="/preferences">Preferences</a></nav>';
+  return '<nav class="app-nav" aria-label="Primary navigation"><a href="/">Review</a><a href="/plan">Plan Builder</a><a href="/courses">Courses</a><a href="/questions">Questions</a><a href="/timeline">Timeline</a><a href="/graph">Graph</a><a href="/study">Study</a><a href="/history">History</a><a href="/progress">Progress</a><a href="/preferences">Preferences</a></nav>';
 }
 
 function pageShell(title: string, body: string, status: string): string {

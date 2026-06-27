@@ -15,10 +15,11 @@ Bottom line: the product direction is credible, but the strongest evidence suppo
 Recommended next implementation order:
 
 1. Add confidence-before-reveal events and calibration summaries. Done in `0bfd659`.
-2. Add delayed recall scheduling/probes at 2 and 7 days. Started after independent review gate; automatic probe scheduling and completion APIs/CLI now exist locally.
-3. Add active-control/passive-review mode for experiments.
-4. Add transfer/debugging/localisation card templates.
-5. Add opt-in code-free event export for studies.
+2. Add delayed recall scheduling/probes at 2 and 7 days. Done in `c523cf8`.
+3. Add active-control/passive-review experiment mode. Active batch now adds local assignments and passive-review completion.
+4. Add transfer/debugging/localisation task families.
+5. Add code-free export for opt-in study packets.
+6. Add interactive UI concept-map/study-dashboard brainstorming and implementation after the measurement foundation is complete.
 
 ## Critical evaluation of report 1
 

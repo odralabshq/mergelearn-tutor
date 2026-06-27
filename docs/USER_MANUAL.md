@@ -40,7 +40,7 @@ The checklist is state-aware: completed steps show current counts, while incompl
 
 The `Plan Builder` page is the consolidated browser view for that same path. Open it when you want one place to answer: what evidence exists locally, which course goal is active, whether accepted questions are ready, and what the next review action should be. It also repeats the local-only guardrails: the plan view does not enable remote LLM calls, publish data, or run target repo code.
 
-Every browser page includes the shared app shell at the top. Use it to jump between Review, Plan Builder, Courses, Questions, Timeline, Graph, History, Progress, and Preferences, and to check the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
+Every browser page includes the shared app shell at the top. Use it to jump between Review, Plan Builder, Courses, Questions, Timeline, Graph, Study, History, Progress, and Preferences, and to check the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
 
 ## 3. Review page
 
@@ -200,7 +200,34 @@ API endpoint:
 /api/evidence-graph
 ```
 
-## 8. History page
+## 8. Study page
+
+Use Study to run a small local active-control pilot before making learning-effectiveness claims.
+
+The page separates two conditions:
+
+- `MergeLearn active recall` — normal answer-first review with confidence, reveal, self-grade, calibration, and delayed probes.
+- `Active-control passive review` — read the same evidence without retrieval practice, then mark the passive review complete. This records a study event but does not increase mastery.
+
+Use this when comparing MergeLearn against the realistic baseline: re-reading diffs, docs, or review packets.
+
+CLI equivalent:
+
+```bash
+mergelearn-tutor study assign --repo . --seed local-pilot --count 6
+mergelearn-tutor study list --repo .
+mergelearn-tutor study passive-complete --repo . --assignment <assignment-id> --duration-ms 120000
+```
+
+API endpoints:
+
+```text
+/api/study
+/api/study/assign
+/api/study/passive-review/complete
+```
+
+## 9. History page
 
 ![History page](assets/screenshots/history.png)
 
@@ -231,7 +258,7 @@ API endpoint:
 /api/cards/history
 ```
 
-## 9. Progress page
+## 10. Progress page
 
 ![Progress page](assets/screenshots/progress.png)
 
@@ -252,7 +279,7 @@ CLI equivalent:
 mergelearn-tutor progress --repo .
 ```
 
-## 10. Preferences page
+## 11. Preferences page
 
 ![Preferences page](assets/screenshots/preferences.png)
 
@@ -284,7 +311,7 @@ mergelearn-tutor preferences show --repo .
 mergelearn-tutor preferences set --repo . --planes local_behavior,risk_and_tests --snippet-lines 12
 ```
 
-## 11. Static dashboard
+## 12. Static dashboard
 
 You can also generate a static HTML dashboard:
 
@@ -300,7 +327,7 @@ Open:
 
 The local browser session is more interactive, but the dashboard is useful when you want a portable HTML artifact.
 
-## 12. Data files
+## 13. Data files
 
 MergeLearn Tutor writes local state under the target repository:
 
@@ -314,7 +341,7 @@ MergeLearn Tutor writes local state under the target repository:
 
 Delete `.skilltrace/` if you want to remove all tutor state from the target repository.
 
-## 13. Recommended daily workflow
+## 14. Recommended daily workflow
 
 ```bash
 mergelearn-tutor ingest --repo . --since 7d

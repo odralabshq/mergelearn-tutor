@@ -51,6 +51,15 @@ describe('mergelearn-tutor CLI', () => {
     expect(questionList.stdout).toContain('Accepted: 1');
     const courseCards = await cli(['cards', 'generate', '--repo', repo, '--course', 'learn-auth', '--count', '1']);
     expect(courseCards.stdout).toContain('Generated');
+    const studyAssign = await cli(['study', 'assign', '--repo', repo, '--seed', 'cli-pilot', '--count', '2']);
+    expect(studyAssign.stdout).toContain('Active-control study assignments');
+    expect(studyAssign.stdout).toContain('Active-control passive review: 1');
+    const studyList = await cli(['study', 'list', '--repo', repo]);
+    expect(studyList.stdout).toContain('cli-pilot');
+    const studyState = JSON.parse(await readFile(path.join(repo, '.skilltrace', 'state.json'), 'utf8')) as { studyAssignments: Array<{ id: string; condition: string }> };
+    const passiveAssignment = studyState.studyAssignments.find((assignment) => assignment.condition === 'active_control')!;
+    const passiveComplete = await cli(['study', 'passive-complete', '--repo', repo, '--assignment', passiveAssignment.id, '--duration-ms', '45000', '--note', 'read diff packet']);
+    expect(passiveComplete.stdout).toContain('Completed passive-review assignment');
     const timeline = await cli(['timeline', '--repo', repo]);
     expect(timeline.stdout).toContain('"course"');
     expect(timeline.stdout).toContain('"question"');

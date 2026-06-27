@@ -31,6 +31,7 @@ export function createEmptyState(repoPath: string, goals: string[] = []): TutorS
     questionDraftBatches: [],
     learningEvents: [],
     delayedProbes: [],
+    studyAssignments: [],
     corrections: [],
     manualRatings: [],
   };
@@ -49,6 +50,7 @@ function normalizeState(state: TutorState): TutorState {
     questionDraftBatches: state.questionDraftBatches ?? [],
     learningEvents: state.learningEvents ?? [],
     delayedProbes: state.delayedProbes ?? [],
+    studyAssignments: state.studyAssignments ?? [],
     corrections: state.corrections ?? [],
     manualRatings: state.manualRatings ?? [],
   };

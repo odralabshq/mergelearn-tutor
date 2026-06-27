@@ -523,3 +523,10 @@ git diff --check
 - Folded the independent scout reviews into the scientific calibration worklog.
 - Added 2-day and 7-day delayed probe scheduling after answered cards.
 - Added delayed-probe due/completion helpers, `/api/delayed-probes`, History summary, and CLI `delayed list` / `delayed complete`.
+
+## 2026-06-27 Active-control study mode
+
+- Added local active-control/passive-review study assignments.
+- Added passive-review completion events that do not raise mastery.
+- Added `/api/study`, browser Study page, and CLI `study assign/list/passive-complete`.
+- Added long-term tasks for industry-inspired interactive UI brainstorming and implementation.

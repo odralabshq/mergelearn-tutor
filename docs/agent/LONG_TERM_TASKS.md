@@ -24,8 +24,8 @@ Source: `docs/research/deep-research-report.md` plus current local product state
 
 7. External Deep Research packet on platform effectiveness. Status: returned reports analyzed in `docs/agent/RESEARCH_SYNTHESIS_2026_06_27.md`; report 3 was a placeholder because prior outputs were not attached.
 8. Confidence-before-reveal and calibration summaries. Status: complete locally in `0bfd659`.
-9. Delayed recall probes at 2 and 7 days. Status: active batch; automatic scheduling/completion state, API, History summary, and CLI surface are being verified.
-10. Active-control passive-review mode for experiments. Status: pending after delayed-probe metadata exists.
+9. Delayed recall probes at 2 and 7 days. Status: complete locally in `c523cf8`.
+10. Active-control passive-review mode for experiments. Status: active batch; local assignment/completion state, API, browser Study page, and CLI surface are being verified.
 11. Transfer/debugging/localisation task families. Status: pending after core measurement loop.
 12. Opt-in code-free study export. Status: pending; must preserve local-first/no-telemetry default.
 
@@ -45,12 +45,13 @@ Source: `docs/research/deep-research-report.md` plus current local product state
 ## Evidence UX tasks
 
 20. Timeline/Graph filters, focus mode, node detail drawer, why-this-card trace. Status: started; timeline/graph filters exist, node detail drawer and deeper why trace remain.
-21. Keep graph secondary: provenance and explainability, not homepage.
+21. Interactive UI concept map and study dashboard inspired by Obsidian graph view, GitLens provenance, Linear project focus, Anki stats, and Duolingo progress loops. Status: brainstorm task added; implementation should follow active-control foundation.
+22. Keep graph secondary: provenance and explainability, not homepage.
 
 ## Release tasks
 
-22. OSS readiness: license decision, clean quickstart, sample workflow, install smoke.
-23. Optional LLM enrichment later: explicit preview, per-repo opt-in, redaction, no truth adjudication.
+23. OSS readiness: license decision, clean quickstart, sample workflow, install smoke.
+24. Optional LLM enrichment later: explicit preview, per-repo opt-in, redaction, no truth adjudication.
 
 ## Completed local iteration milestones
 

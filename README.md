@@ -86,6 +86,7 @@ The browser session is the easiest way to understand the product.
 | Questions | Draft fake/local LLM-style questions and accept or reject them. |
 | Timeline | Inspect GitLens-style provenance from commits/docs to cards/events. |
 | Graph | See the local learning graph and raw node/edge projection. |
+| Study | Assign active-control/passive-review pilot conditions for local experiments. |
 | History | Review active, archived, regenerated, and answered cards without a wall of details. |
 | Progress | Track concept mastery and review status. |
 | Preferences | Choose the kinds of questions you want. |
@@ -138,6 +139,9 @@ mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
 mergelearn-tutor feedback --repo . --item <id> --event revealed --confidence 4
 mergelearn-tutor delayed list --repo .
 mergelearn-tutor delayed complete --repo . --probe <probe-id> --answer "..." --correct
+mergelearn-tutor study assign --repo . --seed local-pilot --count 6
+mergelearn-tutor study list --repo .
+mergelearn-tutor study passive-complete --repo . --assignment <assignment-id> --duration-ms 120000
 mergelearn-tutor feedback --repo . --item <id> --event marked_bad_card --note "wrong evidence"
 mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
 mergelearn-tutor course create --repo . --id <id> --title "..." --goal "..." --materials "src/**" --docs "docs/**"

@@ -15,7 +15,7 @@ export type QuestionPlane = 'language_mechanics' | 'local_behavior' | 'file_role
 export type LearningItemStatus = 'active' | 'archived';
 export type LearningItemSource = 'ingest' | 'manual_generate' | 'regenerate';
 export type CardBatchMode = 'initial' | 'more' | 'regenerate';
-export type ReviewEventType = 'shown' | 'revealed' | 'answered' | 'delayed_probe_completed' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
+export type ReviewEventType = 'shown' | 'revealed' | 'answered' | 'delayed_probe_completed' | 'passive_review_completed' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 export type ManualRatingTargetType = 'concept' | 'card';
 export type QuestionBankStatus = 'draft' | 'accepted' | 'rejected' | 'active' | 'archived';
@@ -23,6 +23,8 @@ export type QuestionAuthorType = 'deterministic' | 'llm';
 export type QuestionProvider = 'deterministic' | 'fake' | 'local';
 export type CardQualityVerdict = 'ready' | 'needs_review' | 'blocked';
 export type DelayedProbeStatus = 'scheduled' | 'completed';
+export type StudyCondition = 'mergelearn' | 'active_control';
+export type StudyAssignmentStatus = 'assigned' | 'completed';
 
 export type CardQualityResult = {
   verdict: CardQualityVerdict;
@@ -225,6 +227,20 @@ export type DelayedProbe = {
   correct?: boolean;
 };
 
+export type StudyAssignment = {
+  id: string;
+  itemId: string;
+  conceptId: string;
+  condition: StudyCondition;
+  status: StudyAssignmentStatus;
+  mode: 'crossover';
+  seed: string;
+  assignedAt: string;
+  completedAt?: string;
+  durationMs?: number;
+  note?: string;
+};
+
 export type Correction = {
   id: string;
   targetType: 'concept' | 'card';
@@ -266,6 +282,7 @@ export type TutorState = {
   questionDraftBatches: QuestionDraftBatch[];
   learningEvents: LearningEvent[];
   delayedProbes?: DelayedProbe[];
+  studyAssignments?: StudyAssignment[];
   corrections: Correction[];
   manualRatings: ManualRating[];
 };

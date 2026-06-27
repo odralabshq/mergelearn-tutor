@@ -66,3 +66,18 @@ Observed output:
 ```json
 {"scheduled":2,"completed":1}
 ```
+
+## Active-control implementation result so far
+
+- Added local crossover study assignments for active cards.
+- Balanced assignments between MergeLearn active recall and active-control passive review.
+- Added passive-review completion events that do not increase mastery.
+- Added `/api/study`, `/api/study/assign`, `/api/study/passive-review/complete`, browser Study page, and CLI `study assign/list/passive-complete`.
+- Added the requested interactive UI brainstorming and later implementation tasks to the long-term queue.
+
+Focused verification passed after crash recovery:
+
+```bash
+npm test -- --run tests/core/study.test.ts tests/core/events.test.ts tests/session/server.test.ts tests/cli/cli.test.ts
+npm run check
+```
