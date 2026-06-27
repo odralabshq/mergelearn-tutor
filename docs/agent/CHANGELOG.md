@@ -294,3 +294,22 @@ npm test -- --run tests/session/server.test.ts
 npm test
 npm run build
 ```
+
+## 2026-06-27 Autonomous cycle 3: guided course/question setup
+
+- Added a state-aware `Course setup guide` to `/courses` so users can move from a fuzzy learning outcome to scoped evidence paths, drafted questions, and review cards.
+- Improved the course form with clearer examples, safe-default guidance, and a direct link to question preference tuning.
+- Added a `Question workflow` panel to `/questions` explaining the draft → accept → review-card pipeline.
+- Added a browser `Target course` selector for fake/local question drafting so course-specific questions can be created without guessing which course the button uses.
+- Updated session-server regression coverage and the user manual for the guided Courses/Questions path.
+- Captured before screenshots for all primary pages and after screenshots for the affected Courses and Questions pages.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+git diff --check
+```
