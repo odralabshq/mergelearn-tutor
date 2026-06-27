@@ -79,3 +79,32 @@ Focused verification passed:
 npm test -- --run tests/eval/evaluationHarness.test.ts
 npm run check
 ```
+
+## C3 implementation result
+
+Implemented compact quality feedback UI:
+
+- Kept the quality verdict and warnings visible on Review and Questions cards.
+- Moved detailed quality score chips behind a collapsed `Show quality scores` disclosure.
+- Shortened the default no-warning copy to `No warnings.` for narrow question cards.
+- Did not add more always-visible correction buttons, preserving the answer/reveal/grade and accept/reject primary flows.
+
+Focused verification passed:
+
+```bash
+npm test -- --run tests/session/server.test.ts
+npm run check
+npm run build
+```
+
+Browser checks:
+
+- Review and Questions HTML contained `Show quality scores` and `quality-details`.
+- Browser console had no JavaScript errors.
+- Final screenshots captured at `screenshots/20260627T094804Z/review-compact-quality.png` and `screenshots/20260627T094804Z/questions-compact-quality.png`.
+
+Visual assessment:
+
+- Review quality panels are compact and readable.
+- Question cards are less cluttered while quality status remains understandable.
+- No blocking visual issue found.

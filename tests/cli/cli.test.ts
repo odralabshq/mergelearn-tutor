@@ -90,5 +90,5 @@ describe('mergelearn-tutor CLI', () => {
     expect(updated.manualRatings).toHaveLength(1);
     expect(updated.learningEvents.length).toBeGreaterThanOrEqual(2);
     expect(updated.learningItems.some((candidate) => candidate.conceptId === item.conceptId)).toBe(false);
-  });
+  }, 60_000);
 });

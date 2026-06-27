@@ -440,3 +440,9 @@ Observed full-suite result:
 - Added manual rating summaries to eval specs, per-repo scores, aggregate scores, and Markdown reports.
 - Reports now show manual rating coverage and per-field averages next to deterministic card-quality metrics.
 - Added fixture coverage proving ratings calibrate quality without changing learner mastery or planner behavior.
+
+## 2026-06-27 C3: compact quality feedback UI
+
+- Collapsed detailed quality scores behind `Show quality scores` on Review and Questions cards.
+- Kept verdicts and warnings visible while reducing question-card height and repetition.
+- Captured updated Review and Questions screenshots after a rebuild and browser smoke check.

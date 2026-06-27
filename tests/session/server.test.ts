@@ -41,6 +41,8 @@ describe('review session server', () => {
       expect(html).toContain('What happens in this snippet?');
       expect(html).toContain('Reveal explanation');
       expect(html).toContain('Quality gate');
+      expect(html).toContain('Show quality scores');
+      expect(html).toContain('class="quality-details"');
       expect(html).toContain('quality');
       expect(html).toContain('I knew it');
       expect(html).toContain('marked_bad_card');
@@ -103,6 +105,7 @@ describe('review session server', () => {
       expect(questionsHtml).toContain('Evidence-bound LLM-style questions');
       expect(questionsHtml).toContain('Question workflow');
       expect(questionsHtml).toContain('Quality gate');
+      expect(questionsHtml).toContain('Show quality scores');
       expect(questionsHtml).toContain('Evidence ');
       expect(questionsHtml).toContain('Draft, accept, then review');
       expect(questionsHtml).toContain('Target course');
