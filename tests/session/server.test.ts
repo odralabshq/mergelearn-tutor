@@ -63,7 +63,18 @@ describe('review session server', () => {
       expect(html).toContain('Current local plan snapshot');
       expect(html).toContain('id="shell-concepts"');
       expect(html).toContain('Primary navigation');
-      expect(html).toContain('Workbench');
+      const primaryNav = html.match(/<nav class="app-nav"[\s\S]*?<\/nav>/)?.[0] ?? '';
+      expect(primaryNav).toContain('Workbench');
+      expect(primaryNav).toContain('Practice');
+      expect(primaryNav).toContain('Map');
+      expect(primaryNav).toContain('Audit');
+      expect(primaryNav).toContain('Setup');
+      expect(primaryNav).not.toContain('Plan Builder');
+      expect(primaryNav).not.toContain('Courses');
+      expect(html).toContain('Secondary navigation');
+      expect(html).toContain('Plan Builder');
+      expect(html).toContain('Courses');
+      expect(html).toContain('Questions');
       expect(html).toContain('No remote LLM calls');
 
       const workbenchHtml = await fetch(`${review.url}/workbench`).then((res) => res.text());

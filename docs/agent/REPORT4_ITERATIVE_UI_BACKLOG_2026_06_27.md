@@ -60,6 +60,8 @@ Acceptance:
 
 ### Wave 2: Grouped shell and information architecture
 
+Status: implemented in this iteration. Verification and screenshot evidence are in `docs/agent/report4-ui-iteration-2026-06-27/wave2-grouped-shell.md`.
+
 Tasks:
 1. Replace flat nav with primary groups: Workbench, Practice, Map, Audit, Setup.
 2. Keep all old routes working.
