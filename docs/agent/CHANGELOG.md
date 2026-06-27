@@ -313,3 +313,22 @@ npm test
 npm run build
 git diff --check
 ```
+
+## 2026-06-27 Autonomous cycle 4: Review source generation
+
+- Added an explicit `Review source` selector to the Review page so users can choose the broad due-evidence queue or target a specific course before generating cards.
+- Renamed the Review generation buttons to `Generate 5 focused cards` and `Regenerate from source` to make the selected source meaningful.
+- Passed the selected course id through the browser generation action to `POST /api/cards/generate`, reusing the existing course-scoped card generation behavior without enabling remote LLM calls.
+- Added course and accepted-question badges to Review cards so users can see when a card came from a selected course and accepted prompt.
+- Updated session-server regression coverage and the user manual for the focused Review-source flow.
+- Captured before screenshots for all primary pages and an after screenshot for the affected Review page.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+git diff --check
+```
