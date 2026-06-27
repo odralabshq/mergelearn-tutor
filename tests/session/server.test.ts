@@ -67,6 +67,7 @@ describe('review session server', () => {
       expect(primaryNav).toContain('Workbench');
       expect(primaryNav).toContain('Practice');
       expect(primaryNav).toContain('href="/practice"');
+      expect(primaryNav).toContain('href="/map"');
       expect(primaryNav).toContain('Map');
       expect(primaryNav).toContain('Audit');
       expect(primaryNav).toContain('Setup');
@@ -87,6 +88,25 @@ describe('review session server', () => {
       expect(practiceHtml).toContain('id="practice-outcome"');
       expect(practiceHtml).toContain('Keyboard shortcuts');
       expect((practiceHtml.match(/class="card recall-card/g) ?? []).length).toBe(1);
+
+      const mapHtml = await fetch(`${review.url}/map`).then((res) => res.text());
+      expect(mapHtml).toContain('Unified Map');
+      expect(mapHtml).toContain('One surface for relationships, provenance, and mastery');
+      expect(mapHtml).toContain('Map mode');
+      expect(mapHtml).toContain('Local graph');
+      expect(mapHtml).toContain('Provenance lane');
+      expect(mapHtml).toContain('Skill map');
+      expect(mapHtml).toContain('href="/map?mode=local-graph"');
+      expect(mapHtml).toContain('href="/map?mode=provenance"');
+      expect(mapHtml).toContain('href="/map?mode=skill-map"');
+
+      const mapProvenance = await fetch(`${review.url}/map?mode=provenance`).then((res) => res.text());
+      expect(mapProvenance).toContain('Provenance lane');
+      expect(mapProvenance).toContain('Evidence timeline');
+
+      const mapSkill = await fetch(`${review.url}/map?mode=skill-map`).then((res) => res.text());
+      expect(mapSkill).toContain('Skill map');
+      expect(mapSkill).toContain('Progress guide');
 
       const workbenchHtml = await fetch(`${review.url}/workbench`).then((res) => res.text());
       expect(workbenchHtml).toContain('Learning Workbench');

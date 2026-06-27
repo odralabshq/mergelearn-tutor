@@ -106,6 +106,8 @@ Acceptance:
 
 ### Wave 5: Unified Map surface
 
+Status: implemented in this iteration. Verification evidence is in `docs/agent/report4-ui-iteration-2026-06-27/wave5-unified-map.md`.
+
 Tasks:
 1. Merge Graph, Timeline, and Progress into Map modes.
 2. Add shared filters and selected-node state.

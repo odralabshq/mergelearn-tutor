@@ -43,6 +43,7 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, renderSessionHtml(await loadState(repoPath), await loadPreferences(repoPath)));
   if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPracticeHtml(await loadState(repoPath), await loadPreferences(repoPath)));
+  if (method === 'GET' && url.pathname === '/map') return sendHtml(res, 200, renderMapHtml(await loadState(repoPath), url.searchParams.get('mode') ?? 'local-graph'));
   if (method === 'GET' && url.pathname === '/workbench') return sendHtml(res, 200, renderWorkbenchHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/plan') return sendHtml(res, 200, renderPlanHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/courses') return sendHtml(res, 200, renderCoursesHtml(await loadState(repoPath)));
@@ -502,6 +503,23 @@ function renderTimelineFilterPanel(summary: Record<string, number>): string {
   return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Provenance filters</p><h2>Scan one evidence type at a time</h2><p>Timeline can get noisy after several card generations. Use these local filters to focus on docs, accepted questions, cards, or review events without leaving the page.</p></div><a class="ghost" href="/api/evidence-timeline">Open timeline JSON</a></div><div class="actions"><button data-action="timeline-filter" data-filter-type="all">All types</button>${chips}</div><p class="setup-note" id="timeline-filter-note">Showing all timeline nodes.</p></section>`;
 }
 
+function renderMapHtml(state: TutorState, mode: string): string {
+  const validModes = ['local-graph', 'provenance', 'skill-map'];
+  const activeMode = validModes.includes(mode) ? mode : 'local-graph';
+  const tabs = [
+    { id: 'local-graph', label: 'Local graph', href: '/map?mode=local-graph', description: 'What concepts, cards, and evidence are related?' },
+    { id: 'provenance', label: 'Provenance lane', href: '/map?mode=provenance', description: 'Where did each card and question come from?' },
+    { id: 'skill-map', label: 'Skill map', href: '/map?mode=skill-map', description: 'Which concepts are weak, strong, or due for review?' },
+  ];
+  const tabHtml = tabs.map((tab) => `<a class="ghost ${tab.id === activeMode ? 'is-active' : ''}" href="${tab.href}" ${tab.id === activeMode ? 'aria-current="page"' : ''}>${escapeHtml(tab.label)}</a>`).join('');
+  const tabDescription = tabs.find((tab) => tab.id === activeMode)?.description ?? '';
+  let body = '';
+  if (activeMode === 'provenance') body = renderTimelineHtml(state);
+  else if (activeMode === 'skill-map') body = renderProgressHtml(state);
+  else body = renderGraphHtml(state);
+  return pageShell('MergeLearn Tutor Map', `<section class="hero"><div><p class="eyebrow">Unified Map</p><h1>One surface for relationships, provenance, and mastery</h1><p>Switch modes to answer three questions: what is related, where did this come from, and what is weak or due.</p></div><div class="hero-card"><strong>${state.concepts.length}</strong><span>concepts</span><strong>${state.learningItems.filter((item) => item.status !== 'archived').length}</strong><span>active cards</span></div></section><section class="toolbar map-tabs"><div><strong>Map mode</strong><p>${escapeHtml(tabDescription)}</p></div><div class="actions">${tabHtml}</div></section>${body}`, 'Map');
+}
+
 function renderGraphHtml(state: TutorState): string {
   const timeline = buildEvidenceTimeline(state);
   const graphGroups = graphByType(timeline);
@@ -685,7 +703,7 @@ function nav(): string {
 }
 
 function appNav(): string {
-  return '<nav class="app-nav" aria-label="Primary navigation"><a href="/workbench">Workbench</a><a href="/practice">Practice</a><a href="/graph">Map</a><a href="/history">Audit</a><a href="/plan">Setup</a></nav><nav class="app-subnav" aria-label="Secondary navigation"><span>Practice</span><a href="/practice">Focused practice</a><a href="/">Review cards</a><a href="/study">Study controls</a><span>Map</span><a href="/graph">Graph</a><a href="/timeline">Timeline</a><a href="/progress">Progress</a><span>Audit</span><a href="/history">History</a><a href="/questions">Questions</a><span>Setup</span><a href="/plan">Plan Builder</a><a href="/courses">Courses</a><a href="/preferences">Preferences</a></nav>';
+  return '<nav class="app-nav" aria-label="Primary navigation"><a href="/workbench">Workbench</a><a href="/practice">Practice</a><a href="/map">Map</a><a href="/history">Audit</a><a href="/plan">Setup</a></nav><nav class="app-subnav" aria-label="Secondary navigation"><span>Practice</span><a href="/practice">Focused practice</a><a href="/">Review cards</a><a href="/study">Study controls</a><span>Map</span><a href="/map?mode=local-graph">Local graph</a><a href="/map?mode=provenance">Provenance lane</a><a href="/map?mode=skill-map">Skill map</a><a href="/graph">Legacy graph</a><a href="/timeline">Legacy timeline</a><a href="/progress">Legacy progress</a><span>Audit</span><a href="/history">History</a><a href="/questions">Questions</a><span>Setup</span><a href="/plan">Plan Builder</a><a href="/courses">Courses</a><a href="/preferences">Preferences</a></nav>';
 }
 
 function pageShell(title: string, body: string, status: string): string {
@@ -718,7 +736,7 @@ async function put(path, body){const res=await fetch(path,{method:'PUT',headers:
 function csv(value){return String(value||'').split(',').map((item)=>item.trim()).filter(Boolean);}
 function countActiveCards(state){return (state.learningItems||[]).filter((item)=>item.status!=='archived').length;}
 function shellNext(state){const concepts=(state.concepts||[]).length;const courses=(state.courses||[]).length;const accepted=(state.questionBank||[]).filter((entry)=>entry.status==='accepted').length;const active=countActiveCards(state);if(!concepts)return {label:'Next: ingest local evidence',href:'/timeline'};if(!courses)return {label:'Next: create a course goal',href:'/courses'};if(!accepted)return {label:'Next: accept useful questions',href:'/questions'};if(!active)return {label:'Next: generate review cards',href:'/'};return {label:'Next: focused practice',href:'/practice'};}
-function primaryNavHref(path){if(path==='/workbench')return '/workbench';if(path==='/'||path==='/practice'||path==='/study')return '/practice';if(path==='/graph'||path==='/timeline'||path==='/progress')return '/graph';if(path==='/history'||path==='/questions')return '/history';if(path==='/plan'||path==='/courses'||path==='/preferences')return '/plan';return path;}
+function primaryNavHref(path){if(path==='/workbench')return '/workbench';if(path==='/'||path==='/practice'||path==='/study')return '/practice';if(path==='/map'||path==='/graph'||path==='/timeline'||path==='/progress')return '/map';if(path==='/history'||path==='/questions')return '/history';if(path==='/plan'||path==='/courses'||path==='/preferences')return '/plan';return path;}
 function activateShellNav(){const path=location.pathname==='/'?'/':location.pathname;const primary=primaryNavHref(path);document.querySelectorAll('.app-nav a').forEach((link)=>{const active=link.getAttribute('href')===primary;if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});document.querySelectorAll('.app-subnav a').forEach((link)=>{const active=link.getAttribute('href')===path;if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});}
 async function updateShellContext(){try{const res=await fetch('/api/state');if(!res.ok)throw new Error('state unavailable');const state=await res.json();const accepted=(state.questionBank||[]).filter((entry)=>entry.status==='accepted').length;const fields=[['shell-concepts',(state.concepts||[]).length],['shell-courses',(state.courses||[]).length],['shell-questions',accepted],['shell-cards',countActiveCards(state)]];fields.forEach(([id,value])=>{const el=document.getElementById(id);if(el)el.textContent=String(value);});const next=shellNext(state);const action=document.getElementById('shell-next-action');if(action){action.textContent=next.label;action.setAttribute('href',next.href);}}catch(error){const action=document.getElementById('shell-next-action');if(action)action.textContent='Plan state unavailable';}}
 function updateProgress(){const cards=[...document.querySelectorAll('.recall-card')];const done=cards.filter((card)=>card.classList.contains('completed')).length;const bar=document.getElementById('session-progress');if(bar&&cards.length){bar.style.width=Math.round(done/cards.length*100)+'%';}}
