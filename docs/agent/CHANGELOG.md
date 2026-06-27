@@ -409,3 +409,10 @@ Observed full-suite result:
 - 19 test files passed.
 - 60 tests passed.
 - Package smoke passed with 121 files checked.
+
+## 2026-06-27 Correction calibration C1: generation respects quality feedback
+
+- Made prior review feedback affect future card generation.
+- Regenerated cards reusing evidence previously marked `marked_wrong_evidence` are blocked from active review.
+- Regenerated cards for concepts previously marked `marked_bad_card` enter as `needs_review` with a warning instead of `ready`.
+- Prior duplicate feedback raises duplicate-risk warnings on future generated cards.

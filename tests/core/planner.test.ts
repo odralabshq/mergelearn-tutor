@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { recordReviewEvent } from '../../src/core/events.js';
 import { activeLearningItems, generateCardBatch, mergeLearningState, recordAnswer } from '../../src/core/planner.js';
 import { createEmptyState } from '../../src/core/store.js';
 import type { CommitArtifact, Concept } from '../../src/core/types.js';
@@ -106,5 +107,28 @@ describe('planner', () => {
     expect(activeLearningItems(regenerated)).toHaveLength(0);
     expect(regenerated.cardBatches.at(-1)?.requestedCount).toBe(1);
     expect(regenerated.cardBatches.at(-1)?.itemIds).toEqual([]);
+  });
+
+  it('blocks regenerated cards that reuse evidence the learner marked wrong', () => {
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
+    const item = activeLearningItems(state)[0]!;
+    const withWrongEvidence = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_wrong_evidence' });
+
+    const regenerated = generateCardBatch(withWrongEvidence, undefined, { count: 1, mode: 'regenerate' });
+
+    expect(activeLearningItems(regenerated)).toHaveLength(0);
+    expect(regenerated.cardBatches.at(-1)?.itemIds).toEqual([]);
+  });
+
+  it('regenerates prior bad-card concepts as needs-review instead of ready', () => {
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
+    const item = activeLearningItems(state)[0]!;
+    const withBadCardFeedback = recordReviewEvent(state, { itemId: item.id, eventType: 'marked_bad_card' });
+
+    const regenerated = generateCardBatch(withBadCardFeedback, undefined, { count: 1, mode: 'regenerate' });
+    const nextItem = activeLearningItems(regenerated)[0];
+
+    expect(nextItem?.quality?.verdict).toBe('needs_review');
+    expect(nextItem?.quality?.warnings).toContain('prior bad-card feedback');
   });
 });

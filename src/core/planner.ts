@@ -1,6 +1,6 @@
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { evaluateCardQuality } from './cardQuality.js';
-import type { CardBatchMode, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
+import type { CardBatchMode, CardQualityResult, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
 import { applyCorrections, recordReviewEvent } from './events.js';
 import { isUnifiedDiffSnippet } from './diffEvidence.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
@@ -248,10 +248,38 @@ function buildLearningItems(state: TutorState, preferences: UserPreferences, cou
       generation,
       source,
     };
-    const quality = evaluateCardQuality(item, [...existing, ...selected]);
+    const quality = applyPriorFeedbackToQuality(evaluateCardQuality(item, [...existing, ...selected]), item, state);
     if (quality.verdict !== 'blocked') selected.push({ ...item, quality });
   }
   return selected;
+}
+
+function applyPriorFeedbackToQuality(quality: CardQualityResult, item: LearningItem, state: TutorState): CardQualityResult {
+  const priorEvents = state.learningEvents.filter((event) => event.conceptId === item.conceptId);
+  const warnings = new Set(quality.warnings);
+  const scores = { ...quality.scores };
+  let verdict = quality.verdict;
+  if (priorEvents.some((event) => event.eventType === 'marked_wrong_evidence' && sharesEvidenceWithEvent(item, event.itemId, state))) {
+    warnings.add('prior wrong-evidence feedback');
+    verdict = 'blocked';
+  }
+  if (priorEvents.some((event) => event.eventType === 'marked_bad_card')) {
+    warnings.add('prior bad-card feedback');
+    if (verdict === 'ready') verdict = 'needs_review';
+  }
+  if (priorEvents.some((event) => event.eventType === 'marked_duplicate')) {
+    warnings.add('prior duplicate feedback');
+    scores.duplicateRisk = Math.max(scores.duplicateRisk, 0.75);
+    if (verdict === 'ready') verdict = 'needs_review';
+  }
+  return { verdict, scores, warnings: [...warnings] };
+}
+
+function sharesEvidenceWithEvent(item: LearningItem, eventItemId: string, state: TutorState): boolean {
+  const prior = state.learningItems.find((candidate) => candidate.id === eventItemId);
+  if (!prior) return true;
+  const paths = new Set([item.snippet.path, ...item.evidence.map((evidence) => evidence.path)]);
+  return [prior.snippet.path, ...prior.evidence.map((evidence) => evidence.path)].some((path) => paths.has(path));
 }
 
 export function renderCardMarkdown(concept: Concept, state?: ConceptState, plane: QuestionPlane = planeFor(concept, DEFAULT_PREFERENCES), snippet: CodeSnippet = snippetFor(concept, DEFAULT_PREFERENCES)): string {

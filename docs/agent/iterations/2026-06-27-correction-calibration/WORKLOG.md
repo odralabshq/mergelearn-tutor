@@ -25,3 +25,18 @@ Open risks:
 - Over-penalizing one bad-card event could hide useful concepts too aggressively.
 - Manual ratings may be sparse, so calibration should summarize evidence without pretending statistical certainty.
 - Questions page is already dense; further quality UI should probably collapse rather than expand.
+
+## C1 implementation result
+
+Implemented correction-aware generation feedback:
+
+- `marked_wrong_evidence` on a prior card blocks regenerated cards that reuse the same evidence path.
+- `marked_bad_card` on a prior card downgrades regenerated cards for that concept to `needs_review` with a visible warning.
+- `marked_duplicate` raises duplicate risk and downgrades ready cards to `needs_review`.
+
+Focused verification passed:
+
+```bash
+npm test -- --run tests/core/planner.test.ts tests/core/events.test.ts
+npm run check
+```
