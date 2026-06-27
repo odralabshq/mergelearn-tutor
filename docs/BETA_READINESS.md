@@ -12,7 +12,7 @@ This document is the local-only beta checklist. It prepares the package and veri
 - Deterministic concept extraction with TypeScript AST support.
 - Correctable learner state in `.skilltrace/state.json`.
 - Local repo lexicon in `.skilltrace/lexicon.json`.
-- Local browser review session.
+- Local browser review session with review, courses, questions, timeline, graph, history, progress, and preferences pages.
 - Evaluation harness and fixture reports.
 - Offline privacy preview and redaction.
 - Fake/local enrichment experiment that rejects remote providers.
@@ -35,7 +35,7 @@ These require human approval before any public beta:
 - `main`: `dist/index.js`
 - `types`: `dist/index.d.ts`
 - `bin.mergelearn-tutor`: `./dist/cli.js`
-- packaged files: `dist/`, `README.md`, `package.json`, and top-level public docs under `docs/*.md`
+- packaged files: `dist/`, `README.md`, `package.json`, top-level public docs under `docs/*.md`, and screenshots under `docs/assets/screenshots/*.png`
 
 The package intentionally excludes:
 
@@ -111,6 +111,7 @@ Acceptance:
 - [x] Local review UX exists.
 - [x] Package tarball shape is mechanically checked.
 - [x] README states no telemetry and no target code execution.
+- [x] README has screenshots and a page-by-page user manual.
 - [ ] Human approved name.
 - [ ] Human approved license.
 - [ ] Human approved distribution channel.

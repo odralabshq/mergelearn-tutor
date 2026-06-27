@@ -239,3 +239,23 @@ Demo dogfood:
 - Demo server: `http://127.0.0.1:4197`
 - Demo state: 1 course, 5 fake/local LLM-style question drafts, 3 accepted questions, 3 active course cards, 9 archived cards, 2 batches, 35 timeline/graph nodes, 97 edges, 2 doc nodes, `networkUsed:false`.
 - Browser-reviewed `/courses`, `/questions`, `/timeline`, and `/graph`; console had no JS errors.
+
+## 2026-06-27 Documentation polish
+
+- Rewrote the root `README.md` into a professional GitHub-facing overview with quick start, screenshots, local browser workflow, CLI examples, privacy stance, verification commands, and release blockers.
+- Added `docs/USER_MANUAL.md`, a page-by-page guide for Review, Courses, Questions, Timeline, Graph, History, Progress, and Preferences.
+- Added `docs/GITHUB_PUSH_READY.md`, a concrete push-readiness checklist with verification commands, expected tracked files, ignored artifacts, and public-release blockers.
+- Captured fresh screenshots under `docs/assets/screenshots/` for all primary browser pages.
+- Updated package metadata and packaging tests so screenshot assets are included in packaged documentation.
+- Updated beta-readiness docs to mention the complete browser surface and screenshot/manual documentation.
+
+Verified:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run eval
+npm run smoke
+npm run smoke:package
+```

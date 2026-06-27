@@ -19,7 +19,7 @@ describe('package beta-readiness manifest', () => {
     expect(pkg.main).toBe('dist/index.js');
     expect(pkg.types).toBe('dist/index.d.ts');
     expect(pkg.bin?.['mergelearn-tutor']).toBe('./dist/cli.js');
-    expect(pkg.files).toEqual(['dist/', 'docs/*.md']);
+    expect(pkg.files).toEqual(['dist/', 'docs/*.md', 'docs/assets/screenshots/*.png']);
     expect(pkg.scripts?.['smoke:package']).toBe('node scripts/packaged-smoke.mjs');
   });
 

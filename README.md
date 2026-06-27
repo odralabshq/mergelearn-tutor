@@ -1,71 +1,131 @@
 # MergeLearn Tutor
 
-MergeLearn Tutor is a local-first code tutoring system. It reads your git history, detects concepts you touched, builds a transparent personal skill ledger, and gives you short daily learning cards tied to real files and commits.
+MergeLearn Tutor is a local-first code learning tool for developers who use AI heavily but still want to understand the code they ship. It reads git history, extracts repo-specific concepts, and turns real diffs, files, docs, and commits into short active-recall cards.
 
-It is not a course generator, SaaS dashboard, PR blocker, or AI code reviewer. It is a personal knowledge-debt tool for developers using AI heavily but still wanting to understand the code they ship.
+It is not a SaaS dashboard, PR blocker, or remote AI code reviewer. It is a personal knowledge-debt tool that runs locally, keeps state in your repository, and makes the evidence behind every question inspectable.
 
-## Why this exists
+![Review page](docs/assets/screenshots/review.png)
 
-AI coding makes code production faster, but it can create knowledge debt: the repo changes faster than the developer's mental model. MergeLearn Tutor repays that debt with active recall, evidence-linked cards, and spaced review.
+## What it does
 
-## Current MVP
+- Ingests git history and changed files from a local repository.
+- Detects concepts using deterministic rules, repo lexicons, and TypeScript AST analysis.
+- Creates snippet-first learning cards tied to real files, commits, and docs.
+- Supports active recall: answer first, reveal explanation, then self-grade.
+- Preserves card history when you regenerate a queue.
+- Lets you create courses with goals, material paths, doc paths, and preferred question types.
+- Drafts fake/local LLM-style questions without network access, then lets you accept or reject them.
+- Shows a document/evidence timeline and graph of courses, docs, concepts, questions, cards, batches, and review events.
+- Stores all local state in `.skilltrace/` so you can inspect or delete it at any time.
 
-- Local CLI.
-- Local transparent JSON state in `.skilltrace/state.json` including learner events, corrections, and manual quality ratings.
-- Local repo lexicon/concept packs in `.skilltrace/lexicon.json`.
-- Deterministic git-history ingestion.
-- Hybrid concept extraction with path/regex rules plus TypeScript AST analysis.
-- Personal concept state and mastery evidence.
-- Snippet-first daily review cards with configurable question planes.
-- Explain-back answer recording.
-- Static local dashboard at `.skilltrace/dashboard.html`.
+## Privacy stance
+
+MergeLearn Tutor is local-first by default.
+
 - No telemetry.
 - No target repo code execution.
 - No required LLM calls.
-- Offline privacy config and outbound preview before any optional enrichment.
-- Optional fake/local enrichment experiment that sends no network requests.
+- No remote question drafting.
+- Optional fake/local enrichment sends no network requests.
+- Remote providers are intentionally rejected until a human explicitly approves privacy behavior.
 
-## Quick start
+Before any future enrichment, inspect what would leave your machine:
 
-Prerequisites:
+```bash
+mergelearn-tutor privacy preview --repo . --provider fake --include-snippets
+```
+
+## Requirements
 
 - Node.js 20 or newer.
 - npm.
 - Git available on `PATH`.
 
+## Install for local development
+
 ```bash
 npm install
 npm run build
-
-node dist/cli.js init --repo /path/to/repo
-node dist/cli.js ingest --repo /path/to/repo --since 30d
-node dist/cli.js today --repo /path/to/repo
-node dist/cli.js review --repo /path/to/repo
-node dist/cli.js cards generate --repo /path/to/repo --count 5 --mode more
-node dist/cli.js progress --repo /path/to/repo
-node dist/cli.js dashboard --repo /path/to/repo
 ```
 
-For a local global command without publishing:
+Optional local command:
 
 ```bash
 npm link
-mergelearn-tutor today --repo /path/to/repo
+mergelearn-tutor --help
 ```
 
-Open the dashboard:
+You can also run the built CLI directly:
 
 ```bash
-xdg-open /path/to/repo/.skilltrace/dashboard.html
+node dist/cli.js --help
 ```
 
-On Windows/WSL, open:
+## Quick start
 
-```text
-\\wsl.localhost\Ubuntu\path\to\repo\.skilltrace\dashboard.html
+Run these commands from the MergeLearn Tutor repository, pointing `--repo` at the codebase you want to learn from:
+
+```bash
+npm run build
+node dist/cli.js init --repo /path/to/your/repo
+node dist/cli.js ingest --repo /path/to/your/repo --since 30d
+node dist/cli.js cards generate --repo /path/to/your/repo --count 5 --mode more
+node dist/cli.js session --repo /path/to/your/repo
 ```
 
-## Commands
+The session command prints a local URL. Open it in your browser to review cards, create courses, inspect history, and explore the graph.
+
+## Local browser workflow
+
+The browser session is the easiest way to understand the product.
+
+| Page | Purpose |
+|---|---|
+| Review | Answer active-recall cards from real code snippets. |
+| Courses | Define learning goals, material paths, docs, and question planes. |
+| Questions | Draft fake/local LLM-style questions and accept or reject them. |
+| Timeline | Inspect GitLens-style provenance from commits/docs to cards/events. |
+| Graph | See the local learning graph and raw node/edge projection. |
+| History | Review active, archived, regenerated, and answered cards without a wall of details. |
+| Progress | Track concept mastery and review status. |
+| Preferences | Choose the kinds of questions you want. |
+
+Read the full page-by-page guide in `docs/USER_MANUAL.md`.
+
+## Example: create a course and question bank
+
+```bash
+mergelearn-tutor course create \
+  --repo . \
+  --id learn-auth \
+  --title "Learn auth" \
+  --goal "Understand auth from source, tests, and docs" \
+  --materials "src/**,tests/**" \
+  --docs "docs/**"
+
+mergelearn-tutor questions draft --repo . --course learn-auth --provider fake --count 5
+mergelearn-tutor questions list --repo . --course learn-auth
+mergelearn-tutor questions accept --repo . --id <question-id>
+mergelearn-tutor cards generate --repo . --course learn-auth --count 5
+```
+
+Accepted questions can drive future course cards. Drafting with `--provider fake` is deterministic and does not call a remote model.
+
+## Screenshots
+
+| Review | Courses |
+|---|---|
+| ![Review](docs/assets/screenshots/review.png) | ![Courses](docs/assets/screenshots/courses.png) |
+
+| Questions | Timeline |
+|---|---|
+| ![Questions](docs/assets/screenshots/questions.png) | ![Timeline](docs/assets/screenshots/timeline.png) |
+
+| Graph | History |
+|---|---|
+| ![Graph](docs/assets/screenshots/graph.png) | ![History](docs/assets/screenshots/history.png) |
+
+## Core CLI commands
 
 ```bash
 mergelearn-tutor init --repo .
@@ -75,93 +135,20 @@ mergelearn-tutor review --repo . --count 5
 mergelearn-tutor cards generate --repo . --count 5 --mode more
 mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
 mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
-mergelearn-tutor feedback --repo . --item <id> --event marked_bad_card --note "wrong evidence or vague prompt"
-mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "I missed this concept"
-mergelearn-tutor rate --repo . --item <id> --answerability 5 --usefulness 4 --note "clear and useful"
-mergelearn-tutor ratings --repo .
+mergelearn-tutor feedback --repo . --item <id> --event marked_bad_card --note "wrong evidence"
 mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
-mergelearn-tutor concept add --repo . --id repo.session_flow --label "Session flow" --term "session,token" --path "src/auth/*"
-mergelearn-tutor concept alias --repo . --concept security.auth_boundary --label "Session policy boundary"
-mergelearn-tutor concept promote-corrections --repo .
-mergelearn-tutor profile --repo .
-mergelearn-tutor debt --repo .
-mergelearn-tutor map --repo .
+mergelearn-tutor course create --repo . --id <id> --title "..." --goal "..." --materials "src/**" --docs "docs/**"
+mergelearn-tutor questions draft --repo . --course <id> --provider fake --count 5
+mergelearn-tutor questions accept --repo . --id <question-id>
+mergelearn-tutor timeline --repo .
 mergelearn-tutor progress --repo .
-mergelearn-tutor explain-last-commit --repo .
 mergelearn-tutor dashboard --repo .
 mergelearn-tutor session --repo .
-mergelearn-tutor preferences show --repo .
-mergelearn-tutor preferences set --repo . --planes local_behavior,risk_and_tests --snippet-lines 12
-mergelearn-tutor privacy init --repo . --ignore-path "secrets/**" --redact "internal-codename"
-mergelearn-tutor privacy preview --repo . --provider fake --include-snippets
-mergelearn-tutor enrich --repo . --provider fake --limit 3
-npm run eval:repos -- --fixtures --with-enrichment fake --repo /path/to/repo --out eval-runs/latest
 ```
-
-## Product stance
-
-The tutor intentionally starts local and personal. The primary UI is `today`, not the whole graph. The graph exists for inspection, but the habit loop is a 3-5 minute review.
-
-## Privacy model
-
-The CLI reads git metadata and diffs. It does not run project code, install target repo dependencies, send telemetry, or call an LLM. Optional LLM enrichment can be added later behind explicit config and preview of what leaves the machine.
-
-Before any optional enrichment, inspect the payload locally:
-
-```bash
-mergelearn-tutor privacy preview --repo . --provider fake
-```
-
-The preview command sends nothing. Snippets are omitted unless `--include-snippets` is passed, and `.skilltrace/privacy.json` can add ignored path globs and literal redaction terms.
-
-## Snippet-first review
-
-Cards now start with code you recently touched, then ask a question about that snippet. The question plane is explicit and configurable:
-
-- `language_mechanics` — syntax, type system, runtime semantics
-- `local_behavior` — what a function/block does
-- `file_role` — why this snippet belongs in this file
-- `architecture_flow` — how code connects across files
-- `risk_and_tests` — bugs, security, validation, regression tests
-- `repo_domain` — repo-specific concepts and vocabulary
-
-Preferences live in `.skilltrace/preferences.json`, so the CLI, local website, and future LLM agents can use the same control surface.
-
-## Flashcard generation
-
-Use `cards generate` when you want fresh cards without re-ingesting git history:
-
-```bash
-mergelearn-tutor cards generate --repo . --count 5 --mode more
-mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
-mergelearn-tutor course create --repo . --id learn-auth --title "Learn auth" --goal "Understand auth from code and docs" --materials "src/**" --docs "docs/**"
-mergelearn-tutor questions draft --repo . --course learn-auth --provider fake --count 5
-mergelearn-tutor questions accept --repo . --id <question-id>
-mergelearn-tutor cards generate --repo . --course learn-auth --count 5
-mergelearn-tutor timeline --repo .
-```
-
-- `more` adds new active cards and keeps the current queue.
-- `regenerate` archives the current active queue and creates a new focused batch.
-- Archived cards are not deleted, so answers, feedback, ratings, and statistics remain auditable in `.skilltrace/state.json`.
-
-The local website exposes the same behavior through “Generate 5 more” and “Regenerate 5”.
-
-Courses define learning goals, material paths, documentation paths, and prioritized question planes. The question bank stores evidence-bound deterministic or fake/local LLM-style drafts. Accepted questions can drive future course card generation without calling a remote model. Remote LLM question drafting remains blocked until a privacy preview and explicit opt-in exist.
-
-Batch 8 adds a fake/local enrichment experiment for wording only:
-
-```bash
-mergelearn-tutor enrich --repo . --provider fake --limit 3
-```
-
-This also sends no network requests and rejects the `remote` provider. Enriched wording is labeled as enrichment; deterministic cards remain the truth source.
-
-## Storage note
-
-The design calls for SQLite. This MVP uses JSON because the current verified environment is Node 20 and a dependency-free JSON store keeps setup reliable. The store module is intentionally isolated so SQLite can replace it later.
 
 ## Verification
+
+Run the standard local checks before pushing:
 
 ```bash
 npm run check
@@ -172,18 +159,35 @@ npm run smoke
 npm run smoke:package
 ```
 
-For packaging and beta-readiness details, see `docs/BETA_READINESS.md`. The package remains `private: true` and `UNLICENSED` until a human explicitly approves the name, license, and distribution channel.
+For a full fixture evaluation:
 
-## Further docs
+```bash
+npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-fixtures
+```
 
-- `docs/EVALUATION.md` — evaluation harness and manual rubric.
-- `docs/CORRECTIONS.md` — feedback/correction commands and learner-event behavior.
-- `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer details.
-- `docs/CARD_QUALITY.md` — card generation quality rules and dogfood findings.
-- `docs/CUSTOMIZATION.md` — preferences file, API surface, and LLM-operable settings.
-- `docs/REVIEW_SESSION.md` — local browser review session and API.
-- `docs/LEXICON.md` — local repo-specific concept packs, aliases, ignores, and correction promotion.
-- `docs/PRIVACY.md` — offline defaults, redaction, ignore paths, and outbound preview behavior.
-- `docs/ENRICHMENT.md` — fake/local card wording enrichment experiment and no-network guardrails.
-- `docs/BETA_READINESS.md` — local packaging smoke, clean-clone checklist, and public-release blockers.
-- `docs/ROADMAP.md` — current platform roadmap.
+## Documentation
+
+- `docs/USER_MANUAL.md` — page-by-page browser and CLI manual.
+- `docs/GITHUB_PUSH_READY.md` — repository push-readiness checklist.
+- `docs/PRIVACY.md` — local-first privacy model and outbound preview.
+- `docs/REVIEW_SESSION.md` — local browser session and API details.
+- `docs/CUSTOMIZATION.md` — preferences, API surface, and question settings.
+- `docs/LEXICON.md` — repo-specific concept packs, aliases, and ignores.
+- `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer.
+- `docs/CARD_QUALITY.md` — card quality rules and dogfood notes.
+- `docs/EVALUATION.md` — evaluation harness and quality rubric.
+- `docs/BETA_READINESS.md` — packaging and release blockers.
+- `docs/ROADMAP.md` — current roadmap.
+
+## Release status
+
+This repository is ready for a local GitHub push after verification, but it is not ready for public npm publishing yet.
+
+Current release blockers:
+
+- The package is still `private: true`.
+- The package license is still `UNLICENSED`.
+- There is no public `LICENSE` file yet.
+- Product name, license, and distribution channel need explicit human approval before public release.
+
+See `docs/GITHUB_PUSH_READY.md` for the final push checklist.

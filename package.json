@@ -5,7 +5,8 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
-    "docs/*.md"
+    "docs/*.md",
+    "docs/assets/screenshots/*.png"
   ],
   "scripts": {
     "test": "vitest run",
