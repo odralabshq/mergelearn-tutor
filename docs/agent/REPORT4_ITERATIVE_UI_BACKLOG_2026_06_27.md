@@ -92,6 +92,8 @@ Acceptance:
 
 ### Wave 4: Setup as Learning Plan wizard
 
+Status: implemented in this iteration. Verification evidence is in `docs/agent/report4-ui-iteration-2026-06-27/wave4-learning-plan-setup.md`.
+
 Tasks:
 1. Rename user-facing Courses to Learning Plans.
 2. Merge Plan Builder, Courses, and most Preferences into Setup.

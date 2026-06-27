@@ -109,6 +109,11 @@ describe('review session server', () => {
       expect(planHtml).toContain('Course snapshot');
       expect(planHtml).toContain('Learn auth');
       expect(planHtml).toContain('Plan Builder');
+      expect(planHtml).toContain('Learning plan wizard');
+      expect(planHtml).toContain('define your learning goal');
+      expect(planHtml).toContain('Quick course creator');
+      expect(planHtml).toContain('data-action="save-course"');
+      expect(planHtml).toContain('Tune question mix');
 
       const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
       expect(progress.nodes.length).toBeGreaterThan(0);
