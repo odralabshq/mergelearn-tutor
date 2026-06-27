@@ -259,3 +259,21 @@ npm run eval
 npm run smoke
 npm run smoke:package
 ```
+
+## 2026-06-27 Autonomous cycle 1: visual graph map
+
+- Started the overnight autonomous polish branch `autonomous-platform-polish`.
+- Added a real SVG evidence graph map to `/graph`, above the existing grouped node panels and raw JSON projection.
+- The graph now shows lanes for Evidence, Courses, Concepts, Questions, Cards, and Events, with curved relationship edges and a compact legend.
+- Added session-server regression assertions for the graph map, legend, and JSON link.
+- Captured screenshot evidence under `.autoloop/screenshots/20260627T021844Z/graph-after-map.png`.
+
+Verified:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run smoke:package
+git diff --check
+```

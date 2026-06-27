@@ -74,6 +74,9 @@ describe('review session server', () => {
       expect(timeline.edges.length).toBeGreaterThan(0);
       const graphHtml = await fetch(`${review.url}/graph`).then((res) => res.text());
       expect(graphHtml).toContain('Courses, docs, questions, cards');
+      expect(graphHtml).toContain('Evidence graph map');
+      expect(graphHtml).toContain('commit/doc/file → concept');
+      expect(graphHtml).toContain('Open graph JSON');
       expect(graphHtml).toContain('Raw graph projection');
 
       const preferences = await fetch(`${review.url}/api/preferences`).then((res) => res.json()) as { review: { mode: string } };
