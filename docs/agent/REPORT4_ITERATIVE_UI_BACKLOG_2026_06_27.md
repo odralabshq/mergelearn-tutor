@@ -76,6 +76,8 @@ Acceptance:
 
 ### Wave 3: One-card Practice mode
 
+Status: implemented in this iteration. Verification and screenshot evidence are in `docs/agent/report4-ui-iteration-2026-06-27/wave3-focused-practice.md`.
+
 Tasks:
 1. Create a focused Practice route or make Review use a focused mode by default.
 2. Keep confidence-before-reveal and self-grade flow intact.

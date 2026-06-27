@@ -66,6 +66,7 @@ describe('review session server', () => {
       const primaryNav = html.match(/<nav class="app-nav"[\s\S]*?<\/nav>/)?.[0] ?? '';
       expect(primaryNav).toContain('Workbench');
       expect(primaryNav).toContain('Practice');
+      expect(primaryNav).toContain('href="/practice"');
       expect(primaryNav).toContain('Map');
       expect(primaryNav).toContain('Audit');
       expect(primaryNav).toContain('Setup');
@@ -76,6 +77,16 @@ describe('review session server', () => {
       expect(html).toContain('Courses');
       expect(html).toContain('Questions');
       expect(html).toContain('No remote LLM calls');
+
+      const practiceHtml = await fetch(`${review.url}/practice`).then((res) => res.text());
+      expect(practiceHtml).toContain('Focused Practice');
+      expect(practiceHtml).toContain('One card, one answer, one grade');
+      expect(practiceHtml).toContain('Before reveal: how confident are you?');
+      expect(practiceHtml).toContain('Reveal explanation');
+      expect(practiceHtml).toContain('I knew it');
+      expect(practiceHtml).toContain('id="practice-outcome"');
+      expect(practiceHtml).toContain('Keyboard shortcuts');
+      expect((practiceHtml.match(/class="card recall-card/g) ?? []).length).toBe(1);
 
       const workbenchHtml = await fetch(`${review.url}/workbench`).then((res) => res.text());
       expect(workbenchHtml).toContain('Learning Workbench');
