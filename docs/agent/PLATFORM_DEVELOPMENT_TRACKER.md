@@ -41,10 +41,11 @@ Escalate via Telegram if needed:
 12. Batch 11: snippet-first learning UX, preferences onboarding, and progress map. Implemented.
 13. Batch 12: flashcard generation lifecycle, diff snippets, and website polish. Implemented.
 14. Batch 13: active recall flow, card history, unified page design, and richer diff context. Implemented.
+15. Batch 14: courses/tracks, question bank, fake/local LLM question drafts, evidence timeline, and graph pages. Implemented pending final verification.
 
 ## Active slice
 
-Batch 13 is implemented and locally dogfooded. The review demo now includes staged active recall, card-quality events that do not reduce mastery, `/history`, consistent page design, hover-highlighted buttons, and richer unified-diff snippets.
+Batch 14 is in final verification. The full demo now includes courses/tracks, goals/materials, fake/local LLM-style question drafting, accepted question-bank entries, course-generated cards, evidence timeline/document lens, graph representation, and a summary-first history page.
 
 ## Verification baseline
 
@@ -62,14 +63,12 @@ All passed.
 
 ## Latest completed local batch
 
-Batch 12 made the website and card lifecycle more product-ready:
+Batch 14 extends the product surface beyond review cards:
 
-- card batches are persisted in state with active/archived lifecycle metadata
-- `mergelearn-tutor cards generate --mode more|regenerate` creates fresh cards without deleting history
-- `/api/cards/generate` and website buttons expose Generate 5 more / Regenerate 5
-- session and dashboard snippets now render as diff-like blocks with line numbers and add/delete coloring
-- the review website was redesigned with hero, queue toolbar, stats, polished cards, and responsive layout
-- screenshot iteration removed a duplicate heading and verified the final layout had no browser console errors
-- dogfood on `/tmp/mergelearn-live-demo` verified CLI generation, API generation, archive counts, pages, and dashboard output
+- courses persist goals, material paths, doc paths, question planes, and concept focus
+- question bank persists fake/local LLM-style drafts with accepted/rejected statuses and no network use
+- accepted questions can drive course card generation
+- evidence timeline and graph APIs/pages connect commits, files, docs, concepts, courses, questions, card batches, cards, and events
+- `/history` is now summary-first with details progressively disclosed
 
-Next planned slice after Batch 13: learning tracks/question bank and evidence timeline. Public beta/publish still requires human decisions first.
+Next planned slice after Batch 14: stronger interactive graph layout and optional remote LLM opt-in/privacy-preview policy. Public beta/publish still requires human decisions first.

@@ -134,6 +134,11 @@ Use `cards generate` when you want fresh cards without re-ingesting git history:
 ```bash
 mergelearn-tutor cards generate --repo . --count 5 --mode more
 mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
+mergelearn-tutor course create --repo . --id learn-auth --title "Learn auth" --goal "Understand auth from code and docs" --materials "src/**" --docs "docs/**"
+mergelearn-tutor questions draft --repo . --course learn-auth --provider fake --count 5
+mergelearn-tutor questions accept --repo . --id <question-id>
+mergelearn-tutor cards generate --repo . --course learn-auth --count 5
+mergelearn-tutor timeline --repo .
 ```
 
 - `more` adds new active cards and keeps the current queue.
@@ -141,6 +146,8 @@ mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
 - Archived cards are not deleted, so answers, feedback, ratings, and statistics remain auditable in `.skilltrace/state.json`.
 
 The local website exposes the same behavior through “Generate 5 more” and “Regenerate 5”.
+
+Courses define learning goals, material paths, documentation paths, and prioritized question planes. The question bank stores evidence-bound deterministic or fake/local LLM-style drafts. Accepted questions can drive future course card generation without calling a remote model. Remote LLM question drafting remains blocked until a privacy preview and explicit opt-in exist.
 
 Batch 8 adds a fake/local enrichment experiment for wording only:
 

@@ -209,3 +209,33 @@ Demo dogfood:
 - Demo repo: `/tmp/mergelearn-demo-batch13`
 - Verified active/archived cards, batch history, markdown doc evidence, unified diff hunk/deletion snippets, and card-quality feedback that did not increment failed count.
 - Browser-reviewed `/`, `/history`, `/progress`, and `/preferences`; console had no JS errors.
+
+## 2026-06-27 Batch 14
+
+- Added learning courses/tracks with goals, material paths, documentation paths, enabled question planes, and concept focus.
+- Added question-bank persistence with fake/local LLM-style evidence-bound drafts, accepted/rejected statuses, draft batches, and no-network provenance.
+- Added accepted-question driven course card generation through CLI and local API.
+- Added evidence timeline and graph projections connecting commits, files, docs, concepts, courses, questions, card batches, cards, and review events.
+- Added website pages and APIs: `/courses`, `/questions`, `/timeline`, `/graph`, `/api/courses`, `/api/questions`, `/api/evidence-timeline`, and `/api/evidence-graph`.
+- Simplified `/history` into summary-first active/archived sections with raw JSON behind a secondary link.
+- Added visual cleanup for question cards and graph nodes so dense generated question text is progressively disclosed or clamped.
+- Added focused core, server, and CLI tests for courses, question drafting/acceptance, course-generated cards, and timeline/graph data.
+
+Verified:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run eval
+npm run smoke
+npm run smoke:package
+npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-batch14-fixtures
+```
+
+Demo dogfood:
+
+- Demo repo: `/tmp/mergelearn-full-demo`
+- Demo server: `http://127.0.0.1:4197`
+- Demo state: 1 course, 5 fake/local LLM-style question drafts, 3 accepted questions, 3 active course cards, 9 archived cards, 2 batches, 35 timeline/graph nodes, 97 edges, 2 doc nodes, `networkUsed:false`.
+- Browser-reviewed `/courses`, `/questions`, `/timeline`, and `/graph`; console had no JS errors.

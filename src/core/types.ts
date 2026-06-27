@@ -18,6 +18,9 @@ export type CardBatchMode = 'initial' | 'more' | 'regenerate';
 export type ReviewEventType = 'shown' | 'answered' | 'skipped' | 'marked_unsure' | 'marked_wrong' | 'marked_correct' | 'marked_useful' | 'marked_bad_card' | 'marked_wrong_evidence' | 'marked_duplicate' | 'corrected' | 'deferred';
 export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 'better_label' | 'not_useful' | 'pin_important';
 export type ManualRatingTargetType = 'concept' | 'card';
+export type QuestionBankStatus = 'draft' | 'accepted' | 'rejected' | 'active' | 'archived';
+export type QuestionAuthorType = 'deterministic' | 'llm';
+export type QuestionProvider = 'deterministic' | 'fake' | 'local';
 
 export type EvidenceRef = {
   commit?: string;
@@ -101,6 +104,8 @@ export type LearningItem = {
   difficulty: Difficulty;
   createdAt: string;
   status: LearningItemStatus;
+  courseId?: string;
+  questionId?: string;
   batchId?: string;
   generation: number;
   source: LearningItemSource;
@@ -116,6 +121,66 @@ export type CardBatch = {
   archivedItemIds: string[];
   createdAt: string;
   reason?: string;
+};
+
+export type LearningCourse = {
+  id: string;
+  title: string;
+  goal: string;
+  enabledPlanes: QuestionPlane[];
+  materialPaths: string[];
+  docPaths: string[];
+  conceptIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type QuestionBankEntry = {
+  id: string;
+  courseId?: string;
+  conceptId: string;
+  questionPlane: QuestionPlane;
+  prompt: string;
+  expectedAnswer: string;
+  expectedFocus: string[];
+  difficulty: Difficulty;
+  evidence: EvidenceRef[];
+  status: QuestionBankStatus;
+  author: {
+    type: QuestionAuthorType;
+    provider: QuestionProvider;
+    model?: string;
+    promptVersion: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type QuestionDraftBatch = {
+  id: string;
+  courseId?: string;
+  provider: QuestionProvider;
+  model?: string;
+  promptVersion: string;
+  entryIds: string[];
+  createdAt: string;
+  networkUsed: boolean;
+};
+
+export type EvidenceTimelineNode = {
+  id: string;
+  type: 'commit' | 'file' | 'doc' | 'concept' | 'course' | 'question' | 'card' | 'batch' | 'event';
+  label: string;
+  subtitle?: string;
+  path?: string;
+  createdAt?: string;
+  status?: string;
+};
+
+export type EvidenceTimelineEdge = {
+  from: string;
+  to: string;
+  type: 'changed' | 'mentions' | 'teaches' | 'drafted' | 'schedules' | 'generated' | 'answered' | 'belongs_to' | 'uses_evidence';
 };
 
 export type LearningEvent = {
@@ -165,6 +230,9 @@ export type TutorState = {
   conceptStates: ConceptState[];
   learningItems: LearningItem[];
   cardBatches: CardBatch[];
+  courses: LearningCourse[];
+  questionBank: QuestionBankEntry[];
+  questionDraftBatches: QuestionDraftBatch[];
   learningEvents: LearningEvent[];
   corrections: Correction[];
   manualRatings: ManualRating[];

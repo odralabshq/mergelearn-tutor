@@ -2,12 +2,15 @@
 import { Command } from 'commander';
 
 import { extractConcepts } from './core/concepts.js';
+import { coursesSummary, upsertCourse } from './core/courses.js';
 import { enrichLearningItems, renderEnrichmentComparison } from './core/enrichment.js';
+import { buildEvidenceTimeline } from './core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from './core/events.js';
 import { collectCommits, collectLastCommit } from './core/git.js';
 import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
 import { generateCardBatch, mergeLearningState, recordAnswer } from './core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from './core/preferences.js';
+import { draftQuestionsForCourse, questionSummary, updateQuestionStatus } from './core/questions.js';
 import { createOutboundPreview, loadPrivacyConfig, renderOutboundPreview, savePrivacyConfig, type PrivacyConfig, type PrivacyProvider } from './core/privacy.js';
 import { renderKnowledgeDebt, renderMermaidMap, renderProfile, renderProgress, renderReview, renderToday, stateSummary } from './core/render.js';
 import { recordManualRating, renderManualRatingSummary } from './core/ratings.js';
@@ -46,6 +49,18 @@ function renderLexicon(lexicon: RepoLexicon): string {
   for (const concept of lexicon.concepts) lines.push(`- concept ${concept.id}: ${concept.label}`);
   for (const alias of lexicon.aliases) lines.push(`- alias ${alias.conceptId}: ${alias.label}`);
   for (const ignore of lexicon.ignores) lines.push(`- ignore ${ignore.conceptId ?? '*'} ${ignore.pathPattern ?? ignore.term ?? ''}`.trim());
+  return `${lines.join('\n')}\n`;
+}
+
+function renderCourses(state: Awaited<ReturnType<typeof loadState>>): string {
+  const courses = coursesSummary(state);
+  return ['Learning courses', '', ...courses.map((course) => `- ${course.id}: ${course.title}\n  goal: ${course.goal}\n  materials: ${course.materialPaths.join(', ')}\n  docs: ${course.docPaths.join(', ')}\n  questions: ${course.questionCount}, active cards: ${course.activeCardCount}`)].join('\n') + '\n';
+}
+
+function renderQuestions(state: Awaited<ReturnType<typeof loadState>>): string {
+  const summary = questionSummary(state);
+  const lines = ['Question bank', '', `Total: ${summary.total}`, `Draft: ${summary.draft}`, `Accepted: ${summary.accepted}`, `Rejected: ${summary.rejected}`, `Draft batches: ${summary.batches}`, `Network used: ${summary.networkUsed ? 'yes' : 'no'}`, ''];
+  for (const entry of state.questionBank.slice(-12).reverse()) lines.push(`- ${entry.id} [${entry.status}] ${entry.prompt}\n  course: ${entry.courseId ?? 'none'} · concept: ${entry.conceptId} · provider: ${entry.author.provider}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -105,17 +120,104 @@ cardsCommand.command('generate')
   .option('-r, --repo <path>', 'repository path', process.cwd())
   .option('-n, --count <count>', 'number of cards to generate', '5')
   .option('--mode <mode>', 'more or regenerate', 'more')
+  .option('--course <id>', 'optional course id to generate from accepted course questions')
   .option('--reason <text>', 'optional generation note')
-  .action(async (options: { repo: string; count: string; mode: string; reason?: string }) => {
+  .action(async (options: { repo: string; count: string; mode: string; course?: string; reason?: string }) => {
     const mode = options.mode === 'regenerate' ? 'regenerate' : 'more';
     const next = generateCardBatch(await loadState(options.repo), await loadPreferences(options.repo), {
       count: Number.parseInt(options.count, 10),
       mode,
+      courseId: options.course,
       reason: options.reason,
     });
     await saveState(options.repo, next);
     const lastBatch = next.cardBatches.at(-1)!;
     process.stdout.write(`Generated ${lastBatch.itemIds.length} cards in ${lastBatch.id}. Archived ${lastBatch.archivedItemIds.length}.\n`);
+  });
+
+const course = program.command('course')
+  .description('Manage learning courses/tracks');
+
+course.command('list')
+  .description('List learning courses and their material/goals')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderCourses(await loadState(options.repo)));
+  });
+
+course.command('create')
+  .description('Create or update a course/track')
+  .requiredOption('--id <id>', 'stable course id, e.g. learn-typescript')
+  .requiredOption('--title <text>', 'course title')
+  .requiredOption('--goal <text>', 'learning goal')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--planes <csv>', 'enabled question planes')
+  .option('--materials <csv>', 'material path globs')
+  .option('--docs <csv>', 'documentation path globs')
+  .option('--concepts <csv>', 'concept ids to focus')
+  .action(async (options: { repo: string; id: string; title: string; goal: string; planes?: string; materials?: string; docs?: string; concepts?: string }) => {
+    const next = upsertCourse(await loadState(options.repo), {
+      id: options.id,
+      title: options.title,
+      goal: options.goal,
+      enabledPlanes: listFrom(options.planes) as never,
+      materialPaths: listFrom(options.materials),
+      docPaths: listFrom(options.docs),
+      conceptIds: listFrom(options.concepts),
+    });
+    await saveState(options.repo, next);
+    process.stdout.write(`Saved course ${options.id}.\n`);
+  });
+
+const questions = program.command('questions')
+  .description('Manage evidence-bound question drafts and accepted question bank entries');
+
+questions.command('list')
+  .description('List question drafts and accepted questions')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(renderQuestions(await loadState(options.repo)));
+  });
+
+questions.command('draft')
+  .description('Draft evidence-bound questions for a course with fake/local provider; remote is blocked')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .option('--course <id>', 'course id')
+  .option('--provider <name>', 'fake, local, deterministic, or remote', 'fake')
+  .option('--model <name>', 'provider model label')
+  .option('-n, --count <count>', 'number of questions to draft', '6')
+  .action(async (options: { repo: string; course?: string; provider: string; model?: string; count: string }) => {
+    const next = draftQuestionsForCourse(await loadState(options.repo), { courseId: options.course, provider: options.provider as never, model: options.model, count: Number.parseInt(options.count, 10) });
+    await saveState(options.repo, next);
+    const batch = next.questionDraftBatches.at(-1)!;
+    process.stdout.write(`Drafted ${batch.entryIds.length} questions in ${batch.id}. Network used: ${batch.networkUsed ? 'yes' : 'no'}.\n`);
+  });
+
+questions.command('accept')
+  .description('Accept a question-bank draft for future course card generation')
+  .requiredOption('--id <id>', 'question entry id')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string; id: string }) => {
+    const next = updateQuestionStatus(await loadState(options.repo), options.id, 'accepted');
+    await saveState(options.repo, next);
+    process.stdout.write(`Accepted question ${options.id}.\n`);
+  });
+
+questions.command('reject')
+  .description('Reject a question-bank draft')
+  .requiredOption('--id <id>', 'question entry id')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string; id: string }) => {
+    const next = updateQuestionStatus(await loadState(options.repo), options.id, 'rejected');
+    await saveState(options.repo, next);
+    process.stdout.write(`Rejected question ${options.id}.\n`);
+  });
+
+program.command('timeline')
+  .description('Export evidence timeline/graph JSON for courses, docs, questions, cards, and events')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .action(async (options: { repo: string }) => {
+    process.stdout.write(`${JSON.stringify(buildEvidenceTimeline(await loadState(options.repo)), null, 2)}\n`);
   });
 
 program.command('profile')

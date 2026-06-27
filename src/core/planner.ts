@@ -71,6 +71,7 @@ export type GenerateCardBatchOptions = {
   count?: number;
   mode?: Exclude<CardBatchMode, 'initial'>;
   reason?: string;
+  courseId?: string;
 };
 
 export function activeLearningItems(state: TutorState): LearningItem[] {
@@ -175,6 +176,7 @@ type CreateCardBatchInput = {
   mode: CardBatchMode;
   source: LearningItemSource;
   reason?: string;
+  courseId?: string;
 };
 
 function rotatePlane(concept: Concept, preferences: UserPreferences, generation: number): QuestionPlane {
@@ -192,7 +194,7 @@ export function createCardBatch(state: TutorState, preferences: UserPreferences,
   const generation = (state.cardBatches ?? []).length + 1;
   const baseItems = state.learningItems.map((item) => archivedIds.includes(item.id) ? { ...item, status: 'archived' as const, archivedAt: now, supersededBy: batchId } : item);
   const workingState = { ...state, learningItems: baseItems };
-  const items = buildLearningItems(workingState, preferences, input.count, batchId, generation, input.source, now);
+  const items = buildLearningItems(workingState, preferences, input.count, batchId, generation, input.source, now, input.courseId);
   const next = {
     ...workingState,
     learningItems: [...baseItems, ...items],
@@ -202,34 +204,43 @@ export function createCardBatch(state: TutorState, preferences: UserPreferences,
 }
 
 export function generateCardBatch(state: TutorState, preferences: UserPreferences = DEFAULT_PREFERENCES, options: GenerateCardBatchOptions = {}): TutorState {
-  return createCardBatch(state, preferences, { count: options.count ?? 5, mode: options.mode ?? 'more', source: options.mode === 'regenerate' ? 'regenerate' : 'manual_generate', reason: options.reason });
+  return createCardBatch(state, preferences, { count: options.count ?? 5, mode: options.mode ?? 'more', source: options.mode === 'regenerate' ? 'regenerate' : 'manual_generate', reason: options.reason, courseId: options.courseId });
 }
 
 export function generateLearningItems(state: TutorState, preferences: UserPreferences = DEFAULT_PREFERENCES): LearningItem[] {
   return buildLearningItems(state, preferences, 12, stableId('batch', ['compat', String(state.learningItems.length)]), (state.cardBatches ?? []).length + 1, 'ingest', nowIso());
 }
 
-function buildLearningItems(state: TutorState, preferences: UserPreferences, count: number, batchId: string, generation: number, source: LearningItemSource, now: string): LearningItem[] {
-  return topDueConcepts(state, Math.max(1, count)).map((concept) => {
+function buildLearningItems(state: TutorState, preferences: UserPreferences, count: number, batchId: string, generation: number, source: LearningItemSource, now: string, courseId?: string): LearningItem[] {
+  return topDueConcepts(state, Math.max(1, count) * 3)
+    .filter((concept) => conceptMatchesCourse(state, concept, courseId))
+    .slice(0, Math.max(1, count))
+    .map((concept) => {
     const conceptState = state.conceptStates.find((candidate) => candidate.conceptId === concept.id);
-    const questionPlane = rotatePlane(concept, preferences, generation);
+    const accepted = acceptedQuestionFor(state, concept.id, courseId);
+    const questionPlane = accepted?.questionPlane ?? rotatePlane(concept, preferences, generation);
     const snippet = snippetFor(concept, preferences);
+    const prompt = accepted?.prompt ?? promptFor(concept, questionPlane, snippet);
+    const explanation = accepted?.expectedAnswer ?? explanationFor(concept, questionPlane, snippet);
+    const focus = accepted?.expectedFocus ?? expectedFocus(concept, questionPlane);
     return {
-      id: stableId('item', [batchId, concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane, String(generation)]),
+      id: stableId('item', [batchId, concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane, accepted?.id ?? '', String(generation)]),
       conceptId: concept.id,
       type: itemTypeFor(concept),
       questionPlane,
       title: `${snippet.path}: ${concept.label}`,
       snippet,
-      bodyMarkdown: renderCardMarkdown(concept, conceptState, questionPlane, snippet),
-      prompt: promptFor(concept, questionPlane, snippet),
-      explanationMarkdown: explanationFor(concept, questionPlane, snippet),
-      expectedFocus: expectedFocus(concept, questionPlane),
+      bodyMarkdown: renderCardMarkdownWithQuestion(concept, conceptState, questionPlane, snippet, prompt, explanation),
+      prompt,
+      explanationMarkdown: explanation,
+      expectedFocus: focus,
       whyShown: whyShownFor(concept, conceptState, questionPlane),
       evidence: rankedEvidence(concept).slice(0, 5),
       difficulty: concept.difficulty,
       createdAt: now,
       status: 'active',
+      courseId,
+      questionId: accepted?.id,
       batchId,
       generation,
       source,
@@ -238,8 +249,32 @@ function buildLearningItems(state: TutorState, preferences: UserPreferences, cou
 }
 
 export function renderCardMarkdown(concept: Concept, state?: ConceptState, plane: QuestionPlane = planeFor(concept, DEFAULT_PREFERENCES), snippet: CodeSnippet = snippetFor(concept, DEFAULT_PREFERENCES)): string {
+  return renderCardMarkdownWithQuestion(concept, state, plane, snippet, promptFor(concept, plane, snippet), explanationFor(concept, plane, snippet));
+}
+
+function renderCardMarkdownWithQuestion(concept: Concept, state: ConceptState | undefined, plane: QuestionPlane, snippet: CodeSnippet, prompt: string, explanation: string): string {
   const evidence = rankedEvidence(concept).slice(0, 4).map((item) => `- \`${item.path}\`${item.commit ? ` in ${item.commit.slice(0, 8)}` : ''}`).join('\n');
-  return [`# ${snippet.path}: ${concept.label}`, '', '## Code snippet', codeFence(snippet), '', '## Question plane', plane.replace(/_/g, ' '), '', '## Question', promptFor(concept, plane, snippet), '', '## Explanation if stuck', explanationFor(concept, plane, snippet), '', '## Why this card appeared', whyShownFor(concept, state, plane), '', '## Evidence from your repo', evidence].join('\n');
+  return [`# ${snippet.path}: ${concept.label}`, '', '## Code snippet', codeFence(snippet), '', '## Question plane', plane.replace(/_/g, ' '), '', '## Question', prompt, '', '## Explanation if stuck', explanation, '', '## Why this card appeared', whyShownFor(concept, state, plane), '', '## Evidence from your repo', evidence].join('\n');
+}
+
+function acceptedQuestionFor(state: TutorState, conceptId: string, courseId?: string) {
+  return state.questionBank.find((entry) => entry.status === 'accepted' && entry.conceptId === conceptId && (!courseId || entry.courseId === courseId));
+}
+
+function conceptMatchesCourse(state: TutorState, concept: Concept, courseId?: string): boolean {
+  if (!courseId) return true;
+  const course = state.courses.find((item) => item.id === courseId);
+  if (!course) return false;
+  if (course.conceptIds.length && !course.conceptIds.includes(concept.id)) return false;
+  const patterns = [...course.materialPaths, ...course.docPaths];
+  return patterns.length === 0 || concept.evidence.some((evidence) => patterns.some((pattern) => pathMatches(evidence.path, pattern)));
+}
+
+function pathMatches(filePath: string, pattern: string): boolean {
+  if (pattern === '**') return true;
+  if (pattern.endsWith('/**')) return filePath.startsWith(pattern.slice(0, -3));
+  if (pattern.includes('*')) return new RegExp(`^${pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.*').replace(/\*/g, '[^/]*')}$`).test(filePath);
+  return filePath === pattern || filePath.includes(pattern);
 }
 
 function codeFence(snippet: CodeSnippet): string {

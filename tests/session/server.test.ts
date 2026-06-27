@@ -20,6 +20,9 @@ function state(repoPath: string): TutorState {
     conceptStates: [{ conceptId: 'repo.auth', exposureCount: 1, activeRecallCount: 0, correctCount: 0, failedCount: 0, hintCount: 0, masteryEstimate: 0.2, confidence: 0.2, importance: 0.6, repoRelevance: 0.5 }],
     learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: auth', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function auth() { return true; }' }, bodyMarkdown: 'body', prompt: 'What happens in this snippet?', explanationMarkdown: 'The function returns true.', expectedFocus: ['auth'], whyShown: 'Snippet-first local behavior card.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }],
     cardBatches: [],
+    courses: [{ id: 'learn-auth', title: 'Learn auth', goal: 'Understand auth flow', enabledPlanes: ['local_behavior', 'repo_domain'], materialPaths: ['src/**'], docPaths: ['docs/**'], conceptIds: ['repo.auth'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
+    questionBank: [],
+    questionDraftBatches: [],
     learningEvents: [],
     corrections: [],
     manualRatings: [],
@@ -44,12 +47,32 @@ describe('review session server', () => {
       expect(progress.nodes.length).toBeGreaterThan(0);
 
       const historyHtml = await fetch(`${review.url}/history`).then((res) => res.text());
-      expect(historyHtml).toContain('Card history and batches');
-      expect(historyHtml).toContain('History JSON');
+      expect(historyHtml).toContain('History without the wall of cards');
+      expect(historyHtml).toContain('Raw history JSON');
 
       const history = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { summary: { activeCards: number }; cards: unknown[]; batches: unknown[] };
       expect(history.summary.activeCards).toBe(1);
       expect(history.cards).toHaveLength(1);
+
+      const coursesHtml = await fetch(`${review.url}/courses`).then((res) => res.text());
+      expect(coursesHtml).toContain('Courses organize goals');
+      expect(coursesHtml).toContain('Learn auth');
+
+      const questionsDraft = await fetch(`${review.url}/api/questions/draft`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ courseId: 'learn-auth', provider: 'fake', count: 1 }) }).then((res) => res.json()) as { ok: boolean; questions: { summary: { draft: number }; questions: Array<{ id: string }> } };
+      expect(questionsDraft.ok).toBe(true);
+      expect(questionsDraft.questions.summary.draft).toBe(1);
+      const firstQuestion = questionsDraft.questions.questions[0]!;
+      const accepted = await fetch(`${review.url}/api/questions/status`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: firstQuestion.id, status: 'accepted' }) }).then((res) => res.json()) as { ok: boolean; questions: { summary: { accepted: number } } };
+      expect(accepted.ok).toBe(true);
+      expect(accepted.questions.summary.accepted).toBe(1);
+
+      const questionsHtml = await fetch(`${review.url}/questions`).then((res) => res.text());
+      expect(questionsHtml).toContain('Evidence-bound LLM-style questions');
+      const timeline = await fetch(`${review.url}/api/evidence-timeline`).then((res) => res.json()) as { nodes: unknown[]; edges: unknown[] };
+      expect(timeline.nodes.length).toBeGreaterThan(0);
+      expect(timeline.edges.length).toBeGreaterThan(0);
+      const graphHtml = await fetch(`${review.url}/graph`).then((res) => res.text());
+      expect(graphHtml).toContain('Courses, docs, questions, cards');
 
       const preferences = await fetch(`${review.url}/api/preferences`).then((res) => res.json()) as { review: { mode: string } };
       expect(preferences.review.mode).toBe('snippet_first');

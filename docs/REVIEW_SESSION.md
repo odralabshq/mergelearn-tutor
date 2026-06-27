@@ -39,6 +39,10 @@ Available actions:
 - mark partly/unsure for near-term review
 - mark bad card or wrong evidence as card-quality feedback, not learner failure
 - inspect card/batch history on `/history`
+- define learning tracks on `/courses`
+- draft and accept fake/local LLM-style questions on `/questions`
+- inspect GitLens-style document evidence on `/timeline`
+- inspect a graph view of courses/docs/questions/cards on `/graph`
 
 All actions POST to the local server and update `.skilltrace/state.json`.
 
@@ -50,15 +54,26 @@ Endpoints:
 
 ```text
 GET  /
+GET  /courses
+GET  /questions
+GET  /timeline
+GET  /graph
 GET  /history
 GET  /progress
 GET  /state.json
 GET  /api/state
 GET  /api/cards/history
+GET  /api/courses
+GET  /api/questions
+GET  /api/evidence-timeline
+GET  /api/evidence-graph
 GET  /api/progress
 GET  /api/preferences
 PUT  /api/preferences
 POST /api/cards/generate
+POST /api/courses
+POST /api/questions/draft
+POST /api/questions/status
 POST /answer
 POST /feedback
 POST /correct

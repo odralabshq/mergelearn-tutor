@@ -1,10 +1,13 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
+import { coursesSummary, upsertCourse } from '../core/courses.js';
 import { diffSnippetCss, renderDiffSnippetHtml } from '../core/diffView.js';
+import { buildEvidenceTimeline, graphByType } from '../core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from '../core/events.js';
 import { activeLearningItems, generateCardBatch, recordAnswer } from '../core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from '../core/preferences.js';
 import { buildProgressGraph } from '../core/progress.js';
+import { draftQuestionsForCourse, questionSummary, updateQuestionStatus } from '../core/questions.js';
 import { renderProgress, renderToday } from '../core/render.js';
 import { loadState, saveState } from '../core/store.js';
 import type { CorrectionType, ReviewEventType, TutorState, UserPreferences } from '../core/types.js';
@@ -34,20 +37,48 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, renderSessionHtml(await loadState(repoPath), await loadPreferences(repoPath)));
+  if (method === 'GET' && url.pathname === '/courses') return sendHtml(res, 200, renderCoursesHtml(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/questions') return sendHtml(res, 200, renderQuestionsHtml(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/timeline') return sendHtml(res, 200, renderTimelineHtml(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/graph') return sendHtml(res, 200, renderGraphHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/progress') return sendHtml(res, 200, renderProgressHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/history') return sendHtml(res, 200, renderHistoryHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/preferences') return sendHtml(res, 200, renderPreferencesHtml(await loadPreferences(repoPath)));
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
   if (method === 'GET' && url.pathname === '/api/progress') return sendJson(res, 200, buildProgressGraph(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/cards/history') return sendJson(res, 200, cardHistoryData(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/courses') return sendJson(res, 200, { courses: coursesSummary(await loadState(repoPath)) });
+  if (method === 'GET' && url.pathname === '/api/questions') return sendJson(res, 200, questionBankData(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/evidence-timeline') return sendJson(res, 200, buildEvidenceTimeline(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/evidence-graph') return sendJson(res, 200, buildEvidenceTimeline(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/preferences') return sendJson(res, 200, await loadPreferences(repoPath));
   if (method === 'POST' && url.pathname === '/api/cards/generate') {
-    const body = await readJson(req) as { count?: number; mode?: string; reason?: string };
+    const body = await readJson(req) as { count?: number; mode?: string; reason?: string; courseId?: string };
     const mode = body.mode === 'regenerate' ? 'regenerate' : 'more';
-    const next = generateCardBatch(await loadState(repoPath), await loadPreferences(repoPath), { count: body.count ?? 5, mode, reason: body.reason });
+    const next = generateCardBatch(await loadState(repoPath), await loadPreferences(repoPath), { count: body.count ?? 5, mode, reason: body.reason, courseId: body.courseId });
     await saveState(repoPath, next);
     const batch = next.cardBatches.at(-1)!;
     return sendJson(res, 200, { ok: true, batch, state: summarizeState(next) });
+  }
+  if (method === 'POST' && url.pathname === '/api/courses') {
+    const body = await readJson(req) as { id?: string; title?: string; goal?: string; enabledPlanes?: never; materialPaths?: string[]; docPaths?: string[]; conceptIds?: string[] };
+    if (!body.title || !body.goal) return sendJson(res, 400, { ok: false, error: 'title and goal are required' });
+    const next = upsertCourse(await loadState(repoPath), { id: body.id, title: body.title, goal: body.goal, enabledPlanes: body.enabledPlanes, materialPaths: body.materialPaths, docPaths: body.docPaths, conceptIds: body.conceptIds });
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, courses: coursesSummary(next) });
+  }
+  if (method === 'POST' && url.pathname === '/api/questions/draft') {
+    const body = await readJson(req) as { courseId?: string; provider?: string; model?: string; count?: number };
+    const next = draftQuestionsForCourse(await loadState(repoPath), { courseId: body.courseId, provider: body.provider as never, model: body.model, count: body.count ?? 6 });
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, questions: questionBankData(next) });
+  }
+  if (method === 'POST' && url.pathname === '/api/questions/status') {
+    const body = await readJson(req) as { id?: string; status?: 'accepted' | 'rejected' };
+    if (!body.id || !body.status) return sendJson(res, 400, { ok: false, error: 'id and status are required' });
+    const next = updateQuestionStatus(await loadState(repoPath), body.id, body.status);
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, questions: questionBankData(next) });
   }
   if (method === 'PUT' && url.pathname === '/api/preferences') {
     const body = await readJson(req) as Partial<UserPreferences>;
@@ -94,12 +125,22 @@ function cardHistoryData(state: TutorState) {
       title: item.title,
       status: item.status,
       conceptId: item.conceptId,
+      courseId: item.courseId,
+      questionId: item.questionId,
       batchId: item.batchId,
       generation: item.generation,
       source: item.source,
       archivedAt: item.archivedAt,
       events: state.learningEvents.filter((event) => event.itemId === item.id),
     })),
+  };
+}
+
+function questionBankData(state: TutorState) {
+  return {
+    summary: questionSummary(state),
+    batches: state.questionDraftBatches.slice().reverse(),
+    questions: state.questionBank.slice().reverse(),
   };
 }
 
@@ -133,8 +174,36 @@ function renderSessionHtml(state: TutorState, preferences: UserPreferences): str
       </section>
     </article>`).join('\n');
   const hero = `<section class="hero"><div><p class="eyebrow">Local code learning queue</p><h1>Review your recent code as flashcards</h1><p>Generate focused snippets, answer from the diff, and keep your history local.</p></div><div class="hero-card"><strong>${active.length}</strong><span>active cards</span><strong>${archived}</strong><span>archived cards</span></div></section>`;
-  const controls = `<section class="toolbar"><div><strong>Card queue</strong><p>${latestBatch ? `Latest batch ${escapeHtml(latestBatch.id)} · ${latestBatch.mode}` : 'No generated batch yet.'}</p><div class="progress-track"><span id="session-progress" style="width:0%"></span></div></div><div><button data-action="generate-cards" data-mode="more">Generate 5 more</button><button data-action="generate-cards" data-mode="regenerate">Regenerate 5</button><a class="ghost" href="/history">History</a><a class="ghost" href="/preferences">Preferences</a><a class="ghost" href="/progress">Progress</a></div></section>`;
+  const controls = `<section class="toolbar"><div><strong>Card queue</strong><p>${latestBatch ? `Latest batch ${escapeHtml(latestBatch.id)} · ${latestBatch.mode}` : 'No generated batch yet.'}</p><div class="progress-track"><span id="session-progress" style="width:0%"></span></div></div><div><button data-action="generate-cards" data-mode="more">Generate 5 more</button><button data-action="generate-cards" data-mode="regenerate">Regenerate 5</button><a class="ghost" href="/courses">Courses</a><a class="ghost" href="/questions">Questions</a><a class="ghost" href="/timeline">Timeline</a><a class="ghost" href="/graph">Graph</a><a class="ghost" href="/history">History</a></div></section>`;
   return pageShell('MergeLearn Tutor Review', `${hero}${controls}<section class="review-grid">${cards || '<p>No cards yet. Run ingest first.</p>'}</section>`, 'Ready');
+}
+
+function renderCoursesHtml(state: TutorState): string {
+  const courses = coursesSummary(state);
+  const cards = courses.map((course) => `<article class="mini-card course-card"><div class="card-topline"><span>${course.id}</span><span>${course.enabledPlanes.length} planes</span></div><h3>${escapeHtml(course.title)}</h3><p>${escapeHtml(course.goal)}</p><p><strong>Materials</strong>: ${escapeHtml(course.materialPaths.join(', '))}</p><p><strong>Docs</strong>: ${escapeHtml(course.docPaths.join(', '))}</p><p>${course.questionCount} questions · ${course.activeCardCount} active cards</p><a class="ghost" href="/questions">Question bank</a><a class="ghost" href="/timeline">Evidence timeline</a></article>`).join('');
+  return pageShell('MergeLearn Tutor Courses', `<section class="hero"><div><p class="eyebrow">Learning tracks</p><h1>Courses organize goals and material</h1><p>Each course defines what you are trying to learn, which repo paths/docs count as material, and which question categories should be prioritized.</p></div><div class="hero-card"><strong>${courses.length}</strong><span>courses</span><strong>${state.questionBank.filter((entry) => entry.status === 'accepted').length}</strong><span>accepted questions</span></div></section>${nav()}<section class="panel"><h2>Create or update a course</h2><div class="form-grid"><input id="course-id" placeholder="course id, e.g. learn-typescript" /><input id="course-title" placeholder="title" /><textarea id="course-goal" placeholder="goal: learn TypeScript from auth/session code"></textarea><input id="course-materials" placeholder="materials: src/**,tests/**" /><input id="course-docs" placeholder="docs: README.md,docs/**" /><button data-action="save-course">Save course</button></div></section><section class="panel"><h2>Course tracks</h2><div class="mini-grid">${cards || '<p>No courses yet. Use the form above or CLI to create one.</p>'}</div></section>`, 'Courses');
+}
+
+function renderQuestionsHtml(state: TutorState): string {
+  const data = questionBankData(state);
+  const batches = data.batches.map((batch) => `<article class="mini-card"><strong>${escapeHtml(batch.provider)}</strong><p>${escapeHtml(batch.id)} · ${batch.entryIds.length} drafts · network ${batch.networkUsed ? 'used' : 'not used'}</p><small>${escapeHtml(batch.createdAt)}</small></article>`).join('');
+  const questions = data.questions.map((entry) => `<article class="mini-card question-card"><div class="card-topline"><span>${escapeHtml(entry.status)}</span><span>${escapeHtml(entry.author.provider)}</span><span>${escapeHtml(entry.questionPlane.replace(/_/g, ' '))}</span></div><h3>${escapeHtml(entry.prompt)}</h3><p>course ${escapeHtml(entry.courseId ?? 'none')} · concept ${escapeHtml(entry.conceptId)}</p><details><summary>Expected answer</summary><p>${escapeHtml(entry.expectedAnswer)}</p></details><details><summary>${entry.evidence.length} evidence paths</summary><ul>${entry.evidence.map((item) => `<li>${escapeHtml(item.path)}${item.commit ? ` · ${escapeHtml(item.commit.slice(0, 8))}` : ''}</li>`).join('')}</ul></details>${entry.status === 'draft' ? `<button data-action="question-status" data-question="${escapeHtml(entry.id)}" data-status="accepted">Accept</button><button data-action="question-status" data-question="${escapeHtml(entry.id)}" data-status="rejected">Reject</button>` : ''}</article>`).join('');
+  const metrics = `<div class="stats"><div>${data.summary.draft}<span>draft</span></div><div>${data.summary.accepted}<span>accepted</span></div><div>${data.summary.rejected}<span>rejected</span></div><div>${data.summary.networkUsed ? 'yes' : 'no'}<span>network used</span></div></div>`;
+  return pageShell('MergeLearn Tutor Questions', `<section class="hero"><div><p class="eyebrow">Question bank</p><h1>Evidence-bound LLM-style questions</h1><p>Drafts can be generated by fake/local providers, then accepted into the question bank before cards use them. Remote LLM is still gated.</p></div></section>${nav()}${metrics}<section class="toolbar"><div><strong>Draft questions</strong><p>Use fake/local LLM-style drafting. Network remains off.</p></div><button data-action="draft-questions">Draft 5 fake LLM questions</button></section><section class="panel"><h2>Draft batches</h2><div class="mini-grid">${batches || '<p>No draft batches yet.</p>'}</div></section><section class="panel"><h2>Questions</h2><div class="mini-grid">${questions || '<p>No questions yet.</p>'}</div></section>`, 'Questions');
+}
+
+function renderTimelineHtml(state: TutorState): string {
+  const timeline = buildEvidenceTimeline(state);
+  const docs = timeline.nodes.filter((node) => node.type === 'doc');
+  const items = timeline.nodes.slice().reverse().map((node) => `<article class="timeline-row"><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? '')}</small></article>`).join('');
+  const metrics = `<div class="stats"><div>${timeline.summary.commit ?? 0}<span>commits</span></div><div>${timeline.summary.doc ?? 0}<span>docs</span></div><div>${timeline.summary.question ?? 0}<span>questions</span></div><div>${timeline.summary.card ?? 0}<span>cards</span></div></div>`;
+  return pageShell('MergeLearn Tutor Evidence Timeline', `<section class="hero"><div><p class="eyebrow">Evidence timeline</p><h1>GitLens-style learning provenance</h1><p>See the commits, files, docs, questions, cards, and answer events that explain why each study item exists.</p></div></section>${nav()}${metrics}<section class="panel"><h2>Document lens</h2><div class="mini-grid">${docs.map((doc) => `<article class="mini-card"><strong>${escapeHtml(doc.label)}</strong><p>${escapeHtml(doc.path ?? doc.subtitle ?? '')}</p><small>${timeline.edges.filter((edge) => edge.from === doc.id || edge.to === doc.id).length} links</small></article>`).join('') || '<p>No markdown docs found yet.</p>'}</div></section><section class="panel"><h2>Timeline</h2><div class="timeline-list">${items}</div></section>`, 'Timeline');
+}
+
+function renderGraphHtml(state: TutorState): string {
+  const timeline = buildEvidenceTimeline(state);
+  const groups = graphByType(timeline).map((group) => `<section class="graph-column"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, 12).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}</section>`).join('');
+  return pageShell('MergeLearn Tutor Graph', `<section class="hero"><div><p class="eyebrow">Learning graph</p><h1>Courses, docs, questions, cards</h1><p>This is a lightweight graph representation backed by /api/evidence-graph; it can later be swapped for vis-network or Cytoscape without changing the data model.</p></div><div class="hero-card"><strong>${timeline.nodes.length}</strong><span>nodes</span><strong>${timeline.edges.length}</strong><span>edges</span></div></section>${nav()}<section class="graph-grid">${groups}</section>`, 'Graph');
 }
 
 function renderProgressHtml(state: TutorState): string {
@@ -150,9 +219,11 @@ function renderProgressHtml(state: TutorState): string {
 function renderHistoryHtml(state: TutorState): string {
   const data = cardHistoryData(state);
   const batches = data.batches.map((batch) => `<article class="mini-card"><strong>${escapeHtml(batch.mode)}</strong><p>${escapeHtml(batch.id)} · ${batch.itemIds.length} created · ${batch.archivedItemIds.length} archived</p><small>${escapeHtml(batch.createdAt)}</small></article>`).join('');
-  const cards = data.cards.slice().reverse().map((card) => `<article class="mini-card ${card.status === 'archived' ? 'is-archived' : ''}"><div class="card-topline"><span>${escapeHtml(card.status)}</span><span>gen ${card.generation}</span><span>${escapeHtml(card.source)}</span></div><h3>${escapeHtml(card.title)}</h3><p>${escapeHtml(card.id)}${card.batchId ? ` · batch ${escapeHtml(card.batchId)}` : ''}</p><details><summary>${card.events.length} timeline events</summary><ul>${card.events.map((event) => `<li><strong>${escapeHtml(event.eventType)}</strong>${event.correct === undefined ? '' : ` · ${event.correct ? 'correct' : 'missed'}`} ${event.answerText ? `— ${escapeHtml(event.answerText)}` : ''}${event.note ? ` — ${escapeHtml(event.note)}` : ''}</li>`).join('')}</ul></details></article>`).join('');
+  const activeCards = data.cards.filter((card) => card.status !== 'archived');
+  const archivedCards = data.cards.filter((card) => card.status === 'archived');
+  const cardList = (cards: typeof data.cards) => cards.slice().reverse().map((card) => `<article class="mini-card ${card.status === 'archived' ? 'is-archived' : ''}"><div class="card-topline"><span>${escapeHtml(card.status)}</span><span>gen ${card.generation}</span><span>${escapeHtml(card.source)}</span></div><h3>${escapeHtml(card.title)}</h3><p>${escapeHtml(card.id)}${card.courseId ? ` · course ${escapeHtml(card.courseId)}` : ''}${card.questionId ? ` · question ${escapeHtml(card.questionId)}` : ''}</p><details><summary>${card.events.length} timeline events</summary><ul>${card.events.map((event) => `<li><strong>${escapeHtml(event.eventType)}</strong>${event.correct === undefined ? '' : ` · ${event.correct ? 'correct' : 'missed'}`} ${event.answerText ? `— ${escapeHtml(event.answerText)}` : ''}${event.note ? ` — ${escapeHtml(event.note)}` : ''}</li>`).join('')}</ul></details></article>`).join('');
   const metrics = `<div class="stats"><div>${data.summary.activeCards}<span>active</span></div><div>${data.summary.archivedCards}<span>archived</span></div><div>${data.summary.batches}<span>batches</span></div><div>${data.summary.events}<span>events</span></div></div>`;
-  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>Card history and batches</h1><p>See current and archived cards, generated batches, and answer/quality events without losing old learning evidence.</p></div></section>${nav()}${metrics}<section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet.</p>'}</div></section><section class="panel"><h2>Cards</h2><div class="mini-grid">${cards || '<p>No cards yet.</p>'}</div></section>`, 'History');
+  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}<section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History');
 }
 
 function renderPreferencesHtml(preferences: UserPreferences): string {
@@ -170,7 +241,7 @@ function renderPreferencesHtml(preferences: UserPreferences): string {
 }
 
 function nav(): string {
-  return '<nav class="nav"><a href="/">Review</a><a href="/history">History</a><a href="/progress">Progress</a><a href="/preferences">Preferences</a><a href="/api/cards/history">History JSON</a></nav>';
+  return '<nav class="nav"><a href="/">Review</a><a href="/courses">Courses</a><a href="/questions">Questions</a><a href="/timeline">Timeline</a><a href="/graph">Graph</a><a href="/history">History</a><a href="/progress">Progress</a><a href="/preferences">Preferences</a></nav>';
 }
 
 function pageShell(title: string, body: string, status: string): string {
@@ -188,7 +259,7 @@ a{color:#7dd3fc}.status{position:sticky;top:0;z-index:5;background:#020617cc;bac
 .nav,.toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:#0f172acc;border:1px solid #334155;border-radius:20px;padding:14px 16px;margin:18px 0;backdrop-filter:blur(18px)}.toolbar{justify-content:space-between}.toolbar p{margin:.3rem 0 0;color:#93a4b8}.nav a,.ghost,button{display:inline-flex;align-items:center;justify-content:center;margin:4px 4px 0 0;border-radius:999px;padding:10px 14px;font-weight:800;text-decoration:none;border:1px solid #3b526f;background:#182337;color:#e2e8f0;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,background .16s ease}
 button:first-child,.actions button:first-child{background:linear-gradient(135deg,#38bdf8,#22c55e);border:0;color:#03111f}.nav a:hover,.ghost:hover,button:hover,.nav a:focus-visible,.ghost:focus-visible,button:focus-visible{transform:translateY(-2px);border-color:#7dd3fc;box-shadow:0 12px 28px #38bdf833;background:#24344f;outline:0}button:first-child:hover,.actions button:first-child:hover{box-shadow:0 16px 34px #22c55e33}button:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
 .card,.panel{background:linear-gradient(180deg,#111827,#0f172a);border:1px solid #30415c;border-radius:24px;padding:24px;margin:18px 0;box-shadow:0 16px 50px #0005}.review-grid{display:grid;gap:20px}.card.completed{border-color:#22c55e88;background:linear-gradient(180deg,#10251d,#0f172a)}.card-topline{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}.card-topline span,.eyebrow{border:1px solid #315071;border-radius:999px;padding:5px 10px;color:#bae6fd;background:#0b2740;text-transform:uppercase;font-size:12px;font-weight:800;letter-spacing:.08em}.eyebrow{display:inline-flex}.why{color:#a8b3c7}.snippet-head{display:flex;justify-content:space-between;gap:12px;margin:14px 0 0;padding:10px 12px;background:#020617;border:1px solid #1e293b;border-radius:14px 14px 0 0;color:#93c5fd;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
-.question-box,.reveal-panel{border:1px solid #334155;border-radius:18px;background:#0b1220;padding:16px;margin:16px 0}.reveal-panel{background:#081b2d}.is-hidden{display:none}.label{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#67e8f9;font-weight:900;margin:0 0 8px}textarea,input{width:100%;border:1px solid #334155;border-radius:16px;background:#020617;color:#e2e8f0;padding:14px;font:inherit}textarea{min-height:96px;resize:vertical}.actions{display:flex;flex-wrap:wrap;gap:8px}.progress-track{height:9px;max-width:340px;background:#020617;border:1px solid #1e293b;border-radius:999px;margin-top:10px;overflow:hidden}.progress-track span{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#22c55e);transition:width .2s ease}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.stats div,.mini-card{border:1px solid #30415c;border-radius:20px;background:#0f172a;padding:18px}.stats div{font-size:30px;font-weight:900}.stats span{display:block;color:#93a4b8;font-size:13px;font-weight:700}.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.mini-card h3{margin:.5rem 0}.mini-card p,.mini-card small{color:#9fb0c8}.mini-card.is-archived{opacity:.74}.choices{display:grid;gap:12px;margin:14px 0}.choice{display:flex;gap:12px;padding:14px;border:1px solid #334155;border-radius:18px;background:#0b1220}.choice input{width:auto}.choice small{display:block;color:#93a4b8;margin-top:4px}pre{overflow:auto;background:#020617;border:1px solid #1e293b;border-radius:16px;padding:16px}
+.question-box,.reveal-panel{border:1px solid #334155;border-radius:18px;background:#0b1220;padding:16px;margin:16px 0}.reveal-panel{background:#081b2d}.is-hidden{display:none}.label{font-size:12px;text-transform:uppercase;letter-spacing:.1em;color:#67e8f9;font-weight:900;margin:0 0 8px}textarea,input{width:100%;border:1px solid #334155;border-radius:16px;background:#020617;color:#e2e8f0;padding:14px;font:inherit}textarea{min-height:96px;resize:vertical}.actions{display:flex;flex-wrap:wrap;gap:8px}.progress-track{height:9px;max-width:340px;background:#020617;border:1px solid #1e293b;border-radius:999px;margin-top:10px;overflow:hidden}.progress-track span{display:block;height:100%;background:linear-gradient(90deg,#38bdf8,#22c55e);transition:width .2s ease}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}.stats div,.mini-card{border:1px solid #30415c;border-radius:20px;background:#0f172a;padding:18px}.stats div{font-size:30px;font-weight:900}.stats span{display:block;color:#93a4b8;font-size:13px;font-weight:700}.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}.mini-card h3{margin:.5rem 0}.mini-card p,.mini-card small{color:#9fb0c8}.question-card h3{font-size:17px;line-height:1.18;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}.mini-card.is-archived{opacity:.74}.timeline-list{display:grid;gap:10px}.timeline-row{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(120px,.55fr);gap:12px;align-items:center;border:1px solid #263854;border-radius:16px;background:#0b1220;padding:12px}.timeline-row span{color:#67e8f9;text-transform:uppercase;font-size:12px;font-weight:900}.timeline-row small,.graph-node small{color:#9fb0c8}.graph-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}.graph-column{border:1px solid #30415c;border-radius:24px;background:#101827;padding:18px}.graph-node{border:1px solid #263854;border-radius:16px;background:#0b1220;padding:12px;margin:10px 0;display:grid;gap:6px}.graph-node strong{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.choices{display:grid;gap:12px;margin:14px 0}.choice{display:flex;gap:12px;padding:14px;border:1px solid #334155;border-radius:18px;background:#0b1220}.choice input{width:auto}.choice small{display:block;color:#93a4b8;margin-top:4px}pre{overflow:auto;background:#020617;border:1px solid #1e293b;border-radius:16px;padding:16px}
 @media(max-width:760px){main{padding:20px 14px 60px}.hero{grid-template-columns:1fr;padding:22px}.hero h1{font-size:34px}.toolbar{position:static}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 ${diffSnippetCss()}`;
 }
@@ -198,9 +269,10 @@ function script(): string {
 function status(text){document.getElementById('status').textContent=text;}
 async function post(path, body){const res=await fetch(path,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const json=await res.json();status(json.ok?'Saved locally':json.error||'Request failed');return json;}
 async function put(path, body){const res=await fetch(path,{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(body)});const json=await res.json();status(json.ok?'Preferences saved':'Could not save preferences');return json;}
+function csv(value){return String(value||'').split(',').map((item)=>item.trim()).filter(Boolean);}
 function updateProgress(){const cards=[...document.querySelectorAll('.recall-card')];const done=cards.filter((card)=>card.classList.contains('completed')).length;const bar=document.getElementById('session-progress');if(bar&&cards.length){bar.style.width=Math.round(done/cards.length*100)+'%';}}
 function markComplete(card,label){card.classList.add('completed');const state=card.querySelector('.card-state');if(state)state.textContent=label;card.querySelectorAll('.grade-actions button').forEach((button)=>button.disabled=true);updateProgress();}
-document.addEventListener('click',async(event)=>{const target=event.target;if(!(target instanceof Element))return;const button=target.closest('button');if(!button)return;if(button.dataset.action==='generate-cards'){button.disabled=true;status('Generating cards...');const json=await post('/api/cards/generate',{count:5,mode:button.dataset.mode,reason:'website button'});if(json.ok) location.reload();return;}if(button.dataset.action==='save-preferences'){const enabledPlanes=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippetLineCount=Number(document.getElementById('snippet-lines').value||14);const showExplanationsByDefault=document.getElementById('show-explanations').checked;await put('/api/preferences',{review:{enabledPlanes,snippetLineCount,showExplanationsByDefault}});return;}const card=button.closest('.recall-card');if(!card)return;const itemId=card.dataset.item;const textarea=card.querySelector('textarea');if(button.dataset.action==='reveal'){card.querySelector('.reveal-panel')?.classList.remove('is-hidden');status('Explanation revealed. Self-grade when ready.');return;}if(button.dataset.action==='answer-grade'){const correct=button.dataset.correct==='true';const answer=textarea.value.trim();if(correct&&!answer){status('Write an answer before marking this as known.');textarea.focus();return;}const json=await post('/answer',{itemId,answer:answer||'I missed this after reveal.',correct});if(json.ok)markComplete(card,correct?'knew it':'missed it');return;}if(button.dataset.action==='feedback'){const json=await post('/feedback',{itemId,eventType:button.dataset.event,note:'from local review session'});if(json.ok)markComplete(card,button.dataset.event==='marked_bad_card'?'quality issue':button.textContent.trim().toLowerCase());}});
+document.addEventListener('click',async(event)=>{const target=event.target;if(!(target instanceof Element))return;const button=target.closest('button');if(!button)return;if(button.dataset.action==='generate-cards'){button.disabled=true;status('Generating cards...');const json=await post('/api/cards/generate',{count:5,mode:button.dataset.mode,reason:'website button'});if(json.ok) location.reload();return;}if(button.dataset.action==='save-preferences'){const enabledPlanes=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippetLineCount=Number(document.getElementById('snippet-lines').value||14);const showExplanationsByDefault=document.getElementById('show-explanations').checked;await put('/api/preferences',{review:{enabledPlanes,snippetLineCount,showExplanationsByDefault}});return;}if(button.dataset.action==='save-course'){const title=document.getElementById('course-title').value;const goal=document.getElementById('course-goal').value;if(!title||!goal){status('Course title and goal are required.');return;}const json=await post('/api/courses',{id:document.getElementById('course-id').value,title,goal,materialPaths:csv(document.getElementById('course-materials').value),docPaths:csv(document.getElementById('course-docs').value)});if(json.ok)location.reload();return;}if(button.dataset.action==='draft-questions'){const json=await post('/api/questions/draft',{provider:'fake',count:5});if(json.ok)location.reload();return;}if(button.dataset.action==='question-status'){const json=await post('/api/questions/status',{id:button.dataset.question,status:button.dataset.status});if(json.ok)location.reload();return;}const card=button.closest('.recall-card');if(!card)return;const itemId=card.dataset.item;const textarea=card.querySelector('textarea');if(button.dataset.action==='reveal'){card.querySelector('.reveal-panel')?.classList.remove('is-hidden');status('Explanation revealed. Self-grade when ready.');return;}if(button.dataset.action==='answer-grade'){const correct=button.dataset.correct==='true';const answer=textarea.value.trim();if(correct&&!answer){status('Write an answer before marking this as known.');textarea.focus();return;}const json=await post('/answer',{itemId,answer:answer||'I missed this after reveal.',correct});if(json.ok)markComplete(card,correct?'knew it':'missed it');return;}if(button.dataset.action==='feedback'){const json=await post('/feedback',{itemId,eventType:button.dataset.event,note:'from local review session'});if(json.ok)markComplete(card,button.dataset.event==='marked_bad_card'?'quality issue':button.textContent.trim().toLowerCase());}});
 updateProgress();`;
 }
 
