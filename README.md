@@ -4,7 +4,7 @@ MergeLearn Tutor is a local-first code learning tool for developers who use AI h
 
 It is not a SaaS dashboard, PR blocker, or remote AI code reviewer. It is a personal knowledge-debt tool that runs locally, keeps state in your repository, and makes the evidence behind every question inspectable.
 
-![Review page](docs/assets/screenshots/review.png)
+![Workbench](docs/assets/screenshots/workbench.png)
 
 ## What it does
 
@@ -15,7 +15,7 @@ It is not a SaaS dashboard, PR blocker, or remote AI code reviewer. It is a pers
 - Preserves card history when you regenerate a queue.
 - Lets you create courses with goals, material paths, doc paths, and preferred question types.
 - Drafts fake/local LLM-style questions without network access, then lets you accept or reject them.
-- Shows a document/evidence timeline and graph of courses, docs, concepts, questions, cards, batches, and review events.
+- Shows a unified Map surface with local graph, provenance, and skill map modes.
 - Stores all local state in `.skilltrace/` so you can inspect or delete it at any time.
 
 ## Privacy stance
@@ -73,24 +73,65 @@ node dist/cli.js cards generate --repo /path/to/your/repo --count 5 --mode more
 node dist/cli.js session --repo /path/to/your/repo
 ```
 
-The session command prints a local URL. Open it in your browser to review cards, create courses, inspect history, and explore the graph.
+The session command prints a local URL. Open it in your browser to start focused practice, inspect the map, audit quality, and manage your learning plan.
 
-## Local browser workflow
+## Browser surfaces
 
-The browser session is the easiest way to understand the product.
+The browser session is organized into five primary surfaces. Each primary surface has secondary pages for legacy and advanced workflows.
 
-| Page | Purpose |
+### Workbench
+
+Command center: interactive map of local learning nodes with semantic filters (due, weak, study, evidence) and a detail drawer.
+
+![Workbench](docs/assets/screenshots/workbench.png)
+
+### Practice
+
+Focused one-card retrieval-practice loop. One card at a time: answer from memory, rate confidence, reveal, self-grade. Keyboard shortcuts: 1-5 confidence, Enter reveal, Y knew it, N missed it.
+
+![Practice](docs/assets/screenshots/practice.png)
+
+### Map
+
+Unified surface with three modes for inspecting relationships, provenance, and mastery:
+
+| Local graph | Provenance lane | Skill map |
+|---|---|---|
+| ![Local graph](docs/assets/screenshots/map-local-graph.png) | ![Provenance](docs/assets/screenshots/map-provenance.png) | ![Skill map](docs/assets/screenshots/map-skill-map.png) |
+
+Legacy graph, timeline, and progress pages are available as secondary navigation links.
+
+### Audit
+
+Consolidated quality view combining card history and question bank. All badges are deterministic and computed from local state.
+
+![Audit](docs/assets/screenshots/audit.png)
+
+### Setup
+
+Guided learning plan wizard with inline course creation. The Plan Builder walks you from empty repo to first focused practice in one page.
+
+![Plan Builder](docs/assets/screenshots/plan.png)
+
+## Legacy pages
+
+All original pages remain accessible from secondary navigation:
+
+| Review | Courses |
 |---|---|
-| Workbench | Command-center view for next action, metrics, and interactive learning map. |
-| Review | Answer active-recall cards from real code snippets. |
-| Courses | Define learning goals, material paths, docs, and question planes. |
-| Questions | Draft fake/local LLM-style questions and accept or reject them. |
-| Timeline | Inspect GitLens-style provenance from commits/docs to cards/events. |
-| Graph | See the local learning graph and raw node/edge projection. |
-| Study | Assign active-control/passive-review pilot conditions for local experiments. |
-| History | Review active, archived, regenerated, and answered cards without a wall of details. |
-| Progress | Track concept mastery and review status. |
-| Preferences | Choose the kinds of questions you want. |
+| ![Review](docs/assets/screenshots/review.png) | ![Courses](docs/assets/screenshots/courses.png) |
+
+| Questions | Timeline |
+|---|---|
+| ![Questions](docs/assets/screenshots/questions.png) | ![Timeline](docs/assets/screenshots/timeline.png) |
+
+| Graph | History |
+|---|---|
+| ![Graph](docs/assets/screenshots/graph.png) | ![History](docs/assets/screenshots/history.png) |
+
+| Progress | Preferences |
+|---|---|
+| ![Progress](docs/assets/screenshots/progress.png) | ![Preferences](docs/assets/screenshots/preferences.png) |
 
 Read the full page-by-page guide in `docs/USER_MANUAL.md`.
 
@@ -112,20 +153,6 @@ mergelearn-tutor cards generate --repo . --course learn-auth --count 5
 ```
 
 Accepted questions can drive future course cards. Drafting with `--provider fake` is deterministic and does not call a remote model.
-
-## Screenshots
-
-| Review | Courses |
-|---|---|
-| ![Review](docs/assets/screenshots/review.png) | ![Courses](docs/assets/screenshots/courses.png) |
-
-| Questions | Timeline |
-|---|---|
-| ![Questions](docs/assets/screenshots/questions.png) | ![Timeline](docs/assets/screenshots/timeline.png) |
-
-| Graph | History |
-|---|---|
-| ![Graph](docs/assets/screenshots/graph.png) | ![History](docs/assets/screenshots/history.png) |
 
 ## Core CLI commands
 
@@ -176,15 +203,13 @@ npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tu
 ## Documentation
 
 - `docs/USER_MANUAL.md` — page-by-page browser and CLI manual.
-- `docs/GITHUB_PUSH_READY.md` — repository push-readiness checklist.
-- `docs/PRIVACY.md` — local-first privacy model and outbound preview.
 - `docs/REVIEW_SESSION.md` — local browser session and API details.
 - `docs/CUSTOMIZATION.md` — preferences, API surface, and question settings.
+- `docs/PRIVACY.md` — local-first privacy model and outbound preview.
 - `docs/LEXICON.md` — repo-specific concept packs, aliases, and ignores.
 - `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer.
 - `docs/CARD_QUALITY.md` — card quality rules and dogfood notes.
 - `docs/EVALUATION.md` — evaluation harness and quality rubric.
-- `docs/BETA_READINESS.md` — packaging and release blockers.
 - `docs/ROADMAP.md` — current roadmap.
 
 ## Release status

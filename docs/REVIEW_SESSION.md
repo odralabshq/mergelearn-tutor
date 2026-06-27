@@ -38,6 +38,10 @@ Available actions:
 - record correct/incorrect explain-back answers
 - mark partly/unsure for near-term review
 - mark bad card or wrong evidence as card-quality feedback, not learner failure
+- focused one-card practice on `/practice`
+- unified map with local graph, provenance, and skill map modes on `/map`
+- consolidated quality audit on `/audit`
+- guided learning plan wizard on `/plan`
 - inspect card/batch history on `/history`
 - define learning tracks on `/courses`
 - draft and accept fake/local LLM-style questions on `/questions`
@@ -54,6 +58,11 @@ Endpoints:
 
 ```text
 GET  /
+GET  /practice
+GET  /map
+GET  /audit
+GET  /plan
+GET  /workbench
 GET  /courses
 GET  /questions
 GET  /timeline

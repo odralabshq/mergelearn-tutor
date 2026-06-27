@@ -40,7 +40,7 @@ The checklist is state-aware: completed steps show current counts, while incompl
 
 The `Plan Builder` page is the consolidated browser view for that same path. Open it when you want one place to answer: what evidence exists locally, which course goal is active, whether accepted questions are ready, and what the next review action should be. It also repeats the local-only guardrails: the plan view does not enable remote LLM calls, publish data, or run target repo code.
 
-Every browser page includes the shared app shell at the top. Use it to jump between Workbench, Review, Plan Builder, Courses, Questions, Timeline, Graph, Study, History, Progress, and Preferences, and to check the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
+Every browser page includes the shared app shell at the top. The primary navigation is organized into five intent-based surfaces: Workbench, Practice, Map, Audit, and Setup. Secondary navigation links below the primary bar expose legacy pages like Review, Study, Timeline, Graph, History, Progress, Courses, and Preferences. The shell also shows the current local plan snapshot: concept count, course count, accepted-question count, active-card count, and the next recommended action. The snapshot is read from the local `/api/state` endpoint in the running session; it does not make remote calls.
 
 ## 3. Workbench page
 
@@ -54,7 +54,7 @@ The first version intentionally uses existing local data only:
 - study assignments;
 - evidence graph links.
 
-Click filter chips such as `Due probes`, `Weak concepts`, `Study controls`, or `Evidence links` to focus the map. Click a visual node to populate the detail strip.
+Click filter chips such as `Due probes`, `Weak concepts`, `Study controls`, or `Evidence links` to focus the map. Each node carries semantic tags (`due`, `weak`, `study`, `evidence`) so filter counts match visible nodes. Click a visual node to populate a detail drawer with node information and a related-page link.
 
 API endpoint:
 
@@ -62,7 +62,42 @@ API endpoint:
 /api/workbench
 ```
 
-## 4. Review page
+## 4. Practice page
+
+![Practice page](assets/screenshots/practice.png)
+
+Use Practice for focused one-card retrieval practice. It shows one card at a time instead of a full queue.
+
+What you see:
+
+- one active recall card with a real code or diff snippet
+- the question prompt
+- an answer box
+- a confidence selector (1-5) that must be chosen before reveal
+- a reveal button
+- self-grade controls: I knew it, Partly, Missed it
+- quality feedback: Bad card, Wrong evidence
+- an outcome panel that updates after grading
+
+Keyboard shortcuts:
+
+- `1`-`5`: set confidence
+- `Enter`: reveal explanation
+- `Y`: mark as known
+- `N`: mark as missed
+
+How to use it:
+
+1. Read the snippet.
+2. Answer from memory.
+3. Choose your confidence level (1-5).
+4. Click `Reveal explanation`.
+5. Self-grade with `I knew it`, `Partly`, or `Missed it`.
+6. The outcome panel shows what was saved locally: confidence pairing, delayed probe scheduling, and weak-concept updates.
+
+The Practice page always hides the explanation before reveal, regardless of preferences, to preserve confidence-before-reveal calibration.
+
+## 21. Review page
 
 ![Review page](assets/screenshots/review.png)
 
@@ -347,7 +382,7 @@ Open:
 
 The local browser session is more interactive, but the dashboard is useful when you want a portable HTML artifact.
 
-## 14. Data files
+## 20. Data files
 
 MergeLearn Tutor writes local state under the target repository:
 
@@ -361,7 +396,7 @@ MergeLearn Tutor writes local state under the target repository:
 
 Delete `.skilltrace/` if you want to remove all tutor state from the target repository.
 
-## 15. Recommended daily workflow
+## 19. Recommended daily workflow
 
 ```bash
 mergelearn-tutor ingest --repo . --since 7d
@@ -369,7 +404,7 @@ mergelearn-tutor cards generate --repo . --count 5 --mode more
 mergelearn-tutor session --repo .
 ```
 
-Then spend 3-5 minutes on the Review page.
+Then spend 3-5 minutes on the Practice page (or Review page for the full queue).
 
 ## 16. Recommended weekly workflow
 
