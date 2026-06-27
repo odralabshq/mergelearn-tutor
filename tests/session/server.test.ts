@@ -92,6 +92,11 @@ describe('review session server', () => {
       expect(questionsHtml).toContain('Draft, accept, then review');
       expect(questionsHtml).toContain('Target course');
       expect(questionsHtml).toContain('learn-auth');
+      const timelineHtml = await fetch(`${review.url}/timeline`).then((res) => res.text());
+      expect(timelineHtml).toContain('Provenance filters');
+      expect(timelineHtml).toContain('Scan one evidence type at a time');
+      expect(timelineHtml).toContain('data-action="timeline-filter"');
+      expect(timelineHtml).toContain('data-node-type="question"');
       const timeline = await fetch(`${review.url}/api/evidence-timeline`).then((res) => res.json()) as { nodes: unknown[]; edges: unknown[] };
       expect(timeline.nodes.length).toBeGreaterThan(0);
       expect(timeline.edges.length).toBeGreaterThan(0);
@@ -99,6 +104,10 @@ describe('review session server', () => {
       expect(graphHtml).toContain('Courses, docs, questions, cards');
       expect(graphHtml).toContain('Evidence graph map');
       expect(graphHtml).toContain('commit/doc/file → concept');
+      expect(graphHtml).toContain('Graph focus');
+      expect(graphHtml).toContain('Drill into one lane before reading raw JSON');
+      expect(graphHtml).toContain('data-action="graph-filter"');
+      expect(graphHtml).toContain('data-graph-type="question"');
       expect(graphHtml).toContain('Open graph JSON');
       expect(graphHtml).toContain('Raw graph projection');
 

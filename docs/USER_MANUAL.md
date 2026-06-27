@@ -158,6 +158,8 @@ The timeline answers:
 
 The Document Lens highlights markdown and documentation material. This is how docs become first-class learning material rather than being hidden behind code diffs.
 
+Use `Provenance filters` when the timeline gets noisy. The filter chips hide unrelated rows locally so you can scan only docs, concepts, questions, cards, or review events before opening the raw JSON.
+
 CLI equivalent:
 
 ```bash
@@ -181,6 +183,8 @@ The graph groups nodes by type:
 - card batches
 - cards
 - review events
+
+The `Graph focus` panel gives a small drill-down mode before you open raw JSON: choose a node type/lane to hide unrelated grouped columns, then switch back to `All lanes` when you want the full map context.
 
 The `Raw graph projection` panel exposes the underlying nodes and edges. This keeps the UI simple while making the data model transparent and ready for a future richer graph renderer.
 

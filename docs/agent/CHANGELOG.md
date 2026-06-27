@@ -358,3 +358,21 @@ git diff --check
 - Captured fresh screenshots for Review, Courses, Questions, Timeline, Graph, History, Progress, and Preferences.
 - Added a current-state brief, source packet, research prompts, main recommendation packet, and design-system scaffold.
 - Main recommendation: consolidate the current surface around a Learning Plan/Plan Builder, add a deterministic Card Quality Gate, clarify repo/source targeting, and professionalize the app shell before adding more pages.
+
+## 2026-06-27 Autonomous cycle 6: Timeline and Graph local filters
+
+- Added a `Provenance filters` panel to `/timeline` so growing evidence timelines can be filtered locally by commits, files, docs, concepts, courses, questions, batches, cards, or events.
+- Added a `Graph focus` panel to `/graph` so users can drill into one grouped graph lane before opening raw JSON.
+- Added shared filter button styling and browser-side filter behavior without adding frontend dependencies or enabling remote calls.
+- Updated session-server regression coverage and the user manual for the Timeline/Graph filter affordances.
+- Captured before screenshots for all primary pages and after screenshots for the affected Timeline and Graph pages.
+
+Verified:
+
+```bash
+npm run check
+npm test -- --run tests/session/server.test.ts
+npm test
+npm run build
+git diff --check
+```
