@@ -40,6 +40,26 @@ describe('planner', () => {
     expect(state.learningItems[0]?.evidence[0]?.path).toBe('src/auth.ts');
   });
 
+  it('fences preserved unified snippets as diff even for markdown paths', () => {
+    const docsDiff: Concept = {
+      ...concept,
+      id: 'repo.timeline',
+      kind: 'repo_domain',
+      evidence: [{
+        commit: 'abc123',
+        path: 'docs/agent/TIMELINE.md',
+        label: 'timeline evidence',
+        snippet: '@@ -1,2 +1,3 @@\n # Timeline\n-old\n+new\n+preserved docs evidence',
+      }],
+    };
+    const state = mergeLearningState(createEmptyState('/repo'), [artifact], [docsDiff]);
+    const item = state.learningItems[0];
+
+    expect(item?.snippet.language).toBe('diff');
+    expect(item?.snippet.code).toContain('@@');
+    expect(item?.bodyMarkdown).toContain('```diff');
+  });
+
   it('records explain-back answers and adjusts mastery', () => {
     const state = mergeLearningState(createEmptyState('/repo'), [artifact], [concept]);
     const item = state.learningItems[0]!;

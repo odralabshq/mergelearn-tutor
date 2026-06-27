@@ -1,5 +1,6 @@
 import { CONCEPT_DEFINITIONS } from './conceptCatalog.js';
 import { analyzeTypeScriptAddedDiff } from './analyzers/typescriptAst.js';
+import { compactUnifiedDiffSnippet, diffForPath } from './diffEvidence.js';
 import type { CommitArtifact, Concept, EvidenceRef } from './types.js';
 import { unique } from './util.js';
 
@@ -11,21 +12,8 @@ const PATH_HINT_ONLY_CONCEPTS = new Set([
   'dev_workflow.dependency_management',
 ]);
 
-function diffLinesForFile(diff: string, path: string): string {
-  const marker = `diff --git a/${path} b/${path}`;
-  const start = diff.indexOf(marker);
-  if (start < 0) return diff;
-  const next = diff.indexOf('\ndiff --git ', start + marker.length);
-  return diff.slice(start, next < 0 ? undefined : next);
-}
-
 function snippetFor(definitionId: string, text: string): string | undefined {
-  const lines = text.split('\n').filter((line) => !line.startsWith('diff --git ') && !line.startsWith('index ') && !line.startsWith('--- ') && !line.startsWith('+++ '));
-  const firstChange = lines.findIndex((line) => line.startsWith('@@') || line.startsWith('+') || line.startsWith('-'));
-  if (firstChange < 0) return `Detected ${definitionId} from changed path or diff metadata.`;
-  const start = Math.max(0, firstChange - 3);
-  const compact = lines.slice(start, start + 18).join('\n').trim();
-  return compact || `Detected ${definitionId} from changed path or diff metadata.`;
+  return compactUnifiedDiffSnippet(text, { fallback: `Detected ${definitionId} from changed path or diff metadata.` });
 }
 
 function repoDomainConcepts(artifact: CommitArtifact): Concept[] {
@@ -36,7 +24,7 @@ function repoDomainConcepts(artifact: CommitArtifact): Concept[] {
       const label = part.toLowerCase();
       const id = `repo.${label}`;
       const entry = terms.get(id) ?? { label, evidence: [] };
-      entry.evidence.push({ commit: artifact.externalId, path: filePath, label: 'repo term from changed path', snippet: snippetFor('repo_domain', diffLinesForFile(artifact.diff, filePath)) });
+      entry.evidence.push({ commit: artifact.externalId, path: filePath, label: 'repo term from changed path', snippet: snippetFor('repo_domain', diffForPath(artifact.diff, filePath)) });
       terms.set(id, entry);
     }
   }
@@ -58,12 +46,12 @@ export function extractConcepts(artifacts: CommitArtifact[]): Concept[] {
   for (const artifact of artifacts) {
     const astFindingsByPath = new Map<string, ReturnType<typeof analyzeTypeScriptAddedDiff>>();
     for (const filePath of artifact.changedFiles) {
-      astFindingsByPath.set(filePath, analyzeTypeScriptAddedDiff(filePath, diffLinesForFile(artifact.diff, filePath)));
+      astFindingsByPath.set(filePath, analyzeTypeScriptAddedDiff(filePath, diffForPath(artifact.diff, filePath)));
     }
     for (const def of CONCEPT_DEFINITIONS) {
       const evidence: EvidenceRef[] = [];
       for (const filePath of artifact.changedFiles) {
-        const fileDiff = diffLinesForFile(artifact.diff, filePath);
+        const fileDiff = diffForPath(artifact.diff, filePath);
         const astFindings = astFindingsByPath.get(filePath) ?? [];
         const astConceptIds = new Set(astFindings.map((finding) => finding.conceptId));
         const pathMatched = PATH_HINT_ONLY_CONCEPTS.has(def.id) && def.pathHints.some((pattern) => pattern.test(filePath));

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { compactUnifiedDiffSnippet, diffForPath } from './diffEvidence.js';
 import type { CommitArtifact, Concept, ConceptKind, Correction, Difficulty, EvidenceRef, TutorState } from './types.js';
 
 export type LexiconConcept = {
@@ -132,11 +133,13 @@ function customEvidence(artifacts: CommitArtifact[], concept: LexiconConcept, le
   const evidence: EvidenceRef[] = [];
   for (const artifact of artifacts) {
     for (const filePath of artifact.changedFiles) {
-      const text = `${filePath}\n${artifact.title}\n${artifact.body}\n${artifact.diff}`.toLowerCase();
+      const fileDiff = diffForPath(artifact.diff, filePath);
+      const text = `${filePath}\n${fileDiff}`.toLowerCase();
       const pathMatched = (concept.pathPatterns ?? []).some((pattern) => pathMatches(filePath, pattern));
       const termMatched = terms.some((term) => text.includes(term));
       if ((pathMatched || termMatched) && !isIgnored(concept.id, filePath, text, lexicon)) {
-        evidence.push({ commit: artifact.externalId, path: filePath, label: 'local lexicon match', snippet: termMatched ? `Matched one of: ${concept.terms?.join(', ')}` : `Matched path pattern: ${concept.pathPatterns?.join(', ')}` });
+        const fallback = termMatched ? `Matched one of: ${concept.terms?.join(', ')}` : `Matched path pattern: ${concept.pathPatterns?.join(', ')}`;
+        evidence.push({ commit: artifact.externalId, path: filePath, label: 'local lexicon match', snippet: compactUnifiedDiffSnippet(fileDiff, { fallback }) });
       }
     }
   }

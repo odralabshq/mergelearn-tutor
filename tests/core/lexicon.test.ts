@@ -40,6 +40,38 @@ describe('repo lexicon', () => {
     expect(concepts[0]?.evidence[0]?.path).toBe('src/core/queue.ts');
   });
 
+  it('preserves per-file markdown diff snippets for custom lexicon evidence', () => {
+    const mixed: CommitArtifact = {
+      id: 'a2',
+      type: 'commit',
+      externalId: 'def456',
+      title: 'document auth timeline',
+      body: '',
+      changedFiles: ['src/other.ts', 'docs/guides/auth.md'],
+      diff: [
+        'diff --git a/src/other.ts b/src/other.ts',
+        '@@ -1 +1 @@',
+        '+export const unrelated = true;',
+        'diff --git a/docs/guides/auth.md b/docs/guides/auth.md',
+        '@@ -1,2 +1,3 @@',
+        ' # Auth',
+        '-old note',
+        '+auth timeline note',
+        '+new evidence',
+      ].join('\n'),
+    };
+    const lexicon = parseLexicon({ concepts: [{ id: 'repo.auth_timeline', label: 'Auth timeline', terms: ['auth timeline'] }] });
+
+    const concepts = applyLexicon([mixed], [], lexicon);
+    const evidence = concepts[0]?.evidence;
+
+    expect(evidence).toHaveLength(1);
+    expect(evidence?.[0]?.path).toBe('docs/guides/auth.md');
+    expect(evidence?.[0]?.snippet).toContain('@@');
+    expect(evidence?.[0]?.snippet).toContain('+auth timeline note');
+    expect(evidence?.[0]?.snippet).not.toContain('Matched one of');
+  });
+
   it('lets aliases override extracted labels', () => {
     const lexicon: RepoLexicon = { version: 1, concepts: [], aliases: [{ conceptId: authConcept.id, label: 'Session access gate' }], ignores: [] };
 

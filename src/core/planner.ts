@@ -1,6 +1,7 @@
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import type { CardBatchMode, CodeSnippet, CommitArtifact, Concept, ConceptState, LearningItem, LearningItemSource, QuestionPlane, TutorState, UserPreferences } from './types.js';
 import { applyCorrections, recordReviewEvent } from './events.js';
+import { isUnifiedDiffSnippet } from './diffEvidence.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
 function importanceFor(concept: Concept): number {
@@ -139,12 +140,13 @@ function planeFor(concept: Concept, preferences: UserPreferences): QuestionPlane
 function snippetFor(concept: Concept, preferences: UserPreferences): CodeSnippet {
   const evidence = rankedEvidence(concept)[0] ?? { path: 'unknown', label: concept.label };
   const raw = evidence.snippet?.trim() || `// Evidence path: ${evidence.path}\n// Open this file and explain the highlighted concept: ${concept.label}`;
+  const code = trimSnippet(raw, preferences.review.snippetLineCount);
   return {
     path: evidence.path,
     label: evidence.label,
-    language: languageForPath(evidence.path),
+    language: languageForSnippet(evidence.path, code),
     commit: evidence.commit,
-    code: trimSnippet(raw, preferences.review.snippetLineCount),
+    code,
   };
 }
 
@@ -161,6 +163,11 @@ function languageForPath(path: string): string | undefined {
   if (/\.ya?ml$/.test(path)) return 'yaml';
   if (/\.md$/.test(path)) return 'markdown';
   return undefined;
+}
+
+function languageForSnippet(path: string, snippet: string): string | undefined {
+  if (isUnifiedDiffSnippet(snippet)) return 'diff';
+  return languageForPath(path);
 }
 
 type CreateCardBatchInput = {
