@@ -1,7 +1,7 @@
 import type { Correction, CorrectionType, LearningEvent, ReviewEventType, TutorState } from './types.js';
 import { addDays, clamp, nowIso, stableId } from './util.js';
 
-const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'answered', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'corrected', 'deferred']);
+const VALID_REVIEW_EVENTS = new Set<ReviewEventType>(['shown', 'answered', 'skipped', 'marked_unsure', 'marked_wrong', 'marked_correct', 'marked_useful', 'marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate', 'corrected', 'deferred']);
 const VALID_CORRECTION_TYPES = new Set<CorrectionType>(['wrong_concept', 'wrong_evidence', 'duplicate', 'better_label', 'not_useful', 'pin_important']);
 
 export type ReviewEventInput = {
@@ -91,6 +91,7 @@ function correctionAwarePriority(conceptState: TutorState['conceptStates'][numbe
 
 function updateConceptStateForEvent<T extends TutorState['conceptStates'][number]>(conceptState: T, eventType: ReviewEventType, correct: boolean | undefined, now: string): T {
   if (eventType === 'shown') return conceptState;
+  if (eventType === 'marked_bad_card' || eventType === 'marked_wrong_evidence' || eventType === 'marked_duplicate') return conceptState;
   if (eventType === 'marked_useful') return { ...conceptState, importance: clamp(conceptState.importance + 0.1, 0, 1), repoRelevance: clamp(conceptState.repoRelevance + 0.1, 0, 1) };
   if (eventType === 'skipped' || eventType === 'marked_unsure' || eventType === 'deferred') return { ...conceptState, failedCount: conceptState.failedCount + 1, confidence: clamp(conceptState.confidence - 0.08, 0, 1), nextReviewAt: addDays(now, 1) };
   if (eventType === 'marked_wrong') return { ...conceptState, failedCount: conceptState.failedCount + 1, masteryEstimate: clamp(conceptState.masteryEstimate - 0.1, 0, 1), confidence: clamp(conceptState.confidence - 0.15, 0, 1), nextReviewAt: addDays(now, 1) };

@@ -40,10 +40,11 @@ Escalate via Telegram if needed:
 11. Batch 10: manual rating persistence and quality feedback loop. Implemented.
 12. Batch 11: snippet-first learning UX, preferences onboarding, and progress map. Implemented.
 13. Batch 12: flashcard generation lifecycle, diff snippets, and website polish. Implemented.
+14. Batch 13: active recall flow, card history, unified page design, and richer diff context. Implemented.
 
 ## Active slice
 
-Batch 12 flashcard generation and website polish is implemented and locally dogfooded. Public release remains blocked on human decisions for product name, license, distribution channel, and any remote enrichment approval.
+Batch 13 is implemented and locally dogfooded. The review demo now includes staged active recall, card-quality events that do not reduce mastery, `/history`, consistent page design, hover-highlighted buttons, and richer unified-diff snippets.
 
 ## Verification baseline
 
@@ -71,4 +72,4 @@ Batch 12 made the website and card lifecycle more product-ready:
 - screenshot iteration removed a duplicate heading and verified the final layout had no browser console errors
 - dogfood on `/tmp/mergelearn-live-demo` verified CLI generation, API generation, archive counts, pages, and dashboard output
 
-Next planned slice: optional card-history browsing, keyboard shortcuts, or richer graph interactivity. Public beta/publish still requires human decisions first.
+Next planned slice after Batch 13: learning tracks/question bank and evidence timeline. Public beta/publish still requires human decisions first.

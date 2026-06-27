@@ -27,17 +27,18 @@ The page shows snippet-first cards with:
 - evidence file path
 - bounded code snippet
 - concrete question
-- revealable explanation if the learner gets stuck
-- explain-back text box
-- action buttons
+- active-recall answer box
+- reveal explanation button
+- self-grade actions: I knew it, Partly, Missed it, Bad card, Wrong evidence
 - queue controls to generate more cards or regenerate the active queue
 
 Available actions:
 
-- save answer
-- unsure
-- bad card
-- useful
+- reveal explanation locally without recording mastery
+- record correct/incorrect explain-back answers
+- mark partly/unsure for near-term review
+- mark bad card or wrong evidence as card-quality feedback, not learner failure
+- inspect card/batch history on `/history`
 
 All actions POST to the local server and update `.skilltrace/state.json`.
 
@@ -49,9 +50,11 @@ Endpoints:
 
 ```text
 GET  /
+GET  /history
 GET  /progress
 GET  /state.json
 GET  /api/state
+GET  /api/cards/history
 GET  /api/progress
 GET  /api/preferences
 PUT  /api/preferences

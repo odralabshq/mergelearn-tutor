@@ -28,8 +28,25 @@ describe('concept extraction', () => {
   });
 
   it('labels repo-domain concepts with the inferred term, not the first evidence filename', () => {
-    const concepts = extractConcepts([artifact('diff --git a/docs/agent/AGENT_STATE.md b/docs/agent/AGENT_STATE.md\n+state\n', ['docs/agent/AGENT_STATE.md'])]);
+    const concepts = extractConcepts([artifact('diff --git a/docs/agent/AGENT_STATE.md b/docs/agent/AGENT_STATE.md\n@@ -0,0 +1,2 @@\n+state\n+agent docs\n', ['docs/agent/AGENT_STATE.md'])]);
     expect(concepts.find((item) => item.id === 'repo.docs')?.label).toBe('docs');
     expect(concepts.find((item) => item.id === 'repo.agent')?.label).toBe('agent');
+    expect(concepts.find((item) => item.id === 'repo.agent')?.evidence[0]?.snippet).toContain('@@');
+  });
+
+  it('preserves compact unified diff context for matched evidence snippets', () => {
+    const diff = [
+      'diff --git a/src/auth/session.ts b/src/auth/session.ts',
+      '@@ -1,5 +1,6 @@',
+      ' export type SessionEvent = { type: "login"; token: string } | { type: "logout" };',
+      '-export function validateSession(token: string): boolean { return true; }',
+      '+export async function validateSession(token: string): Promise<boolean> { return token.length > 0; }',
+    ].join('\n');
+    const concepts = extractConcepts([artifact(diff)]);
+    const snippet = concepts.find((item) => item.id === 'security.auth_boundary')?.evidence[0]?.snippet ?? '';
+    expect(snippet).toContain('@@ -1,5 +1,6 @@');
+    expect(snippet).toContain('-export function validateSession');
+    expect(snippet).toContain('+export async function validateSession');
+    expect(snippet).not.toContain('diff --git');
   });
 });

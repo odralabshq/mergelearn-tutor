@@ -20,8 +20,12 @@ function diffLinesForFile(diff: string, path: string): string {
 }
 
 function snippetFor(definitionId: string, text: string): string | undefined {
-  const cleaned = text.split('\n').filter((line) => line.startsWith('+') && !line.startsWith('+++')).slice(0, 12).join('\n');
-  return cleaned || `Detected ${definitionId} from changed path or diff metadata.`;
+  const lines = text.split('\n').filter((line) => !line.startsWith('diff --git ') && !line.startsWith('index ') && !line.startsWith('--- ') && !line.startsWith('+++ '));
+  const firstChange = lines.findIndex((line) => line.startsWith('@@') || line.startsWith('+') || line.startsWith('-'));
+  if (firstChange < 0) return `Detected ${definitionId} from changed path or diff metadata.`;
+  const start = Math.max(0, firstChange - 3);
+  const compact = lines.slice(start, start + 18).join('\n').trim();
+  return compact || `Detected ${definitionId} from changed path or diff metadata.`;
 }
 
 function repoDomainConcepts(artifact: CommitArtifact): Concept[] {
@@ -32,7 +36,7 @@ function repoDomainConcepts(artifact: CommitArtifact): Concept[] {
       const label = part.toLowerCase();
       const id = `repo.${label}`;
       const entry = terms.get(id) ?? { label, evidence: [] };
-      entry.evidence.push({ commit: artifact.externalId, path: filePath, label: 'repo term from changed path' });
+      entry.evidence.push({ commit: artifact.externalId, path: filePath, label: 'repo term from changed path', snippet: snippetFor('repo_domain', diffLinesForFile(artifact.diff, filePath)) });
       terms.set(id, entry);
     }
   }

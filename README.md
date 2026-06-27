@@ -75,7 +75,8 @@ mergelearn-tutor review --repo . --count 5
 mergelearn-tutor cards generate --repo . --count 5 --mode more
 mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
 mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
-mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "too generic"
+mergelearn-tutor feedback --repo . --item <id> --event marked_bad_card --note "wrong evidence or vague prompt"
+mergelearn-tutor feedback --repo . --item <id> --event marked_wrong --note "I missed this concept"
 mergelearn-tutor rate --repo . --item <id> --answerability 5 --usefulness 4 --note "clear and useful"
 mergelearn-tutor ratings --repo .
 mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"

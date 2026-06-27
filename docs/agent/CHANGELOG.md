@@ -182,3 +182,30 @@ npm run smoke
 npm run smoke:package
 npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-batch12-fixtures
 ```
+
+## 2026-06-27 Batch 13
+
+- Added staged active-recall review flow: answer first, reveal explanation, then self-grade as known, partly, missed, or card-quality issue.
+- Added hover/focus button highlights and shared navigation/design treatment across review, history, progress, and preferences pages.
+- Added `/history` and `GET /api/cards/history` for active/archived cards, batches, and per-card events.
+- Split card-quality feedback from learner failure: `marked_bad_card`, `marked_wrong_evidence`, and `marked_duplicate` do not reduce mastery.
+- Preserved compact unified diff snippets with hunk headers, deletions, additions, and repo-domain snippets.
+- Added focused tests for card-quality semantics, unified-diff extraction, and session history APIs.
+
+Verified:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run eval
+npm run smoke
+npm run smoke:package
+npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-batch13-fixtures
+```
+
+Demo dogfood:
+
+- Demo repo: `/tmp/mergelearn-demo-batch13`
+- Verified active/archived cards, batch history, markdown doc evidence, unified diff hunk/deletion snippets, and card-quality feedback that did not increment failed count.
+- Browser-reviewed `/`, `/history`, `/progress`, and `/preferences`; console had no JS errors.

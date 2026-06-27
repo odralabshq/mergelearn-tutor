@@ -36,9 +36,20 @@ describe('review session server', () => {
       expect(html).toContain('MergeLearn Tutor Review');
       expect(html).toContain('export function auth');
       expect(html).toContain('What happens in this snippet?');
+      expect(html).toContain('Reveal explanation');
+      expect(html).toContain('I knew it');
+      expect(html).toContain('marked_bad_card');
 
       const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
       expect(progress.nodes.length).toBeGreaterThan(0);
+
+      const historyHtml = await fetch(`${review.url}/history`).then((res) => res.text());
+      expect(historyHtml).toContain('Card history and batches');
+      expect(historyHtml).toContain('History JSON');
+
+      const history = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { summary: { activeCards: number }; cards: unknown[]; batches: unknown[] };
+      expect(history.summary.activeCards).toBe(1);
+      expect(history.cards).toHaveLength(1);
 
       const preferences = await fetch(`${review.url}/api/preferences`).then((res) => res.json()) as { review: { mode: string } };
       expect(preferences.review.mode).toBe('snippet_first');
@@ -67,6 +78,10 @@ describe('review session server', () => {
       const feedback = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_useful' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
       expect(feedback.ok).toBe(true);
       expect(feedback.state.events).toBe(2);
+
+      const badCard = await fetch(`${review.url}/feedback`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ itemId: 'item_auth', eventType: 'marked_bad_card' }) }).then((res) => res.json()) as { ok: boolean; state: { events: number } };
+      expect(badCard.ok).toBe(true);
+      expect(badCard.state.events).toBe(3);
 
       const correction = await fetch(`${review.url}/correct`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ conceptId: 'repo.auth', correctionType: 'better_label', replacementLabel: 'session auth' }) }).then((res) => res.json()) as { ok: boolean; state: { corrections: number } };
       expect(correction.ok).toBe(true);

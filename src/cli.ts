@@ -265,9 +265,9 @@ program.command('answer')
   });
 
 program.command('feedback')
-  .description('Mark a card useful, wrong, skipped, unsure, or deferred')
+  .description('Mark a card useful, wrong, skipped, unsure, deferred, or quality-problem')
   .requiredOption('--item <id>', 'learning item id')
-  .requiredOption('--event <type>', 'shown, skipped, marked_unsure, marked_wrong, marked_useful, marked_correct, or deferred')
+  .requiredOption('--event <type>', 'shown, skipped, marked_unsure, marked_wrong, marked_useful, marked_bad_card, marked_wrong_evidence, marked_duplicate, marked_correct, or deferred')
   .option('-r, --repo <path>', 'repository path', process.cwd())
   .option('--note <text>', 'optional note')
   .action(async (options: { repo: string; item: string; event: string; note?: string }) => {

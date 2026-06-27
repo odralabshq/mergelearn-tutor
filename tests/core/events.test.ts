@@ -18,7 +18,8 @@ function state(): TutorState {
     artifacts: [],
     concepts: [{ id: 'repo.auth', label: 'auth', kind: 'repo_domain', description: 'Auth term', difficulty: 'beginner', parentIds: [], prerequisiteIds: [], relatedIds: [], evidence: [{ path: 'src/auth.ts', label: 'evidence' }] }],
     conceptStates: [{ conceptId: 'repo.auth', exposureCount: 1, activeRecallCount: 0, correctCount: 0, failedCount: 0, hintCount: 0, masteryEstimate: 0.2, confidence: 0.2, importance: 0.6, repoRelevance: 0.5 }],
-    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', title: 'auth in your recent work', bodyMarkdown: 'body', prompt: 'Explain auth clearly from evidence.', expectedFocus: ['auth'], evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z' }],
+    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'auth in your recent work', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: '+export function auth() { return true; }' }, bodyMarkdown: 'body', prompt: 'Explain auth clearly from evidence.', explanationMarkdown: 'Auth controls access.', expectedFocus: ['auth'], evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }],
+    cardBatches: [],
     learningEvents: [],
     corrections: [],
     manualRatings: [],
@@ -26,10 +27,16 @@ function state(): TutorState {
 }
 
 describe('review events and corrections', () => {
-  it('records feedback events and updates concept state', () => {
-    const next = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_wrong', note: 'bad card' });
+  it('records card-quality feedback without reducing learner mastery', () => {
+    const next = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_bad_card', note: 'bad card' });
     expect(next.learningEvents).toHaveLength(1);
-    expect(next.learningEvents[0]?.eventType).toBe('marked_wrong');
+    expect(next.learningEvents[0]?.eventType).toBe('marked_bad_card');
+    expect(next.conceptStates[0]?.failedCount).toBe(0);
+    expect(next.conceptStates[0]?.masteryEstimate).toBe(0.2);
+  });
+
+  it('records wrong answers as learner misses', () => {
+    const next = recordReviewEvent(state(), { itemId: 'item_auth', eventType: 'marked_wrong', note: 'learner missed it' });
     expect(next.conceptStates[0]?.failedCount).toBe(1);
     expect(next.conceptStates[0]?.masteryEstimate).toBeLessThan(0.2);
   });

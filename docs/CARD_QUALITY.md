@@ -28,6 +28,8 @@ Every new card should include:
 6. Expected focus terms must include both conceptual requirements and evidence paths.
 7. Regenerating cards archives/supersedes old active cards; it must not delete answer history, ratings, or events.
 8. Website snippets should render as diff-like blocks with visible line numbers and add/delete markers.
+9. Snippet extraction should preserve compact unified diff context: hunk headers, additions, deletions, and nearby context lines.
+10. Card-quality feedback such as `marked_bad_card` or `marked_wrong_evidence` must not reduce learner mastery; only wrong answers should.
 
 ## Current card fields
 
