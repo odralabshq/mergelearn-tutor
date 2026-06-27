@@ -70,10 +70,14 @@ describe('review session server', () => {
       expect(workbenchHtml).toContain('Learning Workbench');
       expect(workbenchHtml).toContain('Interactive map');
       expect(workbenchHtml).toContain('data-action="workbench-filter"');
-      const workbench = await fetch(`${review.url}/api/workbench`).then((res) => res.json()) as { metrics: { activeCards: number }; filters: unknown[]; nodes: unknown[] };
+      expect(workbenchHtml).toContain('class="workbench-drawer"');
+      expect(workbenchHtml).toContain('data-node-tags=');
+      expect(workbenchHtml).toContain('data-node-detail=');
+      const workbench = await fetch(`${review.url}/api/workbench`).then((res) => res.json()) as { metrics: { activeCards: number }; filters: Array<{ id: string; count: number }>; nodes: Array<{ tags: string[]; detail: string }> };
       expect(workbench.metrics.activeCards).toBe(1);
       expect(workbench.filters.length).toBeGreaterThan(0);
       expect(workbench.nodes.length).toBeGreaterThan(0);
+      expect(workbench.nodes.every((node) => Array.isArray(node.tags) && node.detail.length > 0)).toBe(true);
 
       const planHtml = await fetch(`${review.url}/plan`).then((res) => res.text());
       expect(planHtml).toContain('Plan Builder connects setup to daily review');

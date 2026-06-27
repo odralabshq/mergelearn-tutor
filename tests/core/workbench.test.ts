@@ -32,7 +32,14 @@ describe('workbench summary', () => {
     expect(summary.nextAction).toMatchObject({ label: 'Complete due delayed probe', href: '/api/delayed-probes' });
     expect(summary.metrics).toMatchObject({ activeCards: 1, dueDelayedProbes: 1, weakConcepts: 1, studyPending: 1 });
     expect(summary.filters.map((filter) => filter.id)).toEqual(['due', 'weak', 'study', 'evidence']);
-    expect(summary.nodes.some((node) => node.type === 'concept' && node.status === 'needs_review')).toBe(true);
+    for (const filter of summary.filters) {
+      expect(summary.nodes.filter((node) => node.tags.includes(filter.id)).length).toBeGreaterThanOrEqual(filter.count > 0 ? 1 : 0);
+    }
+    expect(summary.nodes.some((node) => node.type === 'concept' && node.status === 'needs_review' && node.tags.includes('weak'))).toBe(true);
+    expect(summary.nodes.some((node) => node.type === 'card' && node.tags.includes('due'))).toBe(true);
+    expect(summary.nodes.some((node) => node.type === 'study' && node.tags.includes('study'))).toBe(true);
+    expect(summary.nodes.some((node) => node.type === 'evidence' && node.tags.includes('evidence'))).toBe(true);
+    expect(summary.nodes.every((node) => node.detail.length > 0)).toBe(true);
     expect(summary.links.some((link) => link.to === 'card:item_auth')).toBe(true);
   });
 });
