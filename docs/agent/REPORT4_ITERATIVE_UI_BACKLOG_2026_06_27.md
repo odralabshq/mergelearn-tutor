@@ -120,6 +120,8 @@ Acceptance:
 
 ### Wave 6: Audit and quality pipeline
 
+Status: implemented in this iteration. Verification evidence is in `docs/agent/report4-ui-iteration-2026-06-27/wave6-audit-quality.md`.
+
 Tasks:
 1. Turn History into filterable Audit.
 2. Recast Questions as a quality pipeline: draft -> review -> accepted -> card-ready.

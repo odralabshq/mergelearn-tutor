@@ -69,6 +69,7 @@ describe('review session server', () => {
       expect(primaryNav).toContain('href="/practice"');
       expect(primaryNav).toContain('href="/map"');
       expect(primaryNav).toContain('Map');
+      expect(primaryNav).toContain('href="/audit"');
       expect(primaryNav).toContain('Audit');
       expect(primaryNav).toContain('Setup');
       expect(primaryNav).not.toContain('Plan Builder');
@@ -107,6 +108,15 @@ describe('review session server', () => {
       const mapSkill = await fetch(`${review.url}/map?mode=skill-map`).then((res) => res.text());
       expect(mapSkill).toContain('Skill map');
       expect(mapSkill).toContain('Progress guide');
+
+      const auditHtml = await fetch(`${review.url}/audit`).then((res) => res.text());
+      expect(auditHtml).toContain('Audit and quality');
+      expect(auditHtml).toContain('One audit view for cards, questions, and study events');
+      expect(auditHtml).toContain('Quality pipeline');
+      expect(auditHtml).toContain('From drafted questions to accepted review cards');
+      expect(auditHtml).toContain('Source audit');
+      expect(auditHtml).toContain('Broad repo cards');
+      expect(auditHtml).toContain('Calibrated answers');
 
       const workbenchHtml = await fetch(`${review.url}/workbench`).then((res) => res.text());
       expect(workbenchHtml).toContain('Learning Workbench');
