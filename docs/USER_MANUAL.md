@@ -38,6 +38,8 @@ The Review page also includes a `Start here` panel. Use it as the browser checkl
 
 The checklist is state-aware: completed steps show current counts, while incomplete steps point to the next local CLI command or browser page.
 
+The `Plan Builder` page is the consolidated browser view for that same path. Open it when you want one place to answer: what evidence exists locally, which course goal is active, whether accepted questions are ready, and what the next review action should be. It also repeats the local-only guardrails: the plan view does not enable remote LLM calls, publish data, or run target repo code.
+
 ## 3. Review page
 
 ![Review page](assets/screenshots/review.png)

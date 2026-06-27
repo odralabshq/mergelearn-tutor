@@ -40,3 +40,26 @@ Focused verification passed:
 npm test -- --run tests/core/planner.test.ts tests/core/events.test.ts
 npm run check
 ```
+
+## Plan Builder slice
+
+A separate UI slice added `/plan` as a consolidated browser path from local evidence to courses, accepted questions, and review cards.
+
+Verification:
+
+```bash
+npm test -- --run tests/session/server.test.ts
+npm run check
+npm run build
+```
+
+Browser checks:
+
+- `/plan` health check passed.
+- Browser console had no JavaScript errors.
+- Screenshot captured at `screenshots/20260627T091406Z/plan-builder.png`.
+
+Visual assessment:
+
+- Page is readable and useful as a bridge from setup to review.
+- No blocking visual issue found.

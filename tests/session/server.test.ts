@@ -48,10 +48,21 @@ describe('review session server', () => {
       expect(html).toContain('From empty repo to useful review cards');
       expect(html).toContain('1 course ready');
       expect(html).toContain('Open Questions');
+      expect(html).toContain('Plan Builder');
+      expect(html).toContain('/plan');
       expect(html).toContain('Review source');
       expect(html).toContain('All due repo evidence');
       expect(html).toContain('Learn auth · 0 accepted · 0 active');
       expect(html).toContain('Generate 5 focused cards');
+
+      const planHtml = await fetch(`${review.url}/plan`).then((res) => res.text());
+      expect(planHtml).toContain('Plan Builder connects setup to daily review');
+      expect(planHtml).toContain('Local evidence source');
+      expect(planHtml).toContain('Accepted questions');
+      expect(planHtml).toContain('Local-only guardrails');
+      expect(planHtml).toContain('Course snapshot');
+      expect(planHtml).toContain('Learn auth');
+      expect(planHtml).toContain('Plan Builder');
 
       const progress = await fetch(`${review.url}/api/progress`).then((res) => res.json()) as { nodes: unknown[] };
       expect(progress.nodes.length).toBeGreaterThan(0);
