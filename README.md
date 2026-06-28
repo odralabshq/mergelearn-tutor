@@ -101,6 +101,10 @@ Unified surface with three modes for inspecting relationships, provenance, and m
 
 Legacy graph, timeline, and progress pages are available as secondary navigation links.
 
+**Learning path** (Map subnav): prerequisite DAG over concepts with recommended study order and mastery-colored nodes. Open `/learning-path` or `/path`.
+
+![Learning path](docs/assets/screenshots/learning-path.png)
+
 ### Audit
 
 Consolidated quality view combining card history and question bank. All badges are deterministic and computed from local state.

@@ -47,6 +47,7 @@ Available actions:
 - draft and accept fake/local LLM-style questions on `/questions`
 - inspect GitLens-style document evidence on `/timeline`
 - inspect a graph view of courses/docs/questions/cards on `/graph`
+- visualize concept prerequisites and recommended study order on `/learning-path` (alias `/path`)
 
 All actions POST to the local server and update `.skilltrace/state.json`.
 
@@ -67,6 +68,8 @@ GET  /courses
 GET  /questions
 GET  /timeline
 GET  /graph
+GET  /learning-path
+GET  /path
 GET  /history
 GET  /progress
 GET  /state.json
@@ -76,6 +79,7 @@ GET  /api/courses
 GET  /api/questions
 GET  /api/evidence-timeline
 GET  /api/evidence-graph
+GET  /api/learning-path
 GET  /api/progress
 GET  /api/preferences
 PUT  /api/preferences

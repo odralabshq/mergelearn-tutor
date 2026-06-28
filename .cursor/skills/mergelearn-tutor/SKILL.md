@@ -94,6 +94,10 @@ Presets (see `docs/USER_MANUAL.md`): daily comprehension → `local_behavior,fil
 
 Apply via `PUT /api/preferences` or CLI `preferences set`.
 
+### Learning path
+
+After ingest and concept linking, open `/learning-path` to see prerequisite edges and recommended study order. Scope with `?course=<id>` or `GET /api/learning-path?course=<id>`. Cycles are flagged in JSON (`cycleDetected`, `cycleNodes`) and in the page copy.
+
 ### Ingest scope
 
 ```
@@ -121,6 +125,7 @@ Use session base URL as `$BASE` (e.g. `http://127.0.0.1:39587`).
 | Courses summary | `GET $BASE/api/courses` |
 | Question bank | `GET $BASE/api/questions` |
 | Provenance graph | `GET $BASE/api/evidence-timeline?includeEvents=false&course=<id>` |
+| Learning path DAG | `GET $BASE/api/learning-path` or `/learning-path?course=<id>` |
 | Practice queue | `GET $BASE/api/practice/queue` or `/practice?index=N` |
 | History activity | `GET $BASE/api/history/activity?type=answered&limit=20` |
 | Draft candidates | `GET $BASE/api/questions/candidates` |

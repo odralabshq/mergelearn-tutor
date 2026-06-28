@@ -255,6 +255,23 @@ API endpoint:
 /api/evidence-graph
 ```
 
+
+## Learning path page
+
+![Learning path](assets/screenshots/learning-path.png)
+
+Use **Learning path** (`/learning-path`, alias `/path`) from the Map subnav to see concept prerequisite edges as a DAG. Nodes use the same mastery coloring as the skill map. When the graph contains cycles, the page surfaces cycle nodes and still lists a best-effort order in the accessibility panel.
+
+Optional query: `?course=<courseId>` scopes concepts to a single learning track.
+
+API endpoint:
+
+```text
+GET /api/learning-path?course=<courseId>
+```
+
+Returns JSON: `nodes`, `edges`, `recommendedOrder`, `summary`, `cycleDetected`, `cycleNodes`, and optional `courseId`.
+
 ## 9. Study page
 
 Use Study to run a small local active-control pilot before making learning-effectiveness claims.

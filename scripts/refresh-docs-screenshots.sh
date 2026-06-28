@@ -68,6 +68,7 @@ capture() {
   capture_one map-skill-map.png '/map?mode=skill-map'
   capture_one audit.png /audit
   capture_one plan.png /plan
+  capture_one learning-path.png /learning-path
   capture_one review.png /
   capture_one courses.png /courses
   capture_one questions.png /questions

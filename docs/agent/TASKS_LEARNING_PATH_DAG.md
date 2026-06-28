@@ -1,6 +1,6 @@
 # Learning Path DAG — Task List
 
-Branch: `feature/learning-path-dag`
+Status: **merged to `main`** (2026-06-28)
 
 ## Design & docs
 
@@ -54,3 +54,9 @@ wsl bash -lic 'cd /home/adam/mergelearn-tutor && npm run check && npm test && np
 
 - [x] All commands exit 0
 - [x] Demo documented in design doc DEMO section
+
+## Post-merge
+
+- [x] Merge `feature/learning-path-dag` into `main`
+- [x] Refresh `docs/assets/screenshots/` including `learning-path.png`
+- [x] Update README, USER_MANUAL, REVIEW_SESSION, agent skill

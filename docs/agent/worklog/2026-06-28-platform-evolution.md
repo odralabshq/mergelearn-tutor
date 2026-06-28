@@ -15,3 +15,8 @@
 **Design:** `docs/agent/design/2026-06-28-learning-path-dag.md`
 
 **Demo:** `node dist/cli.js session --repo /tmp/mergelearn-main-demo --port 4198` → http://127.0.0.1:4198/learning-path
+## Merged to main (2026-06-28)
+
+- Fast-forward merge `feature/learning-path-dag` → `main` at `61e5c07`.
+- `npm run check`, `npm test` (106 tests), `npm run build` green.
+- Refreshed all `docs/assets/screenshots/*.png` via `scripts/refresh-docs-screenshots.sh` (demo seed `/tmp/mergelearn-main-demo`, session port 4197).
