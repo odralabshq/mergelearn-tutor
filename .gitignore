@@ -7,3 +7,8 @@ coverage/
 examples/output/
 eval-runs/
 .autoloop/
+
+# Windows alternate data streams / stray paths
+*:Zone.Identifier
+*Zone.Identifier
+nul
