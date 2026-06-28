@@ -54,7 +54,7 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/audit') return sendHtml(res, 200, renderAuditHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/history') return sendHtml(res, 200, renderHistoryHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/study') return sendHtml(res, 200, renderStudyHtml(await loadState(repoPath)));
-  if (method === 'GET' && url.pathname === '/preferences') return sendHtml(res, 200, renderPreferencesHtml(await loadState(repoPath), await loadPreferences(repoPath)));
+  if (method === 'GET' && url.pathname === '/preferences') return sendHtml(res, 200, renderPreferencesHtml(await loadPreferences(repoPath)));
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
   if (method === 'GET' && url.pathname === '/api/workbench') return sendJson(res, 200, buildWorkbenchSummary(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/progress') return sendJson(res, 200, buildProgressGraph(await loadState(repoPath)));
@@ -225,142 +225,18 @@ function score(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function calibrationBuckets(state: TutorState): Array<{ label: string; total: number; correct: number }> {
-  const buckets = [
-    { label: 'Guessing', total: 0, correct: 0 },
-    { label: 'Low', total: 0, correct: 0 },
-    { label: 'Medium', total: 0, correct: 0 },
-    { label: 'High', total: 0, correct: 0 },
-    { label: 'Certain', total: 0, correct: 0 },
-  ];
-  const latestRevealByItem = new Map<string, number>();
-  for (const event of state.learningEvents.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt))) {
-    if (event.eventType === 'revealed' && event.confidenceBeforeReveal !== undefined) {
-      latestRevealByItem.set(event.itemId, event.confidenceBeforeReveal);
-      continue;
-    }
-    if ((event.eventType === 'answered' || event.eventType === 'marked_correct' || event.eventType === 'marked_wrong') && event.correct !== undefined) {
-      const confidence = latestRevealByItem.get(event.itemId);
-      if (confidence === undefined || confidence < 1 || confidence > 5) continue;
-      const bucket = buckets[confidence - 1]!;
-      bucket.total += 1;
-      if (event.correct) bucket.correct += 1;
-    }
-  }
-  return buckets;
-}
-
-type PageShellOptions = {
-  focus?: boolean;
-  repoPath?: string;
-  mapModeBar?: string;
-  surface?: string;
-};
-
-function shortRepoLabel(repoPath?: string): string {
-  if (!repoPath) return 'local session';
-  const normalized = repoPath.replace(/\\/g, '/').replace(/\/+$/, '');
-  const parts = normalized.split('/').filter(Boolean);
-  if (parts.length === 0) return 'local session';
-  if (parts.length <= 2) return parts.join('/');
-  return `${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
-}
-
-function renderPageIntro(eyebrow: string, title: string, description: string, statsHtml = ''): string {
-  return `<header class="page-intro">${statsHtml}<p class="eyebrow">${escapeHtml(eyebrow)}</p><h1>${escapeHtml(title)}</h1><p>${escapeHtml(description)}</p></header>`;
-}
-
-function workbenchGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-function shellOpts(state: TutorState, surface: string, extra: Partial<PageShellOptions> = {}): PageShellOptions {
-  return { repoPath: state.repoPath, surface, ...extra };
-}
-
-function renderMapModeBar(activeMode: string): string {
-  const tabs = [
-    { id: 'local-graph', label: 'Local graph', href: '/map?mode=local-graph', description: 'What concepts, cards, and evidence are related?' },
-    { id: 'provenance', label: 'Provenance lane', href: '/map?mode=provenance', description: 'Where did each card and question come from?' },
-    { id: 'skill-map', label: 'Skill map', href: '/map?mode=skill-map', description: 'Which concepts are weak, strong, or due for review?' },
-  ];
-  const tabHtml = tabs.map((tab) => `<a class="map-mode-tab ${tab.id === activeMode ? 'is-active' : ''}" href="${tab.href}" ${tab.id === activeMode ? 'aria-current="page"' : ''}>${escapeHtml(tab.label)}</a>`).join('');
-  const tabDescription = tabs.find((tab) => tab.id === activeMode)?.description ?? '';
-  return `<nav class="map-mode-bar" aria-label="Map mode"><div class="map-mode-copy"><strong>Map mode</strong><p>${escapeHtml(tabDescription)}</p></div><div class="map-mode-tabs">${tabHtml}</div></nav>`;
-}
-
-function renderSkillMapHeatmap(state: TutorState): string {
-  const graph = buildProgressGraph(state);
-  const concepts = graph.nodes.filter((node) => node.kind !== 'group');
-  const cells = concepts.map((concept) => {
-    const tone = concept.status === 'confident' ? 'skill-confident' : concept.status === 'needs_review' ? 'skill-weak' : concept.status === 'learning' ? 'skill-learning' : 'skill-new';
-    return `<article class="skill-cell ${tone}" title="${escapeHtml(concept.label)} — ${Math.round(concept.mastery * 100)}% mastery"><strong>${escapeHtml(concept.label)}</strong><small>${Math.round(concept.mastery * 100)}% · ${escapeHtml(concept.status.replace(/_/g, ' '))}</small></article>`;
-  }).join('');
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Skill map</p><h2>Concept mastery heatmap</h2><p>Green is confident, yellow is learning, red needs review, gray is new or unexposed.</p></div><a class="ghost" href="/api/progress">Open progress JSON</a></div><div class="skill-heatmap">${cells || '<p>No concepts yet. Ingest evidence to populate the skill map.</p>'}</div></section>`;
-}
-
-function renderGraphBody(state: TutorState): string {
-  const timeline = buildEvidenceTimeline(state);
-  const graphGroups = graphByType(timeline);
-  const groups = graphGroups.map((group) => `<section class="graph-column" data-graph-type="${escapeHtml(group.type)}"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, 12).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}</section>`).join('');
-  const map = renderGraphMap(timeline.nodes, timeline.edges);
-  const raw = escapeHtml(JSON.stringify({ nodes: timeline.nodes, edges: timeline.edges }, null, 2));
-  return `${map}${renderGraphFocusPanel(graphGroups, timeline.edges.length)}<section class="graph-grid">${groups}</section><details class="panel"><summary><strong>Raw graph projection</strong></summary><pre>${raw}</pre></details>${graphMapHoverScript()}`;
-}
-
-function renderTimelineBody(state: TutorState): string {
-  const timeline = buildEvidenceTimeline(state);
-  const docs = timeline.nodes.filter((node) => node.type === 'doc');
-  const items = timeline.nodes.slice().reverse().map((node) => `<article class="timeline-row" data-node-type="${escapeHtml(node.type)}"><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? '')}</small></article>`).join('');
-  const metrics = `<div class="stats"><div>${timeline.summary.commit ?? 0}<span>commits</span></div><div>${timeline.summary.doc ?? 0}<span>docs</span></div><div>${timeline.summary.question ?? 0}<span>questions</span></div><div>${timeline.summary.card ?? 0}<span>cards</span></div></div>`;
-  return `${metrics}${renderTimelineFilterPanel(timeline.summary)}<section class="panel"><h2>Document lens</h2><div class="mini-grid">${docs.map((doc) => `<article class="mini-card"><strong>${escapeHtml(doc.label)}</strong><p>${escapeHtml(doc.path ?? doc.subtitle ?? '')}</p><small>${timeline.edges.filter((edge) => edge.from === doc.id || edge.to === doc.id).length} links</small></article>`).join('') || '<p>No markdown docs found yet.</p>'}</div></section><section class="panel"><h2>Timeline</h2><div class="timeline-list">${items}</div></section>`;
-}
-
-function renderProvenanceBody(state: TutorState): string {
-  const timeline = buildEvidenceTimeline(state);
-  const flowLegend = '<div class="provenance-flow-legend"><span>commit</span><span>→</span><span>file</span><span>→</span><span>concept</span><span>→</span><span>question</span><span>→</span><span>card</span></div>';
-  return `<section class="panel provenance-panel"><div class="section-head"><div><p class="eyebrow">Provenance lane</p><h2>Evidence timeline</h2><p>Follow the left-to-right chain from git commits through changed files, extracted concepts, generated questions, and review cards.</p></div><a class="ghost" href="/timeline">Full timeline</a></div>${flowLegend}${renderGraphMap(timeline.nodes, timeline.edges)}</section>${renderTimelineBody(state)}${graphMapHoverScript()}`;
-}
-
-function renderProgressBody(state: TutorState): string {
-  const graph = buildProgressGraph(state);
-  const groups = graph.nodes.filter((node) => node.kind === 'group').map((group) => {
-    const children = graph.edges.filter((edge) => edge.type === 'group' && edge.from === group.id).map((edge) => graph.nodes.find((node) => node.id === edge.to)).filter(Boolean);
-    const rows = children.map((child) => `<li>${escapeHtml(child!.label)} — ${Math.round(child!.mastery * 100)}% mastery, ${escapeHtml(child!.status.replace(/_/g, ' '))}</li>`).join('');
-    return `<section class="panel"><h2>${escapeHtml(group.label)}</h2>${rows ? `<ul>${rows}</ul>` : '<p>No concepts in this group yet.</p>'}</section>`;
-  }).join('');
-  const stats = `<div class="stats"><div>${graph.summary.new}<span>new</span></div><div>${graph.summary.learning}<span>learning</span></div><div>${graph.summary.confident}<span>confident</span></div><div>${graph.summary.needs_review}<span>needs review</span></div></div>`;
-  return `${stats}${renderProgressGuide(state)}${renderSkillMapHeatmap(state)}${groups}<details class="panel"><summary>Show raw CLI progress</summary><pre>${escapeHtml(renderProgress(state))}</pre></details>`;
-}
-
-function graphMapHoverScript(): string {
-  return `<script>(function(){var svg=document.querySelector('.graph-map');if(!svg)return;var nodes=[...svg.querySelectorAll('.graph-map-node')];var edges=[...svg.querySelectorAll('.graph-edge')];function reset(){nodes.forEach(function(node){node.classList.remove('is-dimmed','is-focused');});edges.forEach(function(edge){edge.style.opacity='';});}function focusNode(node){var id=node.dataset.graphNodeId;var related=new Set([id]);edges.forEach(function(edge){if(edge.dataset.edgeFrom===id)related.add(edge.dataset.edgeTo);if(edge.dataset.edgeTo===id)related.add(edge.dataset.edgeFrom);});nodes.forEach(function(item){item.classList.toggle('is-focused',item===node);item.classList.toggle('is-dimmed',item!==node&&!related.has(item.dataset.graphNodeId));});edges.forEach(function(edge){var active=edge.dataset.edgeFrom===id||edge.dataset.edgeTo===id;edge.style.opacity=active?'1':'0.15';});}nodes.forEach(function(node){node.addEventListener('mouseenter',function(){focusNode(node);});node.addEventListener('mouseleave',reset);});})();</script>`;
-}
-
-function auditPageScript(): string {
-  return `<script>document.addEventListener('click',function(event){var card=event.target.closest('[data-action="audit-open"]');if(card){var key=card.dataset.auditKey;var title=card.dataset.auditTitle;var source=document.getElementById('audit-list-'+key);var modal=document.getElementById('audit-modal');if(modal&&source){modal.querySelector('.modal-title').textContent=title||'Audit details';modal.querySelector('.modal-body').innerHTML=source.innerHTML;modal.classList.remove('is-hidden');}return;}if(event.target.id==='audit-modal'||event.target.closest('[data-action="audit-close"]')){document.getElementById('audit-modal')?.classList.add('is-hidden');}});</script>`;
-}
-
-function renderAuditListItems(items: string[]): string {
-  if (items.length === 0) return '<p class="setup-note">No matching items yet.</p>';
-  return `<ul class="audit-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>`;
-}
-
 function renderWorkbenchHtml(state: TutorState): string {
   const workbench = buildWorkbenchSummary(state);
-  const metricCards = `<div class="stats workbench-stats"><div>${workbench.metrics.activeCards}<span>active cards</span></div><div>${workbench.metrics.dueDelayedProbes}<span>due probes</span></div><div>${workbench.metrics.weakConcepts}<span>weak concepts</span></div><div>${workbench.metrics.studyPending}<span>study pending</span></div></div>`;
+  const metricCards = `<div class="stats"><div>${workbench.metrics.activeCards}<span>active cards</span></div><div>${workbench.metrics.dueDelayedProbes}<span>due probes</span></div><div>${workbench.metrics.weakConcepts}<span>weak concepts</span></div><div>${workbench.metrics.studyPending}<span>study pending</span></div></div>`;
   const chips = workbench.filters.map((filter) => `<button data-action="workbench-filter" data-filter-type="${filter.id}" aria-pressed="false">${escapeHtml(filter.label)} · ${filter.count}</button>`).join('');
-  const nodes = workbench.nodes.slice(0, 48).map((node) => `<button class="visual-node node-${escapeHtml(node.type)}" data-action="workbench-node" data-node-type="${escapeHtml(node.type)}" data-node-tags="${escapeHtml(node.tags.join(' '))}" data-node-id="${escapeHtml(node.id)}" data-node-label="${escapeHtml(node.label)}" data-node-status="${escapeHtml(node.status ?? 'ready')}" data-node-detail="${escapeHtml(node.detail)}" data-node-href="${escapeHtml(node.href ?? '')}"${node.path ? ` data-node-path="${escapeHtml(node.path)}"` : ''}${node.masteryPercent !== undefined ? ` data-node-mastery="${node.masteryPercent}"` : ''}${node.confidencePercent !== undefined ? ` data-node-confidence="${node.confidencePercent}"` : ''}><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.status ?? '')}</small></button>`).join('');
-  const drawer = '<aside class="workbench-drawer" id="workbench-detail" aria-live="polite"><p class="eyebrow">Node detail</p><h2>Select a node</h2><p class="drawer-detail">Click any Workbench node to inspect why it matters and where to go next.</p><p class="drawer-meta is-hidden" id="workbench-detail-status"></p><code class="drawer-path is-hidden" id="workbench-detail-path"></code><p class="drawer-mastery is-hidden" id="workbench-detail-mastery"></p><a class="btn-primary is-hidden" id="workbench-detail-cta" href="#">Open related page</a><a class="ghost is-hidden" id="workbench-detail-link" href="#">Open related page</a></aside>';
-  const body = `<section class="workbench-layout"><div class="workbench-main"><section class="hero workbench-hero"><div><p class="eyebrow">Command center</p><h1>${escapeHtml(workbenchGreeting())} — Learning Workbench</h1><p>One navigable surface for active cards, due probes, weak concepts, study controls, and evidence links.</p><div class="actions"><a class="btn-primary" href="${workbench.nextAction.href}">${escapeHtml(workbench.nextAction.label)}</a></div><p class="setup-note">${escapeHtml(workbench.nextAction.reason)}</p></div></section>${metricCards}<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Interactive map</p><h2>Filter the learning graph</h2><p>Semantic filters for due probes, weak concepts, study controls, and evidence links.</p></div><a class="ghost" href="/api/workbench">Open workbench JSON</a></div><div class="actions"><button data-action="workbench-filter" data-filter-type="all" aria-pressed="true">All</button>${chips}</div><div class="workbench-map">${nodes || '<p>No workbench nodes yet. Ingest evidence and generate cards first.</p>'}</div></section></div>${drawer}</section>${workbenchPageScript()}`;
-  return pageShell('MergeLearn Tutor Workbench', body, 'Workbench', shellOpts(state, 'workbench'));
+  const nodes = workbench.nodes.slice(0, 48).map((node) => `<button class="visual-node node-${escapeHtml(node.type)}" data-action="workbench-node" data-node-type="${escapeHtml(node.type)}" data-node-tags="${escapeHtml(node.tags.join(' '))}" data-node-id="${escapeHtml(node.id)}" data-node-label="${escapeHtml(node.label)}" data-node-status="${escapeHtml(node.status ?? 'ready')}" data-node-detail="${escapeHtml(node.detail)}" data-node-href="${escapeHtml(node.href ?? '')}"><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.status ?? '')}</small></button>`).join('');
+  const drawer = '<aside class="workbench-drawer" id="workbench-detail" aria-live="polite"><p class="eyebrow">Node detail</p><h2>Select a node</h2><p>Click any Workbench node to inspect why it matters and where to go next.</p><a class="ghost is-hidden" id="workbench-detail-link" href="#">Open related page</a></aside>';
+  const body = `<section class="hero"><div><p class="eyebrow">Command center</p><h1>Learning Workbench</h1><p>One navigable surface for active cards, due probes, weak concepts, study controls, and evidence links.</p></div><div class="hero-card"><strong>${escapeHtml(workbench.nextAction.label)}</strong><span>${escapeHtml(workbench.nextAction.reason)}</span><a class="ghost" href="${workbench.nextAction.href}">Go</a></div></section>${nav()}${metricCards}<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Interactive map</p><h2>Filter the learning graph</h2><p>Inspired by Obsidian local graph, GitLens provenance lanes, Anki stats, and Linear status views. This map uses only local state.</p></div><a class="ghost" href="/api/workbench">Open workbench JSON</a></div><div class="actions"><button data-action="workbench-filter" data-filter-type="all" aria-pressed="true">All</button>${chips}</div><div class="workbench-layout"><div class="workbench-map">${nodes || '<p>No workbench nodes yet. Ingest evidence and generate cards first.</p>'}</div>${drawer}</div></section>${workbenchPageScript()}`;
+  return pageShell('MergeLearn Tutor Workbench', body, 'Workbench');
 }
 
 function workbenchPageScript(): string {
-  return `<script>document.addEventListener('click',function(event){var button=event.target.closest('button[data-action="workbench-filter"],button[data-action="workbench-node"]');if(!button)return;if(button.dataset.action==='workbench-filter'){var type=button.dataset.filterType||'all';document.querySelectorAll('[data-action="workbench-node"]').forEach(function(node){var tags=(node.dataset.nodeTags||'').split(/\\s+/).filter(Boolean);var hidden=type!=='all'&&!tags.includes(type);node.classList.toggle('is-filtered-out',hidden);node.classList.toggle('is-dimmed',hidden);});document.querySelectorAll('[data-action="workbench-filter"]').forEach(function(chip){chip.setAttribute('aria-pressed',String(chip===button));});var detail=document.getElementById('workbench-detail');if(detail){detail.querySelector('h2').textContent=type==='all'?'All workbench nodes':'Focused on '+type;var detailCopy=detail.querySelector('.drawer-detail');if(detailCopy)detailCopy.textContent=type==='all'?'Showing all local learning nodes.':'Showing nodes tagged '+type+'.';['workbench-detail-path','workbench-detail-mastery','workbench-detail-cta','workbench-detail-link','workbench-detail-status'].forEach(function(id){var el=document.getElementById(id);if(el)el.classList.add('is-hidden');});}}if(button.dataset.action==='workbench-node'){document.querySelectorAll('[data-action="workbench-node"]').forEach(function(node){node.classList.toggle('is-focused',node===button);node.classList.toggle('is-dimmed',node!==button&&!node.classList.contains('is-filtered-out'));});var detail=document.getElementById('workbench-detail');var link=document.getElementById('workbench-detail-link');var cta=document.getElementById('workbench-detail-cta');var status=document.getElementById('workbench-detail-status');var pathEl=document.getElementById('workbench-detail-path');var masteryEl=document.getElementById('workbench-detail-mastery');if(detail){detail.querySelector('h2').textContent=button.dataset.nodeLabel||'Selected node';var detailCopy=detail.querySelector('.drawer-detail');if(detailCopy)detailCopy.textContent=button.dataset.nodeDetail||'';}if(status){status.textContent=button.dataset.nodeStatus||'';status.classList.toggle('is-hidden',!button.dataset.nodeStatus);}if(pathEl){var path=button.dataset.nodePath||'';pathEl.textContent=path;pathEl.classList.toggle('is-hidden',!path);}if(masteryEl){var mastery=button.dataset.nodeMastery;var confidence=button.dataset.nodeConfidence;var parts=[];if(mastery)parts.push('Mastery '+mastery+'%');if(confidence)parts.push('Confidence '+confidence+'%');masteryEl.textContent=parts.join(' · ');masteryEl.classList.toggle('is-hidden',parts.length===0);}var href=button.dataset.nodeHref||'';if(cta){cta.classList.toggle('is-hidden',!href);if(href){cta.setAttribute('href',href);cta.textContent=href.indexOf('/practice')===0?'Start practice':href.indexOf('/map')===0?'Open map':'Open related page';}}if(link){link.classList.add('is-hidden');if(href)link.setAttribute('href',href);}}});</script>`;
+  return `<script>document.addEventListener('click',function(event){var button=event.target.closest('button[data-action="workbench-filter"],button[data-action="workbench-node"]');if(!button)return;if(button.dataset.action==='workbench-filter'){var type=button.dataset.filterType||'all';document.querySelectorAll('[data-action="workbench-node"]').forEach(function(node){var tags=(node.dataset.nodeTags||'').split(/\\s+/).filter(Boolean);node.classList.toggle('is-filtered-out',type!=='all'&&!tags.includes(type));});document.querySelectorAll('[data-action="workbench-filter"]').forEach(function(chip){chip.setAttribute('aria-pressed',String(chip===button));});var detail=document.getElementById('workbench-detail');if(detail){detail.querySelector('h2').textContent=type==='all'?'All workbench nodes':'Focused on '+type;detail.querySelector('p:not(.eyebrow)').textContent=type==='all'?'Showing all local learning nodes.':'Showing nodes tagged '+type+'.';}}if(button.dataset.action==='workbench-node'){var detail=document.getElementById('workbench-detail');var link=document.getElementById('workbench-detail-link');if(detail){detail.querySelector('h2').textContent=button.dataset.nodeLabel||'Selected node';detail.querySelector('p:not(.eyebrow)').textContent=button.dataset.nodeDetail||'';}if(link){var href=button.dataset.nodeHref||'';link.classList.toggle('is-hidden',!href);if(href)link.setAttribute('href',href);}}});</script>`;
 }
 
 function renderSessionHtml(state: TutorState, preferences: UserPreferences): string {
@@ -409,19 +285,20 @@ function renderSessionHtml(state: TutorState, preferences: UserPreferences): str
   }).join('\n');
   const hero = `<section class="hero"><div><p class="eyebrow">Local code learning queue</p><h1>Review your recent code as flashcards</h1><p>Generate focused snippets, answer from the diff, and keep your history local.</p></div><div class="hero-card"><strong>${active.length}</strong><span>active cards</span><strong>${archived}</strong><span>archived cards</span></div></section>`;
   const controls = `<section class="toolbar review-source-toolbar"><div><strong>Card queue</strong><p>${latestBatch ? `Latest batch ${escapeHtml(latestBatch.id)} · ${latestBatch.mode}` : 'No generated batch yet.'}</p><div class="progress-track"><span id="session-progress" style="width:0%"></span></div></div>${renderReviewSourceControls(state)}</section>`;
-  return pageShell('MergeLearn Tutor Review', `${hero}${renderStartHerePanel(state)}${controls}<section class="review-grid">${cards || '<p>No cards yet. Follow Start here to ingest evidence and generate your first cards.</p>'}</section>`, 'Ready', shellOpts(state, 'practice'));
+  return pageShell('MergeLearn Tutor Review', `${hero}${renderStartHerePanel(state)}${controls}<section class="review-grid">${cards || '<p>No cards yet. Follow Start here to ingest evidence and generate your first cards.</p>'}</section>`, 'Ready');
 }
 
 function renderPracticeHtml(state: TutorState, preferences: UserPreferences): string {
   const active = activeLearningItems(state);
   const item = active[0];
   if (!item) {
-    return pageShell('MergeLearn Tutor Practice', `<section class="hero"><div><p class="eyebrow">Focused Practice</p><h1>No active card yet</h1><p>Generate a card from local evidence, then come back for one-card retrieval practice.</p></div><div class="hero-card"><strong>0</strong><span>active cards</span><a class="ghost" href="/">Open legacy review</a></div></section>${nav()}${renderStartHerePanel(state)}`, 'Practice', shellOpts(state, 'practice'));
+    return pageShell('MergeLearn Tutor Practice', `<section class="hero"><div><p class="eyebrow">Focused Practice</p><h1>No active card yet</h1><p>Generate a card from local evidence, then come back for one-card retrieval practice.</p></div><div class="hero-card"><strong>0</strong><span>active cards</span><a class="ghost" href="/">Open legacy review</a></div></section>${nav()}${renderStartHerePanel(state)}`, 'Practice');
   }
   const quality = qualityForCard(item);
-  const card = `<article class="card recall-card practice-card" data-item="${escapeHtml(item.id)}"><div class="card-topline"><span>Focused card</span>${item.courseId ? `<span>course ${escapeHtml(item.courseId)}</span>` : ''}${item.questionId ? '<span>accepted question</span>' : ''}<span>${escapeHtml(item.questionPlane.replace(/_/g, ' '))}</span><span>${escapeHtml(item.difficulty)}</span><span class="card-state">not reviewed</span></div><h2 class="practice-title">${escapeHtml(item.title)}</h2><p class="why">${escapeHtml(item.whyShown ?? 'Shown from recent repo evidence.')}</p><div class="snippet-head"><span>${escapeHtml(item.snippet.path)}</span><span>generation ${item.generation}</span></div>${renderDiffSnippetHtml(item.snippet.code)}<section class="question-box practice-question"><p class="label">Active recall question</p><p>${escapeHtml(item.prompt)}</p></section><textarea aria-label="Your answer" placeholder="Answer from memory before revealing the explanation."></textarea><section class="confidence-panel" aria-label="Confidence before reveal"><p class="label">Before reveal: how confident are you?</p><div class="confidence-options"><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="1" /> Guessing</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="2" /> Low</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="3" /> Medium</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="4" /> High</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="5" /> Certain</label></div></section><p class="setup-note" id="practice-outcome">Outcome will appear here after grading: calibration pairing, delayed probe scheduling, and weak-concept updates stay local.</p><div class="actions primary-actions"><button data-action="reveal">Reveal explanation</button></div><section class="reveal-panel ${preferences.review.showExplanationsByDefault ? '' : 'is-hidden'}"><p class="label">Explanation and expected focus</p><p>${escapeHtml(item.explanationMarkdown)}</p><ul>${item.expectedFocus.map((focus) => `<li>${escapeHtml(focus)}</li>`).join('')}</ul><details class="practice-details"><summary>Evidence and quality details</summary>${renderQualityPanel(quality)}</details><div class="actions grade-actions"><button data-action="answer-grade" data-correct="true">I knew it <kbd class="shortcut-hint">Y</kbd></button><button data-action="feedback" data-event="marked_unsure">Partly</button><button data-action="answer-grade" data-correct="false">Missed it <kbd class="shortcut-hint">N</kbd></button><button data-action="feedback" data-event="marked_bad_card">Bad card</button><button data-action="feedback" data-event="marked_wrong_evidence">Wrong evidence</button></div></section></article>`;
-  const focusBody = `<header class="practice-focus-header" aria-label="Focused Practice"><div class="progress-track practice-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="session-progress" style="width:0%"></span></div><span class="sr-only">One card, one answer, one grade</span></header><section class="review-grid practice-grid practice-focus">${card}</section><footer class="practice-focus-footer"><p><strong>Keyboard shortcuts</strong> · 1-5 confidence · Enter reveal · Y knew it · N missed it</p></footer>${practiceKeyboardScript()}`;
-  return pageShell('MergeLearn Tutor Practice', focusBody, 'Practice', { ...shellOpts(state, 'practice'), focus: true });
+  const card = `<article class="card recall-card practice-card" data-item="${escapeHtml(item.id)}"><div class="card-topline"><span>Focused card</span>${item.courseId ? `<span>course ${escapeHtml(item.courseId)}</span>` : ''}${item.questionId ? '<span>accepted question</span>' : ''}<span>${escapeHtml(item.questionPlane.replace(/_/g, ' '))}</span><span>${escapeHtml(item.difficulty)}</span><span class="card-state">not reviewed</span></div><h2>${escapeHtml(item.title)}</h2><p class="why">${escapeHtml(item.whyShown ?? 'Shown from recent repo evidence.')}</p><div class="snippet-head"><span>${escapeHtml(item.snippet.path)}</span><span>generation ${item.generation}</span></div>${renderDiffSnippetHtml(item.snippet.code)}<section class="question-box"><p class="label">Active recall question</p><p>${escapeHtml(item.prompt)}</p></section><textarea aria-label="Your answer" placeholder="Answer from memory before revealing the explanation."></textarea><section class="confidence-panel" aria-label="Confidence before reveal"><p class="label">Before reveal: how confident are you?</p><div class="confidence-options"><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="1" /> Guessing</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="2" /> Low</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="3" /> Medium</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="4" /> High</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="5" /> Certain</label></div></section><p class="setup-note" id="practice-outcome">Outcome will appear here after grading: calibration pairing, delayed probe scheduling, and weak-concept updates stay local.</p><div class="actions primary-actions"><button data-action="reveal">Reveal explanation</button></div><section class="reveal-panel ${preferences.review.showExplanationsByDefault ? '' : 'is-hidden'}"><p class="label">Explanation and expected focus</p><p>${escapeHtml(item.explanationMarkdown)}</p><ul>${item.expectedFocus.map((focus) => `<li>${escapeHtml(focus)}</li>`).join('')}</ul><details class="practice-details"><summary>Evidence and quality details</summary>${renderQualityPanel(quality)}</details><div class="actions grade-actions"><button data-action="answer-grade" data-correct="true">I knew it</button><button data-action="feedback" data-event="marked_unsure">Partly</button><button data-action="answer-grade" data-correct="false">Missed it</button><button data-action="feedback" data-event="marked_bad_card">Bad card</button><button data-action="feedback" data-event="marked_wrong_evidence">Wrong evidence</button></div></section></article>`;
+  const hero = `<section class="hero"><div><p class="eyebrow">Focused Practice</p><h1>One card, one answer, one grade</h1><p>The default learning loop is intentionally narrow: answer from memory, rate confidence, reveal, then self-grade.</p></div><div class="hero-card"><strong>${active.length}</strong><span>active cards</span><a class="ghost" href="/">Legacy queue</a></div></section>`;
+  const shortcuts = '<section class="toolbar practice-shortcuts"><div><strong>Keyboard shortcuts</strong><p>1-5 sets confidence. Enter reveals. Y marks knew it. N marks missed it.</p></div><a class="ghost" href="/workbench">Back to Workbench</a></section>';
+  return pageShell('MergeLearn Tutor Practice', `${hero}${nav()}${shortcuts}<section class="review-grid practice-grid">${card}</section>${practiceKeyboardScript()}`, 'Practice');
 }
 
 function practiceKeyboardScript(): string {
@@ -487,34 +364,6 @@ function renderPlanHtml(state: TutorState): string {
   const draftQuestions = state.questionBank.filter((entry) => entry.status === 'draft').length;
   const latestBatch = state.cardBatches.at(-1);
   const courses = coursesSummary(state);
-  const primaryCourse = courses[0];
-  const setupSteps = [
-    {
-      label: 'Repository setup',
-      done: state.artifacts.length > 0 && state.concepts.length > 0,
-      detail: state.repoPath ? `Target repo: ${state.repoPath}` : 'Point the tutor at a local git repository.',
-      body: `<p class="setup-note">Run <code>node dist/cli.js init --repo . && node dist/cli.js ingest --repo . --since 30d</code> from the target repo, or inspect existing evidence on the timeline.</p><a class="ghost" href="/timeline">Inspect evidence</a>`,
-    },
-    {
-      label: 'Select materials',
-      done: courses.some((course) => course.materialPaths.length > 0 || course.docPaths.length > 0),
-      detail: primaryCourse ? `Scoped paths: ${[...primaryCourse.materialPaths, ...primaryCourse.docPaths].join(', ') || 'defaults pending'}` : 'Choose folders and docs that should feed concept extraction.',
-      body: `<p class="setup-note">Scope code and doc paths on the course form below or on the Courses page before drafting questions.</p><a class="ghost" href="/courses">Open course form</a>`,
-    },
-    {
-      label: 'Generate questions',
-      done: state.questionDraftBatches.length > 0 || acceptedQuestions > 0,
-      detail: `${draftQuestions} draft · ${acceptedQuestions} accepted questions from local AST/fake drafting.`,
-      body: `<p class="setup-note">Draft evidence-bound questions locally, then accept only prompts answerable from the repo.</p><a class="ghost" href="/questions">Open question bank</a>`,
-    },
-    {
-      label: 'Configure mix',
-      done: active > 0,
-      detail: active > 0 ? `${active} active review cards ready for practice.` : 'Tune spaced-repetition mix and generate the first card batch.',
-      body: `<p class="setup-note">Use presets for Deep Dive or Quick Daily Refresh, then generate cards from all due evidence or a selected course.</p><div class="mix-presets"><a class="ghost" href="/preferences">Deep Dive</a><a class="ghost" href="/preferences">Quick Daily Refresh</a><a class="ghost" href="/preferences">Tune question mix</a></div><a class="ghost" href="/practice">Start practice</a>`,
-    },
-  ];
-  const setupCards = setupSteps.map((step, index) => `<li class="setup-step ${step.done ? 'is-done' : ''}"><span>${step.done ? '✓' : index + 1}</span><div><strong>${escapeHtml(step.label)}</strong><p>${escapeHtml(step.detail)}</p>${step.body}</div></li>`).join('');
   const steps = [
     {
       label: 'Local evidence source',
@@ -545,15 +394,16 @@ function renderPlanHtml(state: TutorState): string {
       action: 'Open review',
     },
   ];
+  const next = steps.find((step) => !step.done) ?? steps.at(-1)!;
   const stepCards = steps.map((step, index) => `<li class="plan-step ${step.done ? 'is-done' : ''}"><span>${step.done ? '✓' : index + 1}</span><div><strong>${escapeHtml(step.label)}</strong><p>${escapeHtml(step.detail)}</p><a href="${step.href}">${escapeHtml(step.action)}</a></div></li>`).join('');
   const courseCards = courses.map((course) => `<article class="mini-card"><div class="card-topline"><span>${escapeHtml(course.id)}</span><span>${course.questionCount} questions</span><span>${course.activeCardCount} active</span></div><h3>${escapeHtml(course.title)}</h3><p>${escapeHtml(course.goal)}</p><small>${escapeHtml([...course.materialPaths, ...course.docPaths].join(', '))}</small></article>`).join('');
-  return pageShell('MergeLearn Tutor Plan Builder', `<section class="hero"><div><p class="eyebrow">Learning plan</p><h1>Plan Builder connects setup to daily review</h1><p>Use this page as the single path from local evidence, to courses, to accepted questions, to review cards.</p></div><div class="hero-card"><strong>${courses.length}</strong><span>courses</span><strong>${acceptedQuestions}</strong><span>accepted questions</span></div></section>${nav()}<section class="panel plan-builder-panel setup-wizard"><div class="section-head"><div><p class="eyebrow">Setup wizard</p><h2>Learning plan wizard</h2><p>Follow these four steps in order to define your learning goal, scope evidence, draft and accept questions, then configure the review mix.</p></div><a class="ghost" href="/practice">Skip to practice</a></div><ol class="setup-steps">${setupCards}</ol></section><section class="panel plan-builder-panel"><div class="section-head"><div><p class="eyebrow">Progress tracker</p><h2>From empty repo to first focused practice</h2><p>Track completion across evidence, courses, accepted questions, and review cards.</p></div></div><ol class="plan-path">${stepCards}</ol><div class="actions"><a class="ghost" href="/preferences">Tune question mix</a><a class="ghost" href="/timeline">Inspect evidence</a><a class="ghost" href="/questions">Review questions</a></div></section><section class="panel"><div class="section-head"><div><p class="eyebrow">Quick course creator</p><h2>Create a course without leaving the plan</h2><p>If you do not have a course yet, create one here. The course is the contract between repo evidence and the review cards you will practice from.</p></div><a class="ghost" href="/courses">Full course form</a></div><div class="form-grid"><input id="course-id" placeholder="optional id, e.g. learn-typescript" /><input id="course-title" placeholder="title, e.g. Understand session auth" /><textarea id="course-goal" placeholder="goal: explain how login state moves from API route to UI and tests"></textarea><input id="course-materials" placeholder="materials: src/**,tests/**" /><input id="course-docs" placeholder="docs: README.md,docs/**" /><button data-action="save-course">Save course</button></div><p class="setup-note">Tip: leave the id blank to auto-generate one. Materials and docs use comma-separated paths; defaults are src/**, tests/**, README.md, and docs/**.</p></section><section class="panel"><div class="section-head"><div><p class="eyebrow">Local-only guardrails</p><h2>What this plan will and will not do</h2><p>The browser plan organizes already-local evidence. It does not enable remote LLM calls, publish data, or run target repo code.</p></div><a class="ghost" href="/graph">Trace graph</a></div><div class="mini-grid"><article class="mini-card"><strong>${state.concepts.length}</strong><p>Local concepts</p><small>Extracted from commits, docs, paths, and snippets.</small></article><article class="mini-card"><strong>${state.questionDraftBatches.length}</strong><p>Question draft batches</p><small>Fake/local drafts show network not used in their metadata.</small></article><article class="mini-card"><strong>${state.cardBatches.length}</strong><p>Card batches</p><small>Regenerated queues archive old cards instead of deleting history.</small></article><article class="mini-card"><strong>${state.learningEvents.length}</strong><p>Review events</p><small>Answers update mastery; quality feedback stays audited separately.</small></article></div></section><section class="panel"><div class="section-head"><div><h2>Course snapshot</h2><p>Courses are the bridge between repo evidence and the questions/cards you practice from.</p></div><a class="ghost" href="/courses">Manage courses</a></div><div class="mini-grid">${courseCards || '<p>No courses yet. Use the quick creator above to add your first learning plan.</p>'}</div></section>`, 'Plan Builder', shellOpts(state, 'setup'));
+  return pageShell('MergeLearn Tutor Plan Builder', `<section class="hero"><div><p class="eyebrow">Learning plan</p><h1>Plan Builder connects setup to daily review</h1><p>Use this page as the single path from local evidence, to courses, to accepted questions, to review cards.</p></div><div class="hero-card"><strong>${courses.length}</strong><span>courses</span><strong>${acceptedQuestions}</strong><span>accepted questions</span></div></section>${nav()}<section class="panel plan-builder-panel"><div class="section-head"><div><p class="eyebrow">Learning plan wizard</p><h2>From empty repo to first focused practice</h2><p>Follow these steps in order: define your learning goal, scope evidence, draft and accept questions, then generate review cards and start focused practice.</p></div><a class="ghost" href="/practice">Skip to practice</a></div><ol class="plan-path">${stepCards}</ol><div class="actions"><a class="ghost" href="/preferences">Tune question mix</a><a class="ghost" href="/timeline">Inspect evidence</a><a class="ghost" href="/questions">Review questions</a></div></section><section class="panel"><div class="section-head"><div><p class="eyebrow">Quick course creator</p><h2>Create a course without leaving the plan</h2><p>If you do not have a course yet, create one here. The course is the contract between repo evidence and the review cards you will practice from.</p></div><a class="ghost" href="/courses">Full course form</a></div><div class="form-grid"><input id="course-id" placeholder="optional id, e.g. learn-typescript" /><input id="course-title" placeholder="title, e.g. Understand session auth" /><textarea id="course-goal" placeholder="goal: explain how login state moves from API route to UI and tests"></textarea><input id="course-materials" placeholder="materials: src/**,tests/**" /><input id="course-docs" placeholder="docs: README.md,docs/**" /><button data-action="save-course">Save course</button></div><p class="setup-note">Tip: leave the id blank to auto-generate one. Materials and docs use comma-separated paths; defaults are src/**, tests/**, README.md, and docs/**.</p></section><section class="panel"><div class="section-head"><div><p class="eyebrow">Local-only guardrails</p><h2>What this plan will and will not do</h2><p>The browser plan organizes already-local evidence. It does not enable remote LLM calls, publish data, or run target repo code.</p></div><a class="ghost" href="/graph">Trace graph</a></div><div class="mini-grid"><article class="mini-card"><strong>${state.concepts.length}</strong><p>Local concepts</p><small>Extracted from commits, docs, paths, and snippets.</small></article><article class="mini-card"><strong>${state.questionDraftBatches.length}</strong><p>Question draft batches</p><small>Fake/local drafts show network not used in their metadata.</small></article><article class="mini-card"><strong>${state.cardBatches.length}</strong><p>Card batches</p><small>Regenerated queues archive old cards instead of deleting history.</small></article><article class="mini-card"><strong>${state.learningEvents.length}</strong><p>Review events</p><small>Answers update mastery; quality feedback stays audited separately.</small></article></div></section><section class="panel"><div class="section-head"><div><h2>Course snapshot</h2><p>Courses are the bridge between repo evidence and the questions/cards you practice from.</p></div><a class="ghost" href="/courses">Manage courses</a></div><div class="mini-grid">${courseCards || '<p>No courses yet. Use the quick creator above to add your first learning plan.</p>'}</div></section>`, 'Plan Builder');
 }
 
 function renderCoursesHtml(state: TutorState): string {
   const courses = coursesSummary(state);
   const cards = courses.map((course) => `<article class="mini-card course-card"><div class="card-topline"><span>${course.id}</span><span>${course.enabledPlanes.length} planes</span></div><h3>${escapeHtml(course.title)}</h3><p>${escapeHtml(course.goal)}</p><p><strong>Materials</strong>: ${escapeHtml(course.materialPaths.join(', '))}</p><p><strong>Docs</strong>: ${escapeHtml(course.docPaths.join(', '))}</p><p>${course.questionCount} questions · ${course.activeCardCount} active cards</p><a class="ghost" href="/questions">Question bank</a><a class="ghost" href="/timeline">Evidence timeline</a></article>`).join('');
-  return pageShell('MergeLearn Tutor Courses', `<section class="hero"><div><p class="eyebrow">Learning tracks</p><h1>Courses organize goals and material</h1><p>Each course defines what you are trying to learn, which repo paths/docs count as material, and which question categories should be prioritized.</p></div><div class="hero-card"><strong>${courses.length}</strong><span>courses</span><strong>${state.questionBank.filter((entry) => entry.status === 'accepted').length}</strong><span>accepted questions</span></div></section>${nav()}${renderCourseSetupGuide(state)}<section class="panel"><div class="section-head"><div><h2>Create or update a course</h2><p>Start broad, then narrow the paths after you see the first drafted questions.</p></div><a class="ghost" href="/preferences">Tune question mix</a></div><div class="form-grid"><input id="course-id" placeholder="optional id, e.g. learn-typescript" /><input id="course-title" placeholder="title, e.g. Understand session auth" /><textarea id="course-goal" placeholder="goal: explain how login state moves from API route to UI and tests"></textarea><input id="course-materials" placeholder="materials: src/**,tests/**" /><input id="course-docs" placeholder="docs: README.md,docs/**" /><button data-action="save-course">Save course</button></div><p class="setup-note">Tip: leave the id blank to auto-generate one. Materials and docs use comma-separated paths; defaults are src/**, tests/**, README.md, and docs/**.</p></section><section class="panel"><h2>Course tracks</h2><div class="mini-grid">${cards || '<p>No courses yet. Use the guided form above or CLI to create one.</p>'}</div></section>`, 'Courses', shellOpts(state, 'setup'));
+  return pageShell('MergeLearn Tutor Courses', `<section class="hero"><div><p class="eyebrow">Learning tracks</p><h1>Courses organize goals and material</h1><p>Each course defines what you are trying to learn, which repo paths/docs count as material, and which question categories should be prioritized.</p></div><div class="hero-card"><strong>${courses.length}</strong><span>courses</span><strong>${state.questionBank.filter((entry) => entry.status === 'accepted').length}</strong><span>accepted questions</span></div></section>${nav()}${renderCourseSetupGuide(state)}<section class="panel"><div class="section-head"><div><h2>Create or update a course</h2><p>Start broad, then narrow the paths after you see the first drafted questions.</p></div><a class="ghost" href="/preferences">Tune question mix</a></div><div class="form-grid"><input id="course-id" placeholder="optional id, e.g. learn-typescript" /><input id="course-title" placeholder="title, e.g. Understand session auth" /><textarea id="course-goal" placeholder="goal: explain how login state moves from API route to UI and tests"></textarea><input id="course-materials" placeholder="materials: src/**,tests/**" /><input id="course-docs" placeholder="docs: README.md,docs/**" /><button data-action="save-course">Save course</button></div><p class="setup-note">Tip: leave the id blank to auto-generate one. Materials and docs use comma-separated paths; defaults are src/**, tests/**, README.md, and docs/**.</p></section><section class="panel"><h2>Course tracks</h2><div class="mini-grid">${cards || '<p>No courses yet. Use the guided form above or CLI to create one.</p>'}</div></section>`, 'Courses');
 }
 
 function renderCourseSetupGuide(state: TutorState): string {
@@ -602,7 +452,7 @@ function renderQuestionsHtml(state: TutorState): string {
   const metrics = `<div class="stats"><div>${data.summary.draft}<span>draft</span></div><div>${data.summary.accepted}<span>accepted</span></div><div>${data.summary.rejected}<span>rejected</span></div><div>${data.summary.networkUsed ? 'yes' : 'no'}<span>network used</span></div></div>`;
   const courseOptions = courses.map((course) => `<option value="${escapeHtml(course.id)}">${escapeHtml(course.title)} · ${course.questionCount} questions</option>`).join('');
   const courseSelector = courses.length > 0 ? `<label class="inline-field">Target course <select id="question-course"><option value="">First course / all matching evidence</option>${courseOptions}</select></label>` : '<p class="setup-note">No courses yet. Drafting still works from all repo concepts, but creating a course first makes questions goal-specific.</p>';
-  return pageShell('MergeLearn Tutor Questions', `<section class="hero"><div><p class="eyebrow">Question bank</p><h1>Evidence-bound LLM-style questions</h1><p>Drafts can be generated by fake/local providers, then accepted into the question bank before cards use them. Remote LLM is still gated.</p></div></section>${nav()}${metrics}${renderQuestionWorkflowGuide(state)}<section class="toolbar"><div><strong>Draft questions</strong><p>Choose a course, draft locally, accept the useful questions, then generate review cards.</p>${courseSelector}</div><button data-action="draft-questions">Draft 5 fake/local questions</button></section><section class="panel"><h2>Draft batches</h2><div class="mini-grid">${batches || '<p>No draft batches yet. Draft questions from a course to create the first batch.</p>'}</div></section><section class="panel"><h2>Questions</h2><div class="mini-grid">${questions || '<p>No questions yet. Draft a local batch, then accept the questions you want cards to use.</p>'}</div></section>`, 'Questions', shellOpts(state, 'audit'));
+  return pageShell('MergeLearn Tutor Questions', `<section class="hero"><div><p class="eyebrow">Question bank</p><h1>Evidence-bound LLM-style questions</h1><p>Drafts can be generated by fake/local providers, then accepted into the question bank before cards use them. Remote LLM is still gated.</p></div></section>${nav()}${metrics}${renderQuestionWorkflowGuide(state)}<section class="toolbar"><div><strong>Draft questions</strong><p>Choose a course, draft locally, accept the useful questions, then generate review cards.</p>${courseSelector}</div><button data-action="draft-questions">Draft 5 fake/local questions</button></section><section class="panel"><h2>Draft batches</h2><div class="mini-grid">${batches || '<p>No draft batches yet. Draft questions from a course to create the first batch.</p>'}</div></section><section class="panel"><h2>Questions</h2><div class="mini-grid">${questions || '<p>No questions yet. Draft a local batch, then accept the questions you want cards to use.</p>'}</div></section>`, 'Questions');
 }
 
 function renderQuestionWorkflowGuide(state: TutorState): string {
@@ -641,8 +491,11 @@ function renderQuestionWorkflowGuide(state: TutorState): string {
 }
 
 function renderTimelineHtml(state: TutorState): string {
-  const body = `<section class="hero"><div><p class="eyebrow">Evidence timeline</p><h1>GitLens-style learning provenance</h1><p>See the commits, files, docs, questions, cards, and answer events that explain why each study item exists.</p></div></section>${nav()}${renderTimelineBody(state)}`;
-  return pageShell('MergeLearn Tutor Evidence Timeline', body, 'Timeline', shellOpts(state, 'map'));
+  const timeline = buildEvidenceTimeline(state);
+  const docs = timeline.nodes.filter((node) => node.type === 'doc');
+  const items = timeline.nodes.slice().reverse().map((node) => `<article class="timeline-row" data-node-type="${escapeHtml(node.type)}"><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? '')}</small></article>`).join('');
+  const metrics = `<div class="stats"><div>${timeline.summary.commit ?? 0}<span>commits</span></div><div>${timeline.summary.doc ?? 0}<span>docs</span></div><div>${timeline.summary.question ?? 0}<span>questions</span></div><div>${timeline.summary.card ?? 0}<span>cards</span></div></div>`;
+  return pageShell('MergeLearn Tutor Evidence Timeline', `<section class="hero"><div><p class="eyebrow">Evidence timeline</p><h1>GitLens-style learning provenance</h1><p>See the commits, files, docs, questions, cards, and answer events that explain why each study item exists.</p></div></section>${nav()}${metrics}${renderTimelineFilterPanel(timeline.summary)}<section class="panel"><h2>Document lens</h2><div class="mini-grid">${docs.map((doc) => `<article class="mini-card"><strong>${escapeHtml(doc.label)}</strong><p>${escapeHtml(doc.path ?? doc.subtitle ?? '')}</p><small>${timeline.edges.filter((edge) => edge.from === doc.id || edge.to === doc.id).length} links</small></article>`).join('') || '<p>No markdown docs found yet.</p>'}</div></section><section class="panel"><h2>Timeline</h2><div class="timeline-list">${items}</div></section>`, 'Timeline');
 }
 
 function renderTimelineFilterPanel(summary: Record<string, number>): string {
@@ -654,19 +507,27 @@ function renderTimelineFilterPanel(summary: Record<string, number>): string {
 function renderMapHtml(state: TutorState, mode: string): string {
   const validModes = ['local-graph', 'provenance', 'skill-map'];
   const activeMode = validModes.includes(mode) ? mode : 'local-graph';
+  const tabs = [
+    { id: 'local-graph', label: 'Local graph', href: '/map?mode=local-graph', description: 'What concepts, cards, and evidence are related?' },
+    { id: 'provenance', label: 'Provenance lane', href: '/map?mode=provenance', description: 'Where did each card and question come from?' },
+    { id: 'skill-map', label: 'Skill map', href: '/map?mode=skill-map', description: 'Which concepts are weak, strong, or due for review?' },
+  ];
+  const tabHtml = tabs.map((tab) => `<a class="ghost ${tab.id === activeMode ? 'is-active' : ''}" href="${tab.href}" ${tab.id === activeMode ? 'aria-current="page"' : ''}>${escapeHtml(tab.label)}</a>`).join('');
+  const tabDescription = tabs.find((tab) => tab.id === activeMode)?.description ?? '';
   let body = '';
-  if (activeMode === 'provenance') body = renderProvenanceBody(state);
-  else if (activeMode === 'skill-map') body = renderProgressBody(state);
-  else body = renderGraphBody(state);
-  const activeCards = state.learningItems.filter((item) => item.status !== 'archived').length;
-  const intro = renderPageIntro('Unified Map', 'One surface for relationships, provenance, and mastery', 'Switch modes to answer three questions: what is related, where did this come from, and what is weak or due.', `<div class="page-intro-stats"><span>${state.concepts.length} concepts</span><span>${activeCards} active cards</span></div>`);
-  return pageShell('MergeLearn Tutor Map', `${intro}${body}`, 'Map', { ...shellOpts(state, 'map'), mapModeBar: renderMapModeBar(activeMode) });
+  if (activeMode === 'provenance') body = renderTimelineHtml(state);
+  else if (activeMode === 'skill-map') body = renderProgressHtml(state);
+  else body = renderGraphHtml(state);
+  return pageShell('MergeLearn Tutor Map', `<section class="hero"><div><p class="eyebrow">Unified Map</p><h1>One surface for relationships, provenance, and mastery</h1><p>Switch modes to answer three questions: what is related, where did this come from, and what is weak or due.</p></div><div class="hero-card"><strong>${state.concepts.length}</strong><span>concepts</span><strong>${state.learningItems.filter((item) => item.status !== 'archived').length}</strong><span>active cards</span></div></section><section class="toolbar map-tabs"><div><strong>Map mode</strong><p>${escapeHtml(tabDescription)}</p></div><div class="actions">${tabHtml}</div></section>${body}`, 'Map');
 }
 
 function renderGraphHtml(state: TutorState): string {
   const timeline = buildEvidenceTimeline(state);
-  const body = `<section class="hero"><div><p class="eyebrow">Learning graph</p><h1>Courses, docs, questions, cards</h1><p>This is now a visual relationship map backed by /api/evidence-graph. It shows the product chain from evidence to courses, concepts, questions, cards, and review events.</p></div><div class="hero-card"><strong>${timeline.nodes.length}</strong><span>nodes</span><strong>${timeline.edges.length}</strong><span>edges</span></div></section>${nav()}${renderGraphBody(state)}`;
-  return pageShell('MergeLearn Tutor Graph', body, 'Graph', shellOpts(state, 'map'));
+  const graphGroups = graphByType(timeline);
+  const groups = graphGroups.map((group) => `<section class="graph-column" data-graph-type="${escapeHtml(group.type)}"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, 12).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}</section>`).join('');
+  const map = renderGraphMap(timeline.nodes, timeline.edges);
+  const raw = escapeHtml(JSON.stringify({ nodes: timeline.nodes, edges: timeline.edges }, null, 2));
+  return pageShell('MergeLearn Tutor Graph', `<section class="hero"><div><p class="eyebrow">Learning graph</p><h1>Courses, docs, questions, cards</h1><p>This is now a visual relationship map backed by /api/evidence-graph. It shows the product chain from evidence to courses, concepts, questions, cards, and review events.</p></div><div class="hero-card"><strong>${timeline.nodes.length}</strong><span>nodes</span><strong>${timeline.edges.length}</strong><span>edges</span></div></section>${nav()}${map}${renderGraphFocusPanel(graphGroups, timeline.edges.length)}<section class="graph-grid">${groups}</section><details class="panel"><summary><strong>Raw graph projection</strong></summary><pre>${raw}</pre></details>`, 'Graph');
 }
 
 function renderGraphFocusPanel(groups: Array<{ type: string; nodes: EvidenceTimelineNode[] }>, edgeCount: number): string {
@@ -700,12 +561,12 @@ function renderGraphMap(nodes: EvidenceTimelineNode[], edges: Array<{ from: stri
     const x = laneIndex * laneWidth + 22;
     const y = top + rowIndex * rowHeight;
     positions.set(node.id, { x: x + 68, y: y + 30 });
-    return `<g class="graph-map-node" data-graph-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(node.label)}${node.path ? ` · ${escapeHtml(node.path)}` : ''}</title><rect x="${x}" y="${y}" width="${laneWidth - 44}" height="62" rx="14"/><text x="${x + 12}" y="${y + 24}" class="graph-node-type">${escapeHtml(node.type)}</text><text x="${x + 12}" y="${y + 45}" class="graph-node-label">${escapeHtml(shortGraphLabel(node.label))}</text></g>`;
+    return `<g class="graph-map-node"><title>${escapeHtml(node.label)}</title><rect x="${x}" y="${y}" width="${laneWidth - 44}" height="62" rx="14"/><text x="${x + 12}" y="${y + 24}" class="graph-node-type">${escapeHtml(node.type)}</text><text x="${x + 12}" y="${y + 45}" class="graph-node-label">${escapeHtml(shortGraphLabel(node.label))}</text></g>`;
   })).join('');
   const edgeLines = edges.filter((edge) => positions.has(edge.from) && positions.has(edge.to)).slice(0, 60).map((edge) => {
     const from = positions.get(edge.from)!;
     const to = positions.get(edge.to)!;
-    return `<path class="graph-edge" data-edge-from="${escapeHtml(edge.from)}" data-edge-to="${escapeHtml(edge.to)}" d="M ${from.x} ${from.y} C ${(from.x + to.x) / 2} ${from.y}, ${(from.x + to.x) / 2} ${to.y}, ${to.x} ${to.y}"><title>${escapeHtml(edge.type)}</title></path>`;
+    return `<path class="graph-edge" d="M ${from.x} ${from.y} C ${(from.x + to.x) / 2} ${from.y}, ${(from.x + to.x) / 2} ${to.y}, ${to.x} ${to.y}"><title>${escapeHtml(edge.type)}</title></path>`;
   }).join('');
   const legend = '<div class="graph-legend"><span>commit/doc/file → concept</span><span>course → question</span><span>question → card</span><span>card → review event</span></div>';
   return `<section class="panel graph-map-panel"><div class="section-head"><div><h2>Evidence graph map</h2><p>Follow the chain from repository evidence to concepts, accepted questions, review cards, and learner events.</p></div><a class="ghost" href="/api/evidence-graph">Open graph JSON</a></div>${legend}<svg class="graph-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evidence graph map"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#38bdf8"/></marker></defs>${laneRects}<g>${edgeLines}</g><g>${nodeRects}</g></svg></section>`;
@@ -716,8 +577,14 @@ function shortGraphLabel(label: string): string {
 }
 
 function renderProgressHtml(state: TutorState): string {
-  const body = `<section class="hero"><div><p class="eyebrow">Learning map</p><h1>Progress map</h1><p>Track what you have seen, what needs review, and which concepts are becoming confident.</p></div></section>${nav()}${renderProgressBody(state)}`;
-  return pageShell('MergeLearn Tutor Progress', body, 'Progress map', shellOpts(state, 'map'));
+  const graph = buildProgressGraph(state);
+  const groups = graph.nodes.filter((node) => node.kind === 'group').map((group) => {
+    const children = graph.edges.filter((edge) => edge.type === 'group' && edge.from === group.id).map((edge) => graph.nodes.find((node) => node.id === edge.to)).filter(Boolean);
+    const rows = children.map((child) => `<li>${escapeHtml(child!.label)} — ${Math.round(child!.mastery * 100)}% mastery, ${escapeHtml(child!.status.replace(/_/g, ' '))}</li>`).join('');
+    return `<section class="panel"><h2>${escapeHtml(group.label)}</h2>${rows ? `<ul>${rows}</ul>` : '<p>No concepts in this group yet.</p>'}</section>`;
+  }).join('');
+  const stats = `<div class="stats"><div>${graph.summary.new}<span>new</span></div><div>${graph.summary.learning}<span>learning</span></div><div>${graph.summary.confident}<span>confident</span></div><div>${graph.summary.needs_review}<span>needs review</span></div></div>`;
+  return pageShell('MergeLearn Tutor Progress', `<section class="hero"><div><p class="eyebrow">Learning map</p><h1>Progress map</h1><p>Track what you have seen, what needs review, and which concepts are becoming confident.</p></div></section>${nav()}${stats}${renderProgressGuide(state)}${groups}<details class="panel"><summary>Show raw CLI progress</summary><pre>${escapeHtml(renderProgress(state))}</pre></details>`, 'Progress map');
 }
 
 function renderProgressGuide(state: TutorState): string {
@@ -769,7 +636,7 @@ function renderStudyHtml(state: TutorState): string {
   }).join('');
   const summary = data.summary;
   const body = `<section class="hero"><div><p class="eyebrow">Experiment mode</p><h1>Active-control pilot</h1><p>Assign comparable cards to MergeLearn active recall or passive-review controls. This gives future evaluations a baseline stronger than “no treatment”.</p></div><div class="hero-card"><strong>${summary.total}</strong><span>assignments</span><strong>${summary.completed}</strong><span>completed</span></div></section>${nav()}<section class="panel"><div class="section-head"><div><p class="eyebrow">Crossover assignment</p><h2>Build a local active-control set</h2><p>MergeLearn assignments use the normal answer-first review flow. Active-control assignments ask the learner to passively read the same evidence and mark the control review complete without changing mastery.</p></div><button data-action="assign-study">Assign next pilot set</button></div><div class="mini-grid"><article class="mini-card"><strong>${summary.mergelearn}</strong><p>MergeLearn active recall</p><small>Answer, reveal, self-grade, calibration, delayed probes.</small></article><article class="mini-card"><strong>${summary.activeControl}</strong><p>Active-control passive review</p><small>Read evidence without retrieval practice; useful baseline for experiments.</small></article><article class="mini-card"><strong>${summary.pending}</strong><p>Pending assignments</p><small>Complete these before comparing delayed outcomes.</small></article><article class="mini-card"><strong>${summary.passiveCompleted}</strong><p>Passive controls complete</p><small>Recorded as events without increasing mastery.</small></article></div></section><section class="panel"><div class="section-head"><div><h2>Assignments</h2><p>Use this as a pilot ledger. It is intentionally local and inspectable.</p></div><a class="ghost" href="/api/study">Open study JSON</a></div><div class="mini-grid">${rows || '<p>No study assignments yet. Assign a pilot set after generating review cards.</p>'}</div></section>${studyPageScript()}`;
-  return pageShell('MergeLearn Tutor Study', body, 'Active-control study', shellOpts(state, 'practice'));
+  return pageShell('MergeLearn Tutor Study', body, 'Active-control study');
 }
 
 function studyPageScript(): string {
@@ -780,29 +647,26 @@ function renderAuditHtml(state: TutorState): string {
   const broadCards = state.learningItems.filter((item) => !item.courseId).length;
   const courseCards = state.learningItems.filter((item) => item.courseId).length;
   const acceptedQuestionCards = state.learningItems.filter((item) => item.questionId).length;
-  const qualityEvents = state.learningEvents.filter((event) => ['marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate'].includes(event.eventType));
+  const qualityEvents = state.learningEvents.filter((event) => ['marked_bad_card', 'marked_wrong_evidence', 'marked_duplicate'].includes(event.eventType)).length;
   const calibration = summarizeCalibration(state);
-  const buckets = calibrationBuckets(state);
   const delayed = delayedProbeSummary(state);
-  const drafts = state.questionBank.filter((entry) => entry.status === 'draft');
-  const accepted = state.questionBank.filter((entry) => entry.status === 'accepted');
-  const rejected = state.questionBank.filter((entry) => entry.status === 'rejected');
-  const pipelineCards = [
-    { key: 'draft', title: 'Draft questions', count: drafts.length, detail: 'Locally drafted prompts awaiting review.', tone: 'pipeline-draft' },
-    { key: 'accepted', title: 'Accepted questions', count: accepted.length, detail: 'Stable source for generated review cards.', tone: 'pipeline-accepted' },
-    { key: 'rejected', title: 'Rejected questions', count: rejected.length, detail: 'Kept for audit; not used to generate cards.', tone: 'pipeline-rejected' },
-    { key: 'quality', title: 'Card-quality events', count: qualityEvents.length, detail: 'Bad-card, wrong-evidence, and duplicate feedback.', tone: 'pipeline-quality' },
+  const study = studySummary(state);
+  const drafts = state.questionBank.filter((entry) => entry.status === 'draft').length;
+  const accepted = state.questionBank.filter((entry) => entry.status === 'accepted').length;
+  const rejected = state.questionBank.filter((entry) => entry.status === 'rejected').length;
+  const questionBadges = [
+    { label: 'Drafts', count: drafts, tone: 'draft' },
+    { label: 'Accepted', count: accepted, tone: 'accepted' },
+    { label: 'Rejected', count: rejected, tone: 'rejected' },
   ];
-  const pipelineHtml = `<section class="panel"><div class="section-head"><div><p class="eyebrow">Quality pipeline</p><h2>From drafted questions to accepted review cards</h2><p>Click a metric card to inspect the matching local items.</p></div><a class="ghost" href="/questions">Manage questions</a></div><div class="pipeline-grid">${pipelineCards.map((card) => `<button type="button" class="pipeline-card ${card.tone}" data-action="audit-open" data-audit-key="${card.key}" data-audit-title="${escapeHtml(card.title)}"><strong>${card.count}</strong><p>${escapeHtml(card.title)}</p><small>${escapeHtml(card.detail)}</small></button>`).join('')}</div><div class="is-hidden" id="audit-list-draft">${renderAuditListItems(drafts.map((entry) => entry.prompt))}</div><div class="is-hidden" id="audit-list-accepted">${renderAuditListItems(accepted.map((entry) => entry.prompt))}</div><div class="is-hidden" id="audit-list-rejected">${renderAuditListItems(rejected.map((entry) => entry.prompt))}</div><div class="is-hidden" id="audit-list-quality">${renderAuditListItems(qualityEvents.map((event) => `${event.eventType} · ${event.itemId}${event.note ? ` · ${event.note}` : ''}`))}</div></section>`;
-  const bucketRows = buckets.map((bucket) => {
-    const accuracy = bucket.total > 0 ? Math.round((bucket.correct / bucket.total) * 100) : 0;
-    return `<div class="calibration-row"><span>${escapeHtml(bucket.label)}</span><div class="calibration-bar"><span style="width:${accuracy}%"></span></div><strong>${bucket.total ? `${accuracy}% · ${bucket.correct}/${bucket.total}` : '—'}</strong></div>`;
-  }).join('');
-  const activity = recentHistoryActivity(state);
-  const auditHtml = `<section class="audit-split"><section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Activity timeline</h2><p>Recent reviews, delayed probe responses, and card-quality feedback.</p></div></div><div class="timeline-list">${activity || '<p>No learning activity yet.</p>'}</div></section><section class="panel"><div class="section-head"><div><p class="eyebrow">Calibration</p><h2>Calibrated answers</h2><p>${calibration.pairedCount} paired answers · confidence ${score(calibration.averageConfidence)} · accuracy ${score(calibration.accuracy)} · Brier ${calibration.brierScore.toFixed(2)}</p></div></div><div class="calibration-chart">${bucketRows}</div><div class="mini-grid audit-source-grid"><article class="mini-card"><strong>${broadCards}</strong><p>Broad repo cards</p></article><article class="mini-card"><strong>${courseCards}</strong><p>Course cards</p></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p></article><article class="mini-card"><strong>${delayed.due}</strong><p>Delayed probes due</p></article></div></section></section>`;
-  const modal = '<div class="modal-overlay is-hidden" id="audit-modal" data-action="audit-close"><div class="modal-panel" role="dialog" aria-modal="true"><div class="modal-head"><h2 class="modal-title">Audit details</h2><button type="button" class="ghost" data-action="audit-close">Close</button></div><div class="modal-body"></div></div></div>';
-  const intro = renderPageIntro('Audit and quality', 'One audit view for cards, questions, and study events', 'History and Questions share one quality lens here: every badge is deterministic and computed from local state.', `<div class="page-intro-stats"><span>${state.learningEvents.length} review events</span><span>${state.questionBank.length} questions</span></div>`);
-  return pageShell('MergeLearn Tutor Audit', `${intro}${nav()}${pipelineHtml}${auditHtml}${modal}${auditPageScript()}`, 'Audit', shellOpts(state, 'audit'));
+  const cardBadges = [
+    { label: 'Broad repo cards', count: broadCards, tone: 'broad' },
+    { label: 'Course cards', count: courseCards, tone: 'course' },
+    { label: 'Accepted-question cards', count: acceptedQuestionCards, tone: 'question' },
+  ];
+  const pipelineHtml = `<section class="panel"><div class="section-head"><div><p class="eyebrow">Quality pipeline</p><h2>From drafted questions to accepted review cards</h2><p>Each stage has deterministic badges that help you judge quality without remote calls.</p></div><a class="ghost" href="/questions">Manage questions</a></div><div class="mini-grid"><article class="mini-card"><strong>${drafts}</strong><p>Draft questions</p><small>Locally drafted; network not used. Review before accepting.</small></article><article class="mini-card"><strong>${accepted}</strong><p>Accepted questions</p><small>Stable source for generated review cards.</small></article><article class="mini-card"><strong>${rejected}</strong><p>Rejected questions</p><small>Kept for audit; not used to generate cards.</small></article><article class="mini-card"><strong>${qualityEvents}</strong><p>Card-quality events</p><small>Bad-card, wrong-evidence, and duplicate feedback without lowering mastery.</small></article></div></section>`;
+  const auditHtml = `<section class="panel"><div class="section-head"><div><p class="eyebrow">Source audit</p><h2>Why did these cards exist?</h2><p>Separate broad repo evidence, course-scoped generation, accepted-question cards, delayed probes, study controls, and card-quality feedback.</p></div><a class="ghost" href="/">Open review</a></div><div class="mini-grid"><article class="mini-card"><strong>${broadCards}</strong><p>Broad repo cards</p><small>Cards without a course id came from the broad queue.</small></article><article class="mini-card"><strong>${courseCards}</strong><p>Course cards</p><small>These should show a course id on the card.</small></article><article class="mini-card"><strong>${acceptedQuestionCards}</strong><p>Accepted-question cards</p><small>Generated from approved question-bank prompts.</small></article><article class="mini-card"><strong>${delayed.due}</strong><p>Delayed probes due</p><small>${delayed.scheduled} scheduled · ${delayed.completed} completed</small></article><article class="mini-card"><strong>${study.total}</strong><p>Study assignments</p><small>${study.mergelearn} active recall · ${study.activeControl} passive</small></article><article class="mini-card"><strong>${calibration.pairedCount}</strong><p>Calibrated answers</p><small>Confidence ${score(calibration.averageConfidence)} · accuracy ${score(calibration.accuracy)} · Brier ${calibration.brierScore.toFixed(2)}</small></article></div></section>`;
+  return pageShell('MergeLearn Tutor Audit', `<section class="hero"><div><p class="eyebrow">Audit and quality</p><h1>One audit view for cards, questions, and study events</h1><p>History and Questions share one quality lens here: every badge is deterministic and computed from local state.</p></div><div class="hero-card"><strong>${state.learningEvents.length}</strong><span>review events</span><strong>${state.questionBank.length}</strong><span>questions</span></div></section>${nav()}${pipelineHtml}${auditHtml}`, 'Audit');
 }
 
 function renderHistoryHtml(state: TutorState): string {
@@ -813,7 +677,7 @@ function renderHistoryHtml(state: TutorState): string {
   const cardList = (cards: typeof data.cards) => cards.slice().reverse().map((card) => `<article class="mini-card ${card.status === 'archived' ? 'is-archived' : ''}"><div class="card-topline"><span>${escapeHtml(card.status)}</span><span>gen ${card.generation}</span><span>${escapeHtml(card.source)}</span></div><h3>${escapeHtml(card.title)}</h3><p>${escapeHtml(card.id)}${card.courseId ? ` · course ${escapeHtml(card.courseId)}` : ''}${card.questionId ? ` · question ${escapeHtml(card.questionId)}` : ''}</p><details><summary>${card.events.length} timeline events</summary><ul>${card.events.map((event) => `<li><strong>${escapeHtml(event.eventType)}</strong>${event.correct === undefined ? '' : ` · ${event.correct ? 'correct' : 'missed'}`} ${event.answerText ? `— ${escapeHtml(event.answerText)}` : ''}${event.note ? ` — ${escapeHtml(event.note)}` : ''}</li>`).join('')}</ul></details></article>`).join('');
   const activity = recentHistoryActivity(state);
   const metrics = `<div class="stats"><div>${data.summary.activeCards}<span>active</span></div><div>${data.summary.archivedCards}<span>archived</span></div><div>${data.summary.batches}<span>batches</span></div><div>${data.summary.events}<span>events</span></div></div>`;
-  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}${renderHistorySourceAudit(state)}<section class="panel"><h2>Recent activity</h2><div class="timeline-list">${activity || '<p>No learning activity yet. Generate cards, answer one, or mark card quality to start the audit trail.</p>'}</div></section><section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet. Use Review source to generate a queue; batch details will appear here.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards. Generate cards from all evidence or a selected course on Review.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards. Regenerate from source to preserve the old queue here.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History', shellOpts(state, 'audit'));
+  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}${renderHistorySourceAudit(state)}<section class="panel"><h2>Recent activity</h2><div class="timeline-list">${activity || '<p>No learning activity yet. Generate cards, answer one, or mark card quality to start the audit trail.</p>'}</div></section><section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet. Use Review source to generate a queue; batch details will appear here.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards. Generate cards from all evidence or a selected course on Review.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards. Regenerate from source to preserve the old queue here.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History');
 }
 
 function renderHistorySourceAudit(state: TutorState): string {
@@ -840,7 +704,7 @@ function recentHistoryActivity(state: TutorState): string {
   return rows.map((row) => `<article class="timeline-row"><span>${escapeHtml(row.kind)}</span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.detail)}</small></article>`).join('');
 }
 
-function renderPreferencesHtml(state: TutorState, preferences: UserPreferences): string {
+function renderPreferencesHtml(preferences: UserPreferences): string {
   const options = [
     ['language_mechanics', 'Language mechanics', 'Syntax, types, and runtime rules.', 'Example: What does this union type allow and reject?'],
     ['local_behavior', 'Function and block behavior', 'What the highlighted code does locally.', 'Example: What happens when this input is undefined?'],
@@ -858,7 +722,7 @@ function renderPreferencesHtml(state: TutorState, preferences: UserPreferences):
   const checks = options.map(([plane, label, detail, example]) => `<label class="choice"><input type="checkbox" data-plane="${plane}" ${preferences.review.enabledPlanes.includes(plane) ? 'checked' : ''} /><span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(detail)} ${escapeHtml(example)}</small></span></label>`).join('');
   const selectedSummary = `${preferences.review.enabledPlanes.length} question categories · ${preferences.review.snippetLineCount} snippet lines · explanations ${preferences.review.showExplanationsByDefault ? 'on' : 'off'}`;
   const body = `<section class="hero"><div><p class="eyebrow">Personalize the tutor</p><h1>Question preferences setup</h1><p>Choose a recommended question mix, then adjust the categories before drafting questions or generating cards.</p></div><div class="hero-card"><strong>${preferences.review.enabledPlanes.length}</strong><span>enabled categories</span><strong>${preferences.review.snippetLineCount}</strong><span>snippet lines</span></div></section>${nav()}<section class="panel onboarding-panel preferences-wizard"><div class="section-head"><div><p class="eyebrow">Setup wizard</p><h2>Start with a recommended mix</h2><p>These presets only change local preferences in <code>.skilltrace/preferences.json</code>. They do not enable remote LLM calls.</p></div><a class="ghost" href="/plan">Back to Plan Builder</a></div><div class="preset-grid">${presetCards}</div><p class="setup-note" id="preferences-summary">Current setup: ${escapeHtml(selectedSummary)}.</p></section><section class="panel"><div class="section-head"><div><h2>Fine-tune question categories</h2><p>Pick the kinds of prompts you want in the Review queue. A small focused mix is usually better than every category.</p></div><a class="ghost" href="/questions">Draft questions next</a></div><div class="choices">${checks}</div><div class="preference-controls"><label>Snippet lines <input id="snippet-lines" type="number" min="4" max="40" value="${preferences.review.snippetLineCount}" /></label><label class="choice"><input id="show-explanations" type="checkbox" ${preferences.review.showExplanationsByDefault ? 'checked' : ''} /><span><strong>Show explanations by default</strong><small>Useful while learning a new repo; turn off for active recall.</small></span></label></div><div class="actions"><button data-action="save-preferences">Save preferences</button><a class="ghost" href="/plan">Return to Plan Builder</a></div></section>`;
-  return pageShell('MergeLearn Tutor Preferences', body, 'Question preferences', shellOpts(state, 'setup'));
+  return pageShell('MergeLearn Tutor Preferences', body, 'Question preferences');
 }
 
 function nav(): string {
@@ -866,367 +730,242 @@ function nav(): string {
 }
 
 function appNav(): string {
-  return '<nav class="app-nav" aria-label="Primary navigation"><a href="/workbench">Workbench</a><a href="/practice">Practice</a><a href="/map">Map</a><a href="/audit">Audit</a><a href="/plan">Setup</a></nav>';
+  return '<nav class="app-nav" aria-label="Primary navigation"><a href="/workbench">Workbench</a><a href="/practice">Practice</a><a href="/map">Map</a><a href="/audit">Audit</a><a href="/plan">Setup</a></nav><nav class="app-subnav" aria-label="Secondary navigation"><span>Practice</span><a href="/practice">Focused practice</a><a href="/">Review cards</a><a href="/study">Study controls</a><span>Map</span><a href="/map?mode=local-graph">Local graph</a><a href="/map?mode=provenance">Provenance lane</a><a href="/map?mode=skill-map">Skill map</a><a href="/graph">Legacy graph</a><a href="/timeline">Legacy timeline</a><a href="/progress">Legacy progress</a><span>Audit</span><a href="/audit">Audit overview</a><a href="/history">History</a><a href="/questions">Questions</a><span>Setup</span><a href="/plan">Plan Builder</a><a href="/courses">Courses</a><a href="/preferences">Preferences</a></nav>';
 }
 
-function appSubnav(): string {
-  return '<nav class="app-subnav" aria-label="Secondary navigation"><span class="subnav-group" data-group="practice">Practice</span><a href="/practice" data-group="practice">Focused practice</a><a href="/" data-group="practice">Review cards</a><a href="/study" data-group="practice">Study controls</a><span class="subnav-group" data-group="map">Map</span><a href="/map?mode=local-graph" data-group="map">Local graph</a><a href="/map?mode=provenance" data-group="map">Provenance lane</a><a href="/map?mode=skill-map" data-group="map">Skill map</a><a href="/graph" data-group="map">Legacy graph</a><a href="/timeline" data-group="map">Legacy timeline</a><a href="/progress" data-group="map">Legacy progress</a><span class="subnav-group" data-group="audit">Audit</span><a href="/audit" data-group="audit">Audit overview</a><a href="/history" data-group="audit">History</a><a href="/questions" data-group="audit">Questions</a><span class="subnav-group" data-group="setup">Setup</span><a href="/plan" data-group="setup">Plan Builder</a><a href="/courses" data-group="setup">Courses</a><a href="/preferences" data-group="setup">Preferences</a></nav>';
-}
-
-function pageShell(title: string, body: string, status: string, options: PageShellOptions = {}): string {
-  const bodyClasses = [
-    options.focus ? 'practice-focus-shell' : '',
-    options.surface ? `surface-${options.surface}` : '',
-  ].filter(Boolean).join(' ');
-  const repoBadge = escapeHtml(shortRepoLabel(options.repoPath));
-  const mapBar = options.mapModeBar ? options.mapModeBar.replace('class="map-mode-bar"', 'class="map-mode-bar map-mode-bar--shell"') : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>${style()}</style></head><body${bodyClasses ? ` class="${bodyClasses}"` : ''}><div class="status" id="status">${escapeHtml(status)}</div><header class="global-header" role="banner"><div class="header-brand"><span class="app-logo">MergeLearn Tutor</span><span class="repo-badge" id="shell-repo-badge" title="${escapeHtml(options.repoPath ?? '')}">${repoBadge}</span><span class="sr-only">Local learning workbench</span><span class="sr-only">No remote LLM calls. State is read from this local session.</span></div>${appNav()}<div class="header-metrics" aria-label="Current local plan snapshot"><span class="metric-pill">Due probes <strong id="shell-due-probes">—</strong></span><span class="metric-pill">Active cards <strong id="shell-cards">—</strong></span><a class="header-cta" id="shell-next-action" href="/plan">Loading plan state…</a><span class="sr-only" id="shell-concepts">—</span><span class="sr-only" id="shell-courses">—</span><span class="sr-only" id="shell-questions">—</span></div></header>${mapBar}${appSubnav()}<main class="content-area">${body}</main><script>${script()}</script></body></html>`;
+function pageShell(title: string, body: string, status: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><style>${style()}</style></head><body><div class="status" id="status">${escapeHtml(status)}</div><header class="app-shell"><div class="app-brand"><p class="eyebrow">MergeLearn Tutor</p><strong>Local learning workbench</strong><small>No remote LLM calls. State is read from this local session.</small></div>${appNav()}<section class="shell-context" aria-label="Current local plan snapshot"><div><span>Concepts</span><strong id="shell-concepts">—</strong></div><div><span>Courses</span><strong id="shell-courses">—</strong></div><div><span>Accepted questions</span><strong id="shell-questions">—</strong></div><div><span>Active cards</span><strong id="shell-cards">—</strong></div><a class="ghost" id="shell-next-action" href="/plan">Loading plan state…</a></section></header><main>${body}</main><script>${script()}</script></body></html>`;
 }
 
 function style(): string {
   return `
 *,*:before,*:after{box-sizing:border-box}
-:root{
-  --color-bg-void:#010409;
-  --color-bg-base:#0d1117;
-  --color-bg-raised:#161b22;
-  --color-bg-overlay:#1c2128;
-  --color-bg-hover:#21262d;
-  --color-bg-selected:#1f3a5f;
-  --color-border-subtle:rgba(48,54,61,0.8);
-  --color-border-default:rgba(48,54,61,1);
-  --color-border-muted:rgba(78,96,120,0.5);
-  --color-border-emphasis:rgba(99,102,241,0.5);
-  --color-text-primary:#e6edf3;
-  --color-text-secondary:#8b949e;
-  --color-text-muted:#484f58;
-  --color-text-link:#58a6ff;
-  --color-text-inverse:#0d1117;
-  --color-accent-primary:#6366f1;
-  --color-accent-primary-hover:#7c7ff7;
-  --color-accent-primary-bg:rgba(99,102,241,0.12);
-  --color-accent-primary-border:rgba(99,102,241,0.35);
-  --color-success:#3fb950;
-  --color-success-bg:rgba(63,185,80,0.1);
-  --color-success-border:rgba(63,185,80,0.35);
-  --color-warning:#d29922;
-  --color-warning-bg:rgba(210,153,34,0.12);
-  --color-warning-border:rgba(210,153,34,0.35);
-  --color-danger:#f85149;
-  --color-danger-bg:rgba(248,81,73,0.1);
-  --color-danger-border:rgba(248,81,73,0.35);
-  --color-info:#388bfd;
-  --color-info-bg:rgba(56,139,253,0.1);
-  --color-info-border:rgba(56,139,253,0.35);
-  --color-concept:#a78bfa;
-  --color-concept-bg:rgba(167,139,250,0.1);
-  --color-concept-border:rgba(167,139,250,0.35);
-  --font-sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
-  --font-mono:'JetBrains Mono','Fira Code',ui-monospace,'Cascadia Code',monospace;
-  --text-xs:0.75rem;
-  --text-sm:0.875rem;
-  --text-base:1rem;
-  --text-lg:1.125rem;
-  --text-xl:1.25rem;
-  --text-2xl:1.5rem;
-  --text-3xl:1.875rem;
-  --text-4xl:2.25rem;
-  --font-regular:400;
-  --font-medium:500;
-  --font-semibold:600;
-  --font-bold:700;
-  --leading-tight:1.25;
-  --leading-snug:1.375;
-  --leading-normal:1.5;
-  --leading-relaxed:1.625;
-  --tracking-tight:-0.025em;
-  --tracking-normal:0;
-  --tracking-wide:0.05em;
-  --tracking-wider:0.1em;
-  --space-1:0.25rem;
-  --space-2:0.5rem;
-  --space-3:0.75rem;
-  --space-4:1rem;
-  --space-5:1.25rem;
-  --space-6:1.5rem;
-  --space-8:2rem;
-  --space-10:2.5rem;
-  --space-12:3rem;
-  --space-16:4rem;
-  --radius-sm:6px;
-  --radius-md:10px;
-  --radius-lg:14px;
-  --radius-xl:20px;
-  --radius-full:9999px;
-  --max-w-sm:480px;
-  --max-w-md:720px;
-  --max-w-lg:960px;
-  --max-w-xl:1120px;
-  --max-w-2xl:1280px;
-  --shadow-sm:0 1px 3px rgba(1,4,9,0.4),0 1px 2px rgba(1,4,9,0.24);
-  --shadow-md:0 4px 6px rgba(1,4,9,0.5),0 2px 4px rgba(1,4,9,0.3);
-  --shadow-lg:0 10px 20px rgba(1,4,9,0.6),0 4px 8px rgba(1,4,9,0.35);
-  --shadow-glow-indigo:0 0 0 3px rgba(99,102,241,0.25);
-  --shadow-glow-success:0 0 0 3px rgba(63,185,80,0.25);
-  --transition-fast:100ms cubic-bezier(0.16,1,0.3,1);
-  --transition-base:200ms cubic-bezier(0.16,1,0.3,1);
-  --transition-slow:350ms cubic-bezier(0.16,1,0.3,1);
+:root {
+  --bg-primary: #020617;
+  --bg-secondary: #070f1e;
+  --bg-tertiary: #0b1528;
+  --glass-bg: rgba(7, 15, 30, 0.6);
+  --glass-border: rgba(147, 197, 253, 0.08);
+  --glass-border-hover: rgba(147, 197, 253, 0.15);
+  --glass-border-focus: rgba(99, 102, 241, 0.4);
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --accent-indigo: #6366f1;
+  --accent-emerald: #10b981;
+  --accent-emerald-bg: rgba(16, 185, 129, 0.15);
+  --accent-amber: #f59e0b;
+  --accent-amber-bg: rgba(245, 158, 11, 0.15);
+  --accent-rose: #f43f5e;
+  --accent-rose-bg: rgba(244, 63, 94, 0.15);
+  --accent-sky: #38bdf8;
+  --accent-sky-bg: rgba(56, 189, 248, 0.15);
+  --font-family: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --transition-smooth: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --shadow-premium: 0 16px 40px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.2);
 }
-body{margin:0;font-family:var(--font-sans);font-size:var(--text-base);line-height:var(--leading-normal);color:var(--color-text-primary);background:var(--color-bg-void);-webkit-font-smoothing:antialiased}
-.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-.status{position:sticky;top:0;z-index:50;background:var(--color-bg-overlay);padding:var(--space-2) var(--space-6);border-bottom:1px solid var(--color-border-subtle);color:var(--color-info);font-size:var(--text-sm);font-weight:var(--font-semibold)}
-.global-header{position:sticky;top:0;z-index:40;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:var(--space-4);height:48px;padding:0 var(--space-6);background:var(--color-bg-base);backdrop-filter:blur(12px);border-bottom:1px solid var(--color-border-subtle)}
-.header-brand{display:flex;align-items:center;gap:var(--space-3);min-width:0}
-.app-logo{font-size:15px;font-weight:var(--font-bold);letter-spacing:var(--tracking-tight);background:linear-gradient(135deg,var(--color-text-primary),var(--color-accent-primary-hover));-webkit-background-clip:text;-webkit-text-fill-color:transparent;white-space:nowrap}
-.repo-badge{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--color-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:12rem}
-.header-metrics{display:flex;align-items:center;gap:var(--space-3);flex-wrap:wrap;justify-content:flex-end}
-.metric-pill{font-size:var(--text-xs);color:var(--color-text-secondary);white-space:nowrap}
-.metric-pill strong{color:var(--color-text-primary);font-weight:var(--font-semibold)}
-.header-cta{font-size:var(--text-xs);font-weight:var(--font-semibold);color:var(--color-text-link);text-decoration:none;padding:var(--space-1) var(--space-3);border-radius:var(--radius-md);border:1px solid var(--color-border-subtle);background:var(--color-bg-overlay);transition:background var(--transition-fast),border-color var(--transition-fast)}
-.header-cta:hover{background:var(--color-bg-hover);border-color:var(--color-border-muted);text-decoration:none}
-.app-nav{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:center;align-items:center}
-.app-nav a{display:inline-flex;align-items:center;padding:var(--space-2) var(--space-3);font-size:var(--text-sm);font-weight:var(--font-medium);color:var(--color-text-secondary);text-decoration:none;border-radius:var(--radius-full);border:1px solid transparent;transition:background var(--transition-fast),color var(--transition-fast),border-color var(--transition-fast)}
-.app-nav a:hover{color:var(--color-text-primary);background:var(--color-bg-hover)}
-.app-nav a[aria-current="page"]{color:var(--color-text-primary);background:var(--color-bg-selected);border-color:var(--color-border-emphasis)}
-.app-subnav{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;padding:var(--space-2) var(--space-6);background:var(--color-bg-base);border-bottom:1px solid var(--color-border-subtle)}
-.app-subnav span{color:var(--color-text-muted);font-size:var(--text-xs);font-weight:var(--font-bold);letter-spacing:var(--tracking-wider);text-transform:uppercase;margin-left:var(--space-2)}
-.app-subnav a{font-size:var(--text-xs);padding:var(--space-1) var(--space-3);color:var(--color-text-secondary);text-decoration:none;border-radius:var(--radius-full);border:1px solid transparent;transition:background var(--transition-fast),color var(--transition-fast)}
-.app-subnav a:hover{color:var(--color-text-primary);background:var(--color-bg-hover)}
-.app-subnav a[aria-current="page"]{color:var(--color-text-primary);border-color:var(--color-info-border);background:var(--color-info-bg)}
-.content-area{max-width:var(--max-w-xl);margin:0 auto;padding:var(--space-6) var(--space-6) var(--space-16)}
-a{color:var(--color-text-link);text-decoration:none;transition:color var(--transition-fast)}
-a:hover{text-decoration:underline}
-.hero{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:var(--space-6);align-items:stretch;margin:0 0 var(--space-6);padding:var(--space-8);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised)}
-.hero h1{font-size:var(--text-3xl);line-height:var(--leading-tight);margin:var(--space-1) 0 var(--space-3);letter-spacing:var(--tracking-tight);font-weight:var(--font-bold)}
-.hero p{color:var(--color-text-secondary);font-size:var(--text-base);line-height:var(--leading-normal);margin:0}
-.hero-card{border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-6);display:grid;align-content:center;gap:var(--space-2);transition:transform var(--transition-base),border-color var(--transition-fast)}
-.hero-card:hover{border-color:var(--color-border-muted);transform:translateY(-1px)}
-.hero-card strong{font-size:var(--text-4xl);font-weight:var(--font-bold);letter-spacing:var(--tracking-tight);color:var(--color-text-primary)}
-.hero-card span{color:var(--color-text-muted);font-size:var(--text-xs);text-transform:uppercase;letter-spacing:var(--tracking-wide);font-weight:var(--font-semibold)}
-.nav,.toolbar{display:flex;flex-wrap:wrap;gap:var(--space-3);align-items:center;background:var(--color-bg-raised);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);padding:var(--space-4) var(--space-5);margin:0 0 var(--space-6)}
-.toolbar{justify-content:space-between}
-.toolbar p{margin:0;color:var(--color-text-secondary);font-size:var(--text-sm)}
-.nav a,.ghost,button{display:inline-flex;align-items:center;justify-content:center;padding:var(--space-2) var(--space-4);font-size:var(--text-sm);font-weight:var(--font-semibold);text-decoration:none;border-radius:var(--radius-md);border:1px solid var(--color-border-default);background:var(--color-bg-overlay);color:var(--color-text-primary);transition:background var(--transition-fast),border-color var(--transition-fast),transform var(--transition-base);cursor:pointer;font-family:inherit}
-.ghost{background:transparent;color:var(--color-text-secondary);border-color:transparent}
-.nav a:hover,.ghost:hover,button:hover{background:var(--color-bg-hover);border-color:var(--color-border-muted);color:var(--color-text-primary);text-decoration:none;transform:translateY(-1px)}
-button:focus-visible,.ghost:focus-visible,.app-nav a:focus-visible,a:focus-visible{outline:none;box-shadow:var(--shadow-glow-indigo)}
-button:first-child,.actions button:first-child,.primary-actions button{background:var(--color-accent-primary);border-color:var(--color-accent-primary);color:#fff}
-button:first-child:hover,.actions button:first-child:hover,.primary-actions button:hover{background:var(--color-accent-primary-hover);transform:translateY(-1px)}
-button:disabled{opacity:.4;cursor:not-allowed;transform:none!important}
-.card,.panel{background:var(--color-bg-raised);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);padding:var(--space-6);margin:0 0 var(--space-6)}
-.card.completed{border-color:var(--color-success-border);background:linear-gradient(180deg,var(--color-success-bg),var(--color-bg-raised))}
-.review-grid{display:grid;gap:var(--space-6)}
-.practice-focus{max-width:var(--max-w-md);margin:0 auto}
-.practice-progress{height:6px;max-width:none;margin-top:var(--space-3)}
-.card-topline{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-bottom:var(--space-4);align-items:center}
-.card-topline span,.eyebrow{border:1px solid var(--color-info-border);border-radius:var(--radius-full);padding:3px 8px;color:var(--color-info);background:var(--color-info-bg);text-transform:uppercase;font-size:var(--text-xs);font-weight:var(--font-semibold);letter-spacing:var(--tracking-wider)}
-.eyebrow{display:inline-flex;margin-bottom:var(--space-3)}
-.why{color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-normal);margin-top:0}
-.snippet-head{display:flex;justify-content:space-between;gap:var(--space-3);margin:var(--space-4) 0 0;padding:var(--space-3) var(--space-4);background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);border-radius:var(--radius-md) var(--radius-md) 0 0;color:var(--color-info);font-family:var(--font-mono);font-size:var(--text-sm);font-weight:var(--font-medium)}
-.question-box,.reveal-panel,.confidence-panel{border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-4);margin:var(--space-4) 0}
-.reveal-panel{background:var(--color-accent-primary-bg);border-color:var(--color-accent-primary-border)}
-.confidence-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:var(--space-2)}
-.confidence-options label{display:flex;gap:var(--space-2);align-items:center;border:1px solid var(--color-border-default);border-radius:var(--radius-full);background:var(--color-bg-overlay);padding:var(--space-2) var(--space-3);color:var(--color-text-secondary);font-weight:var(--font-semibold);font-size:var(--text-sm);cursor:pointer;transition:background var(--transition-fast),border-color var(--transition-fast)}
-.confidence-options label:hover{border-color:var(--color-border-emphasis);color:var(--color-text-primary);background:var(--color-bg-hover)}
+
+body{font-family:var(--font-family);margin:0;background:radial-gradient(circle at 10% 10%,rgba(99, 102, 241, 0.12),transparent 40rem),radial-gradient(circle at 90% 80%,rgba(56, 189, 248, 0.08),transparent 40rem),#030712;color:var(--text-primary);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+main,.app-shell{max-width:1160px;margin:0 auto;padding:34px 24px 80px}
+main{padding-top:20px}
+.app-shell{padding-bottom:0}
+.app-brand{display:grid;gap:6px;margin:24px 0 14px}
+.app-brand strong{font-size:28px;letter-spacing:-.03em;font-weight:700;background:linear-gradient(135deg,#fff,#cbd5e1);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.app-brand small{color:var(--text-secondary);font-size:13px}
+
+.shell-context{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr)) auto;gap:12px;align-items:stretch;border:1px solid var(--glass-border);border-radius:24px;background:var(--glass-bg);backdrop-filter:blur(24px);padding:14px;margin:14px 0 8px;box-shadow:var(--shadow-premium)}
+.shell-context div{border:1px solid rgba(255,255,255,0.03);border-radius:18px;background:rgba(2,6,23,0.4);padding:10px 12px;transition:var(--transition-smooth)}
+.shell-context div:hover{border-color:var(--glass-border-hover);background:rgba(2,6,23,0.6)}
+.shell-context span{display:block;color:var(--text-muted);font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+.shell-context strong{display:block;font-size:24px;margin-top:4px;font-weight:700;color:var(--text-primary)}
+.shell-context .ghost{align-self:center;white-space:nowrap;margin:0}
+
+a{color:var(--accent-sky);text-decoration:none;transition:var(--transition-smooth)}
+a:hover{color:#7dd3fc;text-decoration:underline}
+
+.status{position:sticky;top:0;z-index:50;background:rgba(3,7,18,0.75);backdrop-filter:blur(24px);padding:10px 24px;border-bottom:1px solid var(--glass-border);color:var(--accent-sky);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:space-between;letter-spacing:0.02em}
+
+.hero{display:grid;grid-template-columns:minmax(0,1fr) 220px;gap:24px;align-items:stretch;margin:22px 0 20px;padding:34px;border:1px solid var(--glass-border);border-radius:28px;background:linear-gradient(135deg,rgba(99,102,241,0.06),rgba(3,7,18,0.4));backdrop-filter:blur(24px);box-shadow:var(--shadow-premium)}
+.hero h1{font-size:40px;line-height:1.1;margin:4px 0 12px;letter-spacing:-.03em;font-weight:700}
+.hero p{color:var(--text-secondary);font-size:16px;line-height:1.5;margin:0}
+.hero-card{border:1px solid var(--glass-border);border-radius:22px;background:rgba(2,6,23,0.45);padding:22px;display:grid;align-content:center;gap:6px;transition:var(--transition-smooth)}
+.hero-card:hover{border-color:var(--glass-border-hover);transform:scale(1.02)}
+.hero-card strong{font-size:38px;font-weight:700;color:var(--text-primary)}
+.hero-card span{color:var(--text-muted);font-size:12px;text-transform:uppercase;letter-spacing:0.05em;font-weight:600}
+
+.nav,.app-nav,.toolbar{display:flex;flex-wrap:wrap;gap:12px;align-items:center;background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:22px;padding:12px 16px;margin:18px 0;backdrop-filter:blur(24px);box-shadow:var(--shadow-premium)}
+.app-nav{margin-bottom:8px;padding:10px 14px}
+.app-subnav{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:-2px 0 14px;padding:8px 10px;border:1px solid var(--glass-border);border-radius:18px;background:rgba(7,15,30,0.3);backdrop-filter:blur(12px)}
+.app-subnav span{color:var(--text-muted);font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin-left:8px;margin-right:4px}
+.toolbar{justify-content:space-between;padding:14px 20px}
+.toolbar p{margin:0;color:var(--text-secondary);font-size:14px}
+
+.nav a,.app-nav a,.app-subnav a,.ghost,button{display:inline-flex;align-items:center;justify-content:center;padding:9px 16px;font-size:13px;font-weight:600;text-decoration:none;border-radius:999px;border:1px solid var(--glass-border);background:rgba(24,39,68,0.25);color:var(--text-primary);transition:var(--transition-smooth);cursor:pointer}
+.app-subnav a{font-size:12px;padding:6px 12px;background:rgba(2,6,23,0.3);color:var(--text-secondary)}
+.nav a:hover,.app-nav a:hover,.app-subnav a:hover,.ghost:hover,button:hover{transform:translateY(-1px);border-color:var(--glass-border-focus);background:rgba(99,102,241,0.1);color:var(--text-primary);box-shadow:var(--shadow-glow)}
+.app-nav a[aria-current="page"]{background:var(--accent-indigo);color:#fff;border-color:var(--accent-indigo);box-shadow:0 0 20px rgba(99, 102, 241, 0.4)}
+.app-subnav a[aria-current="page"]{border-color:var(--accent-sky);color:var(--text-primary);background:rgba(56,189,248,0.15)}
+
+button:first-child,.actions button:first-child{background:linear-gradient(135deg,var(--accent-indigo),var(--accent-sky));border:0;color:#fff;box-shadow:0 4px 15px rgba(99, 102, 241, 0.3)}
+button:first-child:hover,.actions button:first-child:hover{background:linear-gradient(135deg,rgba(99,102,241,0.95),rgba(56,189,248,0.95));box-shadow:0 8px 25px rgba(99, 102, 241, 0.5);transform:translateY(-1px)}
+button:disabled{opacity:.4;cursor:not-allowed;transform:none!important;box-shadow:none!important}
+
+.card,.panel{background:var(--glass-bg);border:1px solid var(--glass-border);border-radius:28px;padding:28px;margin:18px 0;backdrop-filter:blur(24px);box-shadow:var(--shadow-premium);transition:var(--transition-smooth)}
+.card:hover{border-color:var(--glass-border-hover);box-shadow:0 24px 60px rgba(0,0,0,0.5)}
+.review-grid{display:grid;gap:24px}
+.card.completed{border-color:var(--accent-emerald);background:linear-gradient(180deg,rgba(16,185,129,0.05),rgba(2,6,23,0.3))}
+
+.card-topline{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;align-items:center}
+.card-topline span,.eyebrow{border:1px solid rgba(147,197,253,0.1);border-radius:999px;padding:4px 10px;color:var(--accent-sky);background:rgba(56,189,248,0.1);text-transform:uppercase;font-size:11px;font-weight:600;letter-spacing:.08em}
+.eyebrow{display:inline-flex;margin-bottom:10px}
+.why{color:var(--text-secondary);font-size:14px;line-height:1.5;margin-top:0}
+.snippet-head{display:flex;justify-content:space-between;gap:12px;margin:18px 0 0;padding:12px 16px;background:rgba(2,6,23,0.5);border:1px solid var(--glass-border);border-radius:18px 18px 0 0;color:var(--accent-sky);font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;font-weight:500}
+
+.question-box,.reveal-panel,.confidence-panel{border:1px solid var(--glass-border);border-radius:20px;background:rgba(2,6,23,0.3);padding:18px;margin:18px 0;transition:var(--transition-smooth)}
+.reveal-panel{background:rgba(99,102,241,0.03);border-color:rgba(99,102,241,0.15)}
+.confidence-panel{background:rgba(7,15,30,0.2)}
+.confidence-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px}
+.confidence-options label{display:flex;gap:8px;align-items:center;border:1px solid var(--glass-border);border-radius:999px;background:rgba(2,6,23,0.4);padding:10px 14px;color:var(--text-secondary);font-weight:600;font-size:13px;cursor:pointer;transition:var(--transition-smooth)}
+.confidence-options label:hover{border-color:var(--glass-border-focus);color:var(--text-primary);background:rgba(99,102,241,0.05)}
 .confidence-options input{margin:0;width:auto;cursor:pointer}
-.quality-panel{display:grid;gap:var(--space-3);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-4);margin:var(--space-4) 0}
-.quality-summary{display:flex;justify-content:space-between;gap:var(--space-3);align-items:center}
-.quality-panel strong{text-transform:capitalize;font-size:var(--text-base)}
-.quality-ready{border-color:var(--color-success-border);background:var(--color-success-bg)}
-.quality-needs_review{border-color:var(--color-warning-border);background:var(--color-warning-bg)}
-.quality-blocked{border-color:var(--color-danger-border);background:var(--color-danger-bg)}
-.quality-details summary{cursor:pointer;color:var(--color-text-link);font-weight:var(--font-semibold);font-size:var(--text-sm)}
-.quality-scores{display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)}
-.quality-scores span{border:1px solid var(--color-border-subtle);border-radius:var(--radius-full);padding:3px 8px;color:var(--color-text-secondary);background:var(--color-bg-overlay);font-size:var(--text-xs);font-weight:var(--font-medium)}
-.quality-warnings{margin:0;color:var(--color-warning);font-size:var(--text-sm);font-weight:var(--font-medium)}
+
+.quality-panel{display:grid;gap:12px;border:1px solid var(--glass-border);border-radius:20px;background:rgba(2,6,23,0.35);padding:16px;margin:16px 0}
+.quality-summary{display:flex;justify-content:space-between;gap:12px;align-items:center}
+.quality-panel strong{text-transform:capitalize;font-size:15px}
+.quality-ready{border-color:rgba(16,185,129,0.3);background:rgba(16,185,129,0.03)}
+.quality-needs_review{border-color:rgba(245,158,11,0.3);background:rgba(245,158,11,0.03)}
+.quality-blocked{border-color:rgba(244,63,94,0.3);background:rgba(244,63,94,0.03)}
+.quality-details summary{cursor:pointer;color:var(--accent-sky);font-weight:600;font-size:13px}
+.quality-scores{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.quality-scores span{border:1px solid var(--glass-border);border-radius:999px;padding:4px 10px;color:var(--text-secondary);background:rgba(2,6,23,0.4);font-size:12px;font-weight:500}
+.quality-warnings{margin:0;color:var(--accent-amber);font-size:13px;font-weight:500}
+
 .is-hidden{display:none}
-.label{font-size:var(--text-xs);text-transform:uppercase;letter-spacing:var(--tracking-wider);color:var(--color-info);font-weight:var(--font-bold);margin:0 0 var(--space-2)}
-textarea,input,select{width:100%;border:1px solid var(--color-border-default);border-radius:var(--radius-md);background:var(--color-bg-overlay);color:var(--color-text-primary);padding:var(--space-3) var(--space-4);font:inherit;transition:border-color var(--transition-fast),box-shadow var(--transition-fast)}
-textarea:hover,input:hover,select:hover{border-color:var(--color-border-muted)}
-textarea:focus,input:focus,select:focus{outline:none;border-color:var(--color-accent-primary);box-shadow:var(--shadow-glow-indigo)}
+.label{font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--accent-sky);font-weight:700;margin:0 0 8px}
+
+textarea,input,select{width:100%;border:1px solid var(--glass-border);border-radius:18px;background:rgba(2,6,23,0.5);color:var(--text-primary);padding:14px;font:inherit;transition:var(--transition-smooth)}
+textarea:hover,input:hover,select:hover{border-color:var(--glass-border-hover)}
+textarea:focus,input:focus,select:focus{outline:0;border-color:var(--accent-indigo);background:rgba(2,6,23,0.7);box-shadow:0 0 0 3px rgba(99,102,241,0.2)}
 textarea{min-height:96px;resize:vertical}
-.actions{display:flex;flex-wrap:wrap;gap:var(--space-2)}
-.progress-track{height:8px;max-width:340px;background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);border-radius:var(--radius-full);margin-top:var(--space-3);overflow:hidden}
-.progress-track span{display:block;height:100%;background:linear-gradient(90deg,var(--color-accent-primary),var(--color-success));transition:width var(--transition-base)}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--space-4);margin:0 0 var(--space-6)}
-.stats div,.mini-card{border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised);padding:var(--space-6);transition:transform var(--transition-base),border-color var(--transition-fast)}
-.stats div{font-size:var(--text-4xl);font-weight:var(--font-bold);letter-spacing:var(--tracking-tight);color:var(--color-text-primary)}
-.stats div:hover,.mini-card:hover{border-color:var(--color-border-muted);transform:translateY(-1px)}
-.stats span{display:block;color:var(--color-text-muted);font-size:var(--text-xs);font-weight:var(--font-semibold);text-transform:uppercase;letter-spacing:var(--tracking-wide);margin-top:var(--space-1)}
-.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-4)}
-.mini-card h3{margin:0 0 var(--space-2);font-size:var(--text-lg);font-weight:var(--font-bold)}
-.mini-card p{color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-normal);margin:0 0 var(--space-3)}
-.mini-card small{color:var(--color-text-muted);font-size:var(--text-xs)}
-.question-card h3{font-size:var(--text-base);line-height:var(--leading-snug);font-weight:var(--font-semibold);display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
+.actions{display:flex;flex-wrap:wrap;gap:10px}
+
+.progress-track{height:8px;max-width:340px;background:rgba(2,6,23,0.5);border:1px solid var(--glass-border);border-radius:999px;margin-top:12px;overflow:hidden}
+.progress-track span{display:block;height:100%;background:linear-gradient(90deg,var(--accent-indigo),var(--accent-emerald));transition:width .2s ease}
+
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin:18px 0}
+.stats div,.mini-card{border:1px solid var(--glass-border);border-radius:24px;background:rgba(7,15,30,0.3);backdrop-filter:blur(16px);padding:22px;transition:var(--transition-smooth)}
+.stats div{font-size:32px;font-weight:700;color:var(--text-primary);box-shadow:var(--shadow-premium)}
+.stats div:hover,.mini-card:hover{border-color:var(--glass-border-hover);transform:translateY(-2px)}
+.stats span{display:block;color:var(--text-muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;margin-top:4px}
+
+.mini-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.mini-card h3{margin:0 0 8px;font-size:18px;font-weight:700}
+.mini-card p{color:var(--text-secondary);font-size:14px;line-height:1.5;margin:0 0 12px}
+.mini-card small{color:var(--text-muted);font-size:12px}
+.question-card h3{font-size:16px;line-height:1.35;font-weight:600;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden}
 .mini-card.is-archived{opacity:.5}
-.timeline-list{display:grid;gap:var(--space-3)}
-.timeline-row{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(120px,.55fr);gap:var(--space-3);align-items:center;border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);background:var(--color-bg-overlay);padding:var(--space-3) var(--space-4);transition:background var(--transition-fast),border-color var(--transition-fast)}
-.timeline-row:hover{border-color:var(--color-border-muted);background:var(--color-bg-hover)}
-.timeline-row span{color:var(--color-info);text-transform:uppercase;font-size:var(--text-xs);font-weight:var(--font-bold);letter-spacing:var(--tracking-wider)}
-.timeline-row small,.graph-node small{color:var(--color-text-muted);font-size:var(--text-xs)}
-.section-head{display:flex;justify-content:space-between;gap:var(--space-4);align-items:start;margin-bottom:var(--space-5)}
-.section-head h2{margin:0;font-size:var(--text-xl);font-weight:var(--font-bold)}
-.section-head p{color:var(--color-text-secondary);margin:var(--space-2) 0 0;font-size:var(--text-sm);line-height:var(--leading-snug)}
+
+.timeline-list{display:grid;gap:12px}
+.timeline-row{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(120px,.55fr);gap:14px;align-items:center;border:1px solid var(--glass-border);border-radius:18px;background:rgba(2,6,23,0.35);padding:14px;transition:var(--transition-smooth)}
+.timeline-row:hover{border-color:var(--glass-border-hover);background:rgba(2,6,23,0.45)}
+.timeline-row span{color:var(--accent-sky);text-transform:uppercase;font-size:11px;font-weight:700;letter-spacing:0.05em}
+.timeline-row small,.graph-node small{color:var(--text-muted);font-size:12px}
+
+.section-head{display:flex;justify-content:space-between;gap:18px;align-items:start;margin-bottom:20px}
+.section-head h2{margin:0;font-size:22px;font-weight:700}
+.section-head p{color:var(--text-secondary);margin:6px 0 0;font-size:14px;line-height:1.4}
+
 .graph-map-panel{overflow:hidden}
-.graph-legend{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:var(--space-3) 0 var(--space-4)}
-.graph-legend span{border:1px solid var(--color-info-border);border-radius:var(--radius-full);background:var(--color-info-bg);color:var(--color-info);padding:var(--space-1) var(--space-3);font-size:var(--text-xs);font-weight:var(--font-semibold)}
-.graph-map{width:100%;height:auto;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-base)}
-.graph-lane-bg{fill:var(--color-bg-overlay);stroke:var(--color-border-subtle);stroke-width:1}
-.graph-lane-title{fill:var(--color-text-secondary);font-size:var(--text-xs);font-weight:var(--font-bold);letter-spacing:var(--tracking-wider);text-transform:uppercase}
-.graph-edge{fill:none;stroke:var(--color-accent-primary);stroke-width:1.5;stroke-opacity:.4;marker-end:url(#arrow)}
-.graph-map-node rect{fill:var(--color-bg-raised);stroke:var(--color-accent-primary-border);stroke-width:1.5;rx:8;ry:8;transition:stroke var(--transition-fast),fill var(--transition-fast)}
-.graph-map-node:hover rect{stroke:var(--color-success-border);fill:var(--color-success-bg)}
-.graph-node-type{fill:var(--color-text-muted);font-size:9px;font-weight:var(--font-bold);text-transform:uppercase;letter-spacing:var(--tracking-wider)}
-.graph-node-label{fill:var(--color-text-primary);font-size:11px;font-weight:var(--font-semibold)}
-.graph-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--space-4)}
-.graph-column{border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-5)}
-.graph-node{border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);background:var(--color-bg-raised);padding:var(--space-3) var(--space-4);margin:var(--space-2) 0;display:grid;gap:var(--space-2);transition:background var(--transition-fast),border-color var(--transition-fast)}
-.graph-node:hover{border-color:var(--color-border-muted);background:var(--color-bg-hover);transform:translateY(-1px)}
-.graph-node strong{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;font-size:var(--text-sm);font-weight:var(--font-semibold)}
-.choices{display:grid;gap:var(--space-3);margin:var(--space-3) 0}
-.choice{display:flex;gap:var(--space-3);padding:var(--space-3) var(--space-4);border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);background:var(--color-bg-overlay);transition:background var(--transition-fast),border-color var(--transition-fast)}
-.choice:hover{border-color:var(--color-border-muted);background:var(--color-bg-hover)}
+.graph-legend{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 16px}
+.graph-legend span{border:1px solid rgba(147,197,253,0.1);border-radius:999px;background:rgba(56,189,248,0.06);color:var(--accent-sky);padding:6px 12px;font-size:11px;font-weight:600;letter-spacing:0.02em}
+
+.graph-map{width:100%;height:auto;border:1px solid var(--glass-border);border-radius:24px;background:radial-gradient(circle at 20% 10%,rgba(99,102,241,0.08),transparent 24rem),#030712;box-shadow:var(--shadow-premium)}
+.graph-lane-bg{fill:rgba(7,15,30,0.45);stroke:var(--glass-border);stroke-width:1}
+.graph-lane-title{fill:var(--text-secondary);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.graph-edge{fill:none;stroke:var(--accent-indigo);stroke-width:1.5;stroke-opacity:.4;marker-end:url(#arrow);transition:var(--transition-smooth)}
+.graph-map-node rect{fill:rgba(2,6,23,0.85);stroke:rgba(99,102,241,0.3);stroke-width:1.5;rx:8;ry:8;transition:var(--transition-smooth)}
+.graph-map-node:hover rect{stroke:var(--accent-emerald);fill:rgba(16,185,129,0.08);filter:drop-shadow(0 0 8px rgba(16,185,129,0.2))}
+.graph-node-type{fill:var(--text-muted);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.graph-node-label{fill:var(--text-primary);font-size:11px;font-weight:600}
+
+.graph-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.graph-column{border:1px solid var(--glass-border);border-radius:24px;background:rgba(7,15,30,0.35);padding:20px}
+.graph-node{border:1px solid var(--glass-border);border-radius:18px;background:rgba(2,6,23,0.4);padding:14px;margin:10px 0;display:grid;gap:6px;transition:var(--transition-smooth)}
+.graph-node:hover{border-color:var(--glass-border-hover);background:rgba(2,6,23,0.55);transform:translateY(-1px)}
+.graph-node strong{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;font-weight:600}
+
+.choices{display:grid;gap:12px;margin:14px 0}
+.choice{display:flex;gap:12px;padding:14px;border:1px solid var(--glass-border);border-radius:18px;background:rgba(2,6,23,0.3);transition:var(--transition-smooth)}
+.choice:hover{border-color:var(--glass-border-hover);background:rgba(2,6,23,0.45)}
 .choice input{width:auto;margin-top:4px}
-.choice small{display:block;color:var(--color-text-muted);margin-top:var(--space-1);line-height:var(--leading-normal);font-size:var(--text-xs)}
-pre{overflow:auto;background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);padding:var(--space-4);font-family:var(--font-mono);font-size:var(--text-sm);line-height:var(--leading-normal)}
-.onboarding-panel,.plan-builder-panel{border-color:var(--color-accent-primary-border);background:linear-gradient(180deg,var(--color-accent-primary-bg),var(--color-bg-raised))}
+.choice small{display:block;color:var(--text-muted);margin-top:4px;line-height:1.4;font-size:12px}
+
+pre{overflow:auto;background:rgba(2,6,23,0.7);border:1px solid var(--glass-border);border-radius:18px;padding:18px;font-size:13px;line-height:1.5}
+
+.onboarding-panel,.plan-builder-panel{background:linear-gradient(135deg,rgba(99,102,241,0.06),rgba(3,7,18,0.25));border-color:rgba(99,102,241,0.15)}
 .review-source-toolbar{align-items:stretch}
-.review-source-controls{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:var(--space-3);align-items:end;flex:1}
+.review-source-controls{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:14px;align-items:end;flex:1}
 .review-source-controls .actions{justify-content:flex-end}
 .review-source-field{max-width:520px}
-.review-source-controls .setup-note{max-width:620px;margin:var(--space-2) 0 0}
-.onboarding-steps,.plan-path{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--space-3);list-style:none;margin:var(--space-4) 0 0;padding:0}
-.onboarding-step,.plan-step{display:grid;grid-template-columns:38px minmax(0,1fr);gap:var(--space-3);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-4);transition:background var(--transition-fast),border-color var(--transition-fast)}
-.onboarding-step:hover,.plan-step:hover{border-color:var(--color-border-muted);background:var(--color-bg-hover)}
-.onboarding-step>span,.plan-step>span{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-full);background:var(--color-bg-hover);color:var(--color-text-secondary);font-weight:var(--font-bold);font-size:var(--text-sm)}
-.onboarding-step.is-done>span,.plan-step.is-done>span{background:var(--color-success-bg);color:var(--color-success)}
-.onboarding-step.is-done,.plan-step.is-done{border-color:var(--color-success-border)}
-.onboarding-step p,.plan-step p{color:var(--color-text-secondary);margin:var(--space-1) 0 var(--space-2);font-size:var(--text-sm);line-height:var(--leading-snug)}
-.onboarding-step code{display:block;white-space:normal;word-break:break-word;color:var(--color-warning);background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);border-radius:var(--radius-sm);padding:var(--space-2) var(--space-3);font-size:var(--text-xs);font-family:var(--font-mono)}
-.setup-note{color:var(--color-text-secondary);background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);font-size:var(--text-sm);line-height:var(--leading-snug)}
-.filter-panel .actions{margin-top:var(--space-3)}
-.filter-panel button[aria-pressed="true"]{background:var(--color-accent-primary);color:#fff;border-color:var(--color-accent-primary)}
+.review-source-controls .setup-note{max-width:620px;margin:10px 0 0}
+
+.onboarding-steps,.plan-path{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;list-style:none;margin:18px 0 0;padding:0}
+.onboarding-step,.plan-step{display:grid;grid-template-columns:38px minmax(0,1fr);gap:12px;border:1px solid var(--glass-border);border-radius:20px;background:rgba(2,6,23,0.4);padding:16px;transition:var(--transition-smooth)}
+.onboarding-step:hover,.plan-step:hover{border-color:var(--glass-border-hover);background:rgba(2,6,23,0.5)}
+.onboarding-step>span,.plan-step>span{display:grid;place-items:center;width:30px;height:30px;border-radius:999px;background:rgba(255,255,255,0.05);color:var(--text-secondary);font-weight:700;font-size:13px;transition:var(--transition-smooth)}
+.onboarding-step.is-done>span,.plan-step.is-done>span{background:var(--accent-emerald-bg);color:var(--accent-emerald)}
+.onboarding-step.is-done,.plan-step.is-done{border-color:rgba(16,185,129,0.25)}
+.onboarding-step p,.plan-step p{color:var(--text-secondary);margin:4px 0 8px;font-size:13px;line-height:1.4}
+.onboarding-step code{display:block;white-space:normal;word-break:break-word;color:#fef3c7;background:rgba(2,6,23,0.6);border:1px solid var(--glass-border);border-radius:12px;padding:10px;font-size:12px;font-family:ui-monospace,Menlo,monospace}
+
+.setup-note{color:var(--text-secondary);background:rgba(2,6,23,0.3);border:1px solid var(--glass-border);border-radius:16px;padding:12px 14px;font-size:13px;line-height:1.4}
+
+.filter-panel .actions{margin-top:14px}
+.filter-panel button[aria-pressed="true"]{background:var(--accent-indigo);color:#fff;border-color:var(--accent-indigo);box-shadow:0 0 15px rgba(99,102,241,0.35)}
+
 .is-filtered-out{display:none!important}
-.workbench-layout{display:grid;grid-template-columns:1fr 340px;gap:var(--space-6);align-items:start}
-.workbench-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:var(--space-3);margin-top:var(--space-4)}
-.workbench-drawer{position:sticky;top:calc(48px + var(--space-6));border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised);padding:var(--space-6);box-shadow:var(--shadow-sm)}
-.workbench-drawer h2{margin:var(--space-1) 0 var(--space-2);font-size:var(--text-xl);font-weight:var(--font-bold)}
-.workbench-drawer p{color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-normal)}
-.visual-node{display:grid;text-align:left;gap:var(--space-2);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);min-height:112px;align-content:start;background:var(--color-bg-overlay);padding:var(--space-3) var(--space-4);transition:transform var(--transition-base),border-color var(--transition-fast),box-shadow var(--transition-base);cursor:pointer;font-family:inherit}
-.visual-node:hover{transform:scale(1.02);border-color:var(--color-border-muted);box-shadow:var(--shadow-glow-indigo)}
-.visual-node span{font-size:var(--text-xs);text-transform:uppercase;letter-spacing:var(--tracking-wider);color:var(--color-text-muted);font-weight:var(--font-bold)}
-.visual-node strong{font-size:var(--text-sm);font-weight:var(--font-semibold);color:var(--color-text-primary)}
-.visual-node small{color:var(--color-info);font-size:var(--text-xs);font-weight:var(--font-medium)}
-.node-concept{border-color:var(--color-concept-border);background:linear-gradient(180deg,var(--color-concept-bg),var(--color-bg-overlay))}
-.node-card{border-color:var(--color-accent-primary-border);background:linear-gradient(180deg,var(--color-accent-primary-bg),var(--color-bg-overlay))}
-.node-event,.node-probe{border-color:var(--color-warning-border);background:linear-gradient(180deg,var(--color-warning-bg),var(--color-bg-overlay))}
-.node-evidence{border-color:var(--color-info-border);background:linear-gradient(180deg,var(--color-info-bg),var(--color-bg-overlay))}
-.node-study{border-color:var(--color-concept-border);background:linear-gradient(180deg,var(--color-concept-bg),var(--color-bg-overlay))}
-.inline-field{display:grid;gap:var(--space-2);max-width:440px;margin-top:var(--space-3);color:var(--color-text-primary);font-weight:var(--font-semibold);font-size:var(--text-sm)}
-.preferences-wizard code{color:var(--color-warning);font-family:var(--font-mono)}
-.preset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:var(--space-3);margin-top:var(--space-4)}
-.preset-card{display:grid;gap:var(--space-3);align-content:space-between;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-5);transition:transform var(--transition-base),border-color var(--transition-fast)}
-.preset-card:hover{border-color:var(--color-border-muted);background:var(--color-bg-hover);transform:translateY(-1px)}
-.preset-card p{color:var(--color-text-secondary);margin:var(--space-1) 0 var(--space-2);font-size:var(--text-sm);line-height:var(--leading-normal)}
-.preset-card small{display:block;color:var(--color-info);line-height:var(--leading-normal);font-size:var(--text-xs);font-weight:var(--font-medium)}
-.preference-controls{display:grid;grid-template-columns:minmax(180px,280px) minmax(260px,1fr);gap:var(--space-5);margin:var(--space-4) 0;align-items:start}
-.map-tabs .actions{display:flex;flex-wrap:wrap;gap:var(--space-2)}
-.map-tabs a.is-active{background:var(--color-bg-selected);border-color:var(--color-border-emphasis);color:var(--color-text-primary)}
-.map-mode-bar{display:flex;flex-wrap:wrap;justify-content:space-between;gap:var(--space-4);align-items:center;padding:var(--space-3) var(--space-5);margin:0 0 var(--space-6);background:var(--color-bg-raised);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg)}
-.map-mode-bar--shell{margin:0;border-radius:0;border-left:0;border-right:0;border-top:0;background:var(--color-bg-base);padding:var(--space-2) var(--space-6)}
-.map-mode-copy strong{display:block;font-size:var(--text-sm)}
-.map-mode-copy p{margin:var(--space-1) 0 0;color:var(--color-text-secondary);font-size:var(--text-sm)}
-.map-mode-tabs{display:flex;flex-wrap:wrap;gap:var(--space-2)}
-.map-mode-tab{display:inline-flex;padding:var(--space-2) var(--space-3);font-size:var(--text-sm);font-weight:var(--font-medium);color:var(--color-text-secondary);text-decoration:none;border-radius:var(--radius-full);border:1px solid transparent}
-.map-mode-tab:hover{color:var(--color-text-primary);background:var(--color-bg-hover)}
-.map-mode-tab.is-active,.map-mode-tab[aria-current="page"]{color:var(--color-text-primary);background:var(--color-bg-selected);border-color:var(--color-border-emphasis)}
-.provenance-flow-legend{display:flex;flex-wrap:wrap;gap:var(--space-2);align-items:center;margin:0 0 var(--space-4);color:var(--color-text-secondary);font-size:var(--text-xs);font-weight:var(--font-semibold);text-transform:uppercase;letter-spacing:var(--tracking-wider)}
-.provenance-flow-legend span:nth-child(odd){padding:var(--space-1) var(--space-3);border-radius:var(--radius-full);border:1px solid var(--color-border-subtle);background:var(--color-bg-overlay)}
-.skill-heatmap{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:var(--space-3)}
-.skill-cell{border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);padding:var(--space-3) var(--space-4);min-height:84px}
-.skill-cell strong{display:block;font-size:var(--text-sm);margin-bottom:var(--space-1)}
-.skill-cell small{font-size:var(--text-xs);color:var(--color-text-secondary)}
-.skill-confident{border-color:var(--color-success-border);background:var(--color-success-bg)}
-.skill-learning{border-color:var(--color-warning-border);background:var(--color-warning-bg)}
-.skill-weak{border-color:var(--color-danger-border);background:var(--color-danger-bg)}
-.skill-new{border-color:var(--color-border-subtle);background:var(--color-bg-overlay);color:var(--color-text-secondary)}
-.graph-map-node.is-dimmed{opacity:.4}
-.graph-map-node.is-focused rect{stroke:var(--color-success-border);fill:var(--color-success-bg)}
-.btn-primary{display:inline-flex;align-items:center;justify-content:center;padding:var(--space-2) var(--space-4);font-size:var(--text-sm);font-weight:var(--font-semibold);text-decoration:none;border-radius:var(--radius-md);border:1px solid var(--color-accent-primary);background:var(--color-accent-primary);color:#fff;transition:background var(--transition-fast),transform var(--transition-base)}
-.btn-primary:hover{background:var(--color-accent-primary-hover);transform:translateY(-1px);text-decoration:none}
-.workbench-main{display:grid;gap:var(--space-6)}
-.workbench-hero{margin:0}
-.workbench-stats{margin:0}
-.visual-node.is-dimmed{opacity:.45;transform:none}
-.visual-node.is-focused{box-shadow:var(--shadow-glow-indigo);border-color:var(--color-border-emphasis)}
-.practice-hero{margin-bottom:var(--space-4)}
-.practice-focus-header{margin:0 0 var(--space-4)}
-.practice-focus-header .practice-progress{height:6px;max-width:none;margin:0;border-radius:0;border-left:0;border-right:0}
-body.practice-focus-shell .app-subnav{display:none}
-body.practice-focus-shell .content-area{max-width:var(--max-w-md);padding-top:var(--space-4)}
-body.practice-focus-shell .status{font-size:var(--text-xs);padding:var(--space-1) var(--space-4)}
-.practice-focus-footer{margin-top:var(--space-4);text-align:center}
-.practice-focus-footer p{margin:0;color:var(--color-text-muted);font-size:var(--text-xs);line-height:var(--leading-normal)}
-.page-intro{margin:0 0 var(--space-6);padding:0 0 var(--space-4);border-bottom:1px solid var(--color-border-subtle)}
-.page-intro h1{font-size:var(--text-2xl);line-height:var(--leading-tight);margin:var(--space-1) 0 var(--space-2);letter-spacing:var(--tracking-tight);font-weight:var(--font-bold)}
-.page-intro p{color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-normal);margin:0;max-width:52rem}
-.page-intro-stats{display:flex;flex-wrap:wrap;gap:var(--space-3);margin-bottom:var(--space-3)}
-.page-intro-stats span{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--color-text-secondary);padding:var(--space-1) var(--space-3);border:1px solid var(--color-border-subtle);border-radius:var(--radius-full);background:var(--color-bg-overlay)}
-.mix-presets{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:var(--space-3) 0}
-.drawer-path{display:block;margin:var(--space-3) 0;padding:var(--space-2) var(--space-3);font-family:var(--font-mono);font-size:var(--text-xs);color:var(--color-info);background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);border-radius:var(--radius-sm);word-break:break-all}
-.drawer-mastery{margin:var(--space-2) 0;color:var(--color-text-secondary);font-size:var(--text-sm);font-weight:var(--font-semibold)}
-#workbench-detail-cta{margin-top:var(--space-4)}
-body.surface-practice .app-subnav [data-group]:not([data-group="practice"]){opacity:.38}
-body.surface-map .app-subnav [data-group]:not([data-group="map"]){opacity:.38}
-body.surface-audit .app-subnav [data-group]:not([data-group="audit"]){opacity:.38}
-body.surface-setup .app-subnav [data-group]:not([data-group="setup"]){opacity:.38}
-body.surface-workbench .app-subnav [data-group]{opacity:.38}
-body[class*="surface-"] .app-subnav [data-group][data-group]{transition:opacity var(--transition-fast)}
-body[class*="surface-"] .app-subnav [data-group]:hover,body[class*="surface-"] .app-subnav a[data-group]:hover{opacity:1}
-.practice-title{font-size:var(--text-lg);line-height:var(--leading-snug)}
-.practice-question p{font-size:var(--text-lg);line-height:var(--leading-relaxed)}
-.shortcut-hint{display:inline-flex;align-items:center;justify-content:center;min-width:1.25rem;padding:0 var(--space-1);margin-left:var(--space-1);border-radius:var(--radius-sm);border:1px solid var(--color-border-muted);background:var(--color-bg-overlay);font-size:var(--text-xs);font-family:var(--font-mono);font-weight:var(--font-bold);line-height:1.4}
-.setup-steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:var(--space-3);list-style:none;margin:var(--space-4) 0 0;padding:0}
-.setup-step{display:grid;grid-template-columns:38px minmax(0,1fr);gap:var(--space-3);border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-4)}
-.setup-step>span{display:grid;place-items:center;width:30px;height:30px;border-radius:var(--radius-full);background:var(--color-bg-hover);color:var(--color-text-secondary);font-weight:var(--font-bold);font-size:var(--text-sm)}
-.setup-step.is-done>span{background:var(--color-success-bg);color:var(--color-success)}
-.setup-step.is-done{border-color:var(--color-success-border)}
-.pipeline-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--space-4)}
-.pipeline-card{display:grid;gap:var(--space-2);text-align:left;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised);padding:var(--space-5);cursor:pointer;transition:transform var(--transition-base),border-color var(--transition-fast)}
-.pipeline-card:hover{transform:translateY(-1px);border-color:var(--color-border-muted)}
-.pipeline-card strong{font-size:var(--text-4xl);letter-spacing:var(--tracking-tight)}
-.pipeline-card p{margin:0;font-size:var(--text-sm);font-weight:var(--font-semibold)}
-.pipeline-card small{color:var(--color-text-secondary);font-size:var(--text-xs);line-height:var(--leading-snug)}
-.pipeline-draft{border-color:var(--color-info-border);background:linear-gradient(180deg,var(--color-info-bg),var(--color-bg-raised))}
-.pipeline-accepted{border-color:var(--color-success-border);background:linear-gradient(180deg,var(--color-success-bg),var(--color-bg-raised))}
-.pipeline-rejected{border-color:var(--color-danger-border);background:linear-gradient(180deg,var(--color-danger-bg),var(--color-bg-raised))}
-.pipeline-quality{border-color:var(--color-warning-border);background:linear-gradient(180deg,var(--color-warning-bg),var(--color-bg-raised))}
-.audit-split{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4);margin:0 0 var(--space-6)}
-.audit-source-grid{grid-template-columns:repeat(2,minmax(0,1fr));margin-top:var(--space-4)}
-.calibration-chart{display:grid;gap:var(--space-3)}
-.calibration-row{display:grid;grid-template-columns:88px 1fr auto;gap:var(--space-3);align-items:center;font-size:var(--text-sm)}
-.calibration-bar{height:8px;border-radius:var(--radius-full);background:var(--color-bg-overlay);border:1px solid var(--color-border-subtle);overflow:hidden}
-.calibration-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--color-accent-primary),var(--color-success))}
-.audit-list{margin:0;padding-left:var(--space-5);color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-relaxed)}
-.modal-overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:var(--space-6);background:rgba(1,4,9,0.72)}
-.modal-panel{width:min(720px,100%);max-height:80vh;overflow:auto;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised);box-shadow:var(--shadow-lg)}
-.modal-head{display:flex;justify-content:space-between;gap:var(--space-3);align-items:center;padding:var(--space-5);border-bottom:1px solid var(--color-border-subtle)}
-.modal-head h2{margin:0;font-size:var(--text-xl)}
-.modal-body{padding:var(--space-5)}
-.form-grid{display:grid;gap:var(--space-3)}
-@media(max-width:768px){
-  .global-header{grid-template-columns:1fr;grid-template-rows:auto auto;height:auto;padding:var(--space-3) var(--space-4);gap:var(--space-2)}
-  .app-nav{justify-content:flex-start}
-  .header-metrics{justify-content:flex-start}
-  .content-area{padding:var(--space-4) var(--space-4) var(--space-12)}
-  .hero{grid-template-columns:1fr;padding:var(--space-6)}
-  .hero h1{font-size:var(--text-2xl)}
+.workbench-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,340px);gap:20px;align-items:start}
+.workbench-map{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:16px}
+.workbench-drawer{position:sticky;top:20px;border:1px solid var(--glass-border);border-radius:24px;background:linear-gradient(180deg,rgba(13,27,47,0.85),rgba(2,6,23,0.9));backdrop-filter:blur(24px);padding:22px;box-shadow:var(--shadow-premium)}
+.workbench-drawer h2{margin:4px 0 8px;font-size:20px;font-weight:700}
+.workbench-drawer p{color:var(--text-secondary);font-size:14px;line-height:1.5}
+
+.visual-node{display:grid;text-align:left;gap:6px;border-radius:20px;min-height:112px;align-content:start;background:rgba(2,6,23,0.45);padding:14px;transition:var(--transition-smooth)}
+.visual-node:hover{transform:translateY(-2px);border-color:var(--glass-border-focus);box-shadow:var(--shadow-glow)}
+.visual-node span{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);font-weight:700}
+.visual-node strong{font-size:14px;font-weight:600;color:var(--text-primary)}
+.visual-node small{color:var(--accent-sky);font-size:12px;font-weight:500}
+
+.node-concept{border-color:rgba(56,189,248,0.25)}
+.node-card{border-color:rgba(16,185,129,0.25)}
+.node-event,.node-probe{border-color:rgba(245,158,11,0.25)}
+.node-evidence{border-color:rgba(245,158,11,0.3)}
+.node-study{border-color:rgba(167,139,250,0.25)}
+
+.inline-field{display:grid;gap:6px;max-width:440px;margin-top:12px;color:var(--text-primary);font-weight:600;font-size:14px}
+
+.preferences-wizard code{color:#fef3c7}
+.preset-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:16px}
+.preset-card{display:grid;gap:14px;align-content:space-between;border:1px solid var(--glass-border);border-radius:22px;background:rgba(2,6,23,0.4);padding:20px;transition:var(--transition-smooth)}
+.preset-card:hover{border-color:var(--glass-border-hover);background:rgba(2,6,23,0.5);transform:translateY(-2px)}
+.preset-card p{color:var(--text-secondary);margin:4px 0 8px;font-size:14px;line-height:1.4}
+.preset-card small{display:block;color:var(--accent-sky);line-height:1.4;font-size:12px;font-weight:500}
+
+.preference-controls{display:grid;grid-template-columns:minmax(180px,280px) minmax(260px,1fr);gap:20px;margin:16px 0;align-items:start}
+
+@media(max-width:760px){
+  main,.app-shell{padding:20px 14px 60px}
+  .app-shell{padding-bottom:0}
+  .shell-context{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shell-context .ghost{grid-column:1/-1;white-space:normal}
+  .hero{grid-template-columns:1fr;padding:24px}
+  .hero h1{font-size:30px}
+  .toolbar{position:static}
   .review-source-controls{grid-template-columns:1fr}
   .review-source-controls .actions{justify-content:flex-start}
+  .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
   .workbench-layout{grid-template-columns:1fr}
-  .workbench-drawer{position:static}
-  .pipeline-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .audit-split{grid-template-columns:1fr}
 }
 ${diffSnippetCss()}`;
 }
@@ -1241,7 +980,7 @@ function countActiveCards(state){return (state.learningItems||[]).filter((item)=
 function shellNext(state){const concepts=(state.concepts||[]).length;const courses=(state.courses||[]).length;const accepted=(state.questionBank||[]).filter((entry)=>entry.status==='accepted').length;const active=countActiveCards(state);if(!concepts)return {label:'Next: ingest local evidence',href:'/timeline'};if(!courses)return {label:'Next: create a course goal',href:'/courses'};if(!accepted)return {label:'Next: accept useful questions',href:'/questions'};if(!active)return {label:'Next: generate review cards',href:'/'};return {label:'Next: focused practice',href:'/practice'};}
 function primaryNavHref(path){if(path==='/workbench')return '/workbench';if(path==='/'||path==='/practice'||path==='/study')return '/practice';if(path==='/map'||path==='/graph'||path==='/timeline'||path==='/progress')return '/map';if(path==='/audit'||path==='/history'||path==='/questions')return '/audit';if(path==='/plan'||path==='/courses'||path==='/preferences')return '/plan';return path;}
 function activateShellNav(){const path=location.pathname==='/'?'/':location.pathname;const primary=primaryNavHref(path);document.querySelectorAll('.app-nav a').forEach((link)=>{const active=link.getAttribute('href')===primary;if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});document.querySelectorAll('.app-subnav a').forEach((link)=>{const active=link.getAttribute('href')===path;if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});}
-async function updateShellContext(){try{const res=await fetch('/api/state');if(!res.ok)throw new Error('state unavailable');const state=await res.json();const accepted=(state.questionBank||[]).filter((entry)=>entry.status==='accepted').length;const due=(state.delayedProbes||[]).filter((probe)=>probe.status==='scheduled'&&(!probe.dueAt||probe.dueAt<=new Date().toISOString())).length;const fields=[['shell-concepts',(state.concepts||[]).length],['shell-courses',(state.courses||[]).length],['shell-questions',accepted],['shell-cards',countActiveCards(state)],['shell-due-probes',due]];fields.forEach(([id,value])=>{const el=document.getElementById(id);if(el)el.textContent=String(value);});const next=shellNext(state);const action=document.getElementById('shell-next-action');if(action){action.textContent=next.label;action.setAttribute('href',next.href);}}catch(error){const action=document.getElementById('shell-next-action');if(action)action.textContent='Plan state unavailable';}}
+async function updateShellContext(){try{const res=await fetch('/api/state');if(!res.ok)throw new Error('state unavailable');const state=await res.json();const accepted=(state.questionBank||[]).filter((entry)=>entry.status==='accepted').length;const fields=[['shell-concepts',(state.concepts||[]).length],['shell-courses',(state.courses||[]).length],['shell-questions',accepted],['shell-cards',countActiveCards(state)]];fields.forEach(([id,value])=>{const el=document.getElementById(id);if(el)el.textContent=String(value);});const next=shellNext(state);const action=document.getElementById('shell-next-action');if(action){action.textContent=next.label;action.setAttribute('href',next.href);}}catch(error){const action=document.getElementById('shell-next-action');if(action)action.textContent='Plan state unavailable';}}
 function updateProgress(){const cards=[...document.querySelectorAll('.recall-card')];const done=cards.filter((card)=>card.classList.contains('completed')).length;const bar=document.getElementById('session-progress');if(bar&&cards.length){bar.style.width=Math.round(done/cards.length*100)+'%';}}
 function markComplete(card,label){card.classList.add('completed');const state=card.querySelector('.card-state');if(state)state.textContent=label;card.querySelectorAll('.grade-actions button').forEach((button)=>button.disabled=true);const outcome=document.getElementById('practice-outcome');if(outcome)outcome.textContent='Outcome saved locally: confidence can be paired with correctness, delayed probes are scheduled after answered cards, and weak-concept estimates update from this grade.';updateProgress();}
 function updatePreferenceSummary(){const enabled=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippet=document.getElementById('snippet-lines')?.value||14;const explanations=document.getElementById('show-explanations')?.checked?'on':'off';const summary=document.getElementById('preferences-summary');if(summary)summary.textContent='Current setup: '+enabled.length+' question categories · '+snippet+' snippet lines · explanations '+explanations+'.';}

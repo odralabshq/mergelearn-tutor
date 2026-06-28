@@ -29,7 +29,7 @@ function state(): TutorState {
 describe('workbench summary', () => {
   it('combines next action, learning metrics, and visual nodes from existing local state', () => {
     const summary = buildWorkbenchSummary(state(), '2026-01-04T00:00:00.000Z');
-    expect(summary.nextAction).toMatchObject({ label: 'Complete 1 due probe', href: '/history' });
+    expect(summary.nextAction).toMatchObject({ label: 'Complete due delayed probe', href: '/api/delayed-probes' });
     expect(summary.metrics).toMatchObject({ activeCards: 1, dueDelayedProbes: 1, weakConcepts: 1, studyPending: 1 });
     expect(summary.filters.map((filter) => filter.id)).toEqual(['due', 'weak', 'study', 'evidence']);
     for (const filter of summary.filters) {

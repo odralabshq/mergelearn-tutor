@@ -15,9 +15,6 @@ export type WorkbenchNode = {
   href?: string;
   detail: string;
   tags: WorkbenchSemanticTag[];
-  path?: string;
-  masteryPercent?: number;
-  confidencePercent?: number;
 };
 
 export type WorkbenchLink = {
@@ -75,11 +72,11 @@ export function buildWorkbenchSummary(state: TutorState, nowIso?: string): Workb
 }
 
 function nextAction(metrics: WorkbenchSummary['metrics'], concepts: number): WorkbenchSummary['nextAction'] {
-  if (metrics.dueDelayedProbes > 0) return { label: `Complete ${metrics.dueDelayedProbes} due probe${metrics.dueDelayedProbes === 1 ? '' : 's'}`, href: '/history', reason: 'Spacing only helps when due probes get answered.' };
+  if (metrics.dueDelayedProbes > 0) return { label: 'Complete due delayed probe', href: '/api/delayed-probes', reason: 'Spacing is only useful when due probes get answered.' };
   if (metrics.studyPending > 0) return { label: 'Complete study assignment', href: '/study', reason: 'Finish active-control or active-recall assignments before comparing outcomes.' };
-  if (metrics.activeCards > 0) return { label: 'Start daily session', href: '/practice', reason: `${metrics.activeCards} active card${metrics.activeCards === 1 ? '' : 's'} ready for focused practice.` };
-  if (concepts > 0) return { label: 'Generate review cards', href: '/', reason: 'Concepts exist, but no active cards are queued yet.' };
-  return { label: 'Ingest local evidence', href: '/plan', reason: 'Start setup: ingest commits and docs to build the local graph.' };
+  if (metrics.activeCards > 0) return { label: 'Review active card', href: '/', reason: 'Active recall creates the learning evidence.' };
+  if (concepts > 0) return { label: 'Generate review cards', href: '/', reason: 'Concepts exist, but no active cards are queued.' };
+  return { label: 'Ingest local evidence', href: '/timeline', reason: 'Start by building the local evidence graph.' };
 }
 
 type VisualNodeInputs = {
@@ -95,20 +92,17 @@ function visualNodes(state: TutorState, conceptNodes: ReturnType<typeof buildPro
     type: 'concept',
     label: node.label,
     status: node.status,
-    href: '/map?mode=skill-map',
-    detail: `${node.label} is ${node.status.replace('_', ' ')} with ${Math.round(node.mastery * 100)}% mastery and ${node.activeRecallCount} recall event${node.activeRecallCount === 1 ? '' : 's'}.`,
+    href: '/progress',
+    detail: `${node.label} is ${node.status.replace('_', ' ')} with ${node.activeRecallCount} active recall event${node.activeRecallCount === 1 ? '' : 's'}.`,
     tags: inputs.weakConceptIds.has(node.id) ? ['weak'] : [],
-    masteryPercent: Math.round(node.mastery * 100),
-    confidencePercent: Math.round(node.confidence * 100),
   }));
   const cardVisuals: WorkbenchNode[] = state.learningItems.filter((item) => item.status !== 'archived').slice(0, 12).map((item) => ({
     id: `card:${item.id}`,
     type: 'card',
     label: item.title,
     status: item.questionPlane,
-    href: '/practice',
-    detail: `${item.title} is an active ${item.questionPlane.replace('_', ' ')} card sourced from ${item.snippet.path}.`,
-    path: item.snippet.path,
+    href: '/',
+    detail: `${item.title} is an active ${item.questionPlane.replace('_', ' ')} card from ${item.snippet.path}.`,
     tags: [ ...(inputs.dueItemIds.has(item.id) ? ['due' as const] : []), ...(item.evidence.length > 0 ? ['evidence' as const] : []) ],
   }));
   const dueProbeVisuals: WorkbenchNode[] = state.delayedProbes?.filter((probe) => inputs.dueProbeIds.has(probe.id)).slice(0, 12).map((probe) => ({
@@ -125,9 +119,8 @@ function visualNodes(state: TutorState, conceptNodes: ReturnType<typeof buildPro
     type: 'evidence',
     label: node.label,
     status: node.type,
-    href: '/map?mode=provenance',
+    href: '/timeline',
     detail: `${node.type} evidence${node.path ? ` from ${node.path}` : ''} participates in the local provenance graph.`,
-    path: node.path,
     tags: ['evidence'],
   }));
   const eventVisuals: WorkbenchNode[] = state.learningEvents.slice(-12).map((event) => ({
