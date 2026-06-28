@@ -227,7 +227,8 @@ function buildLearningItems(state: TutorState, preferences: UserPreferences, cou
     const questionPlane = acceptedQuestion?.questionPlane ?? rotatePlane(concept, preferences, generation);
     const snippet = snippetFor(concept, preferences);
     const prompt = acceptedQuestion?.prompt ?? promptFor(concept, questionPlane, snippet);
-    const explanation = acceptedQuestion?.expectedAnswer ?? explanationFor(concept, questionPlane, snippet);
+    const explanation = acceptedQuestion?.shortAnswer ?? acceptedQuestion?.expectedAnswer ?? explanationFor(concept, questionPlane, snippet);
+    const deepExplanation = acceptedQuestion?.deepExplanation;
     const focus = acceptedQuestion?.expectedFocus ?? expectedFocus(concept, questionPlane);
     const item: LearningItem = {
       id: stableId('item', [batchId, concept.id, concept.evidence.map((item) => item.commit).join(','), concept.evidence.length, questionPlane, acceptedQuestion?.id ?? '', String(generation)]),
@@ -236,7 +237,7 @@ function buildLearningItems(state: TutorState, preferences: UserPreferences, cou
       questionPlane,
       title: `${snippet.path}: ${concept.label}`,
       snippet,
-      bodyMarkdown: renderCardMarkdownWithQuestion(concept, conceptState, questionPlane, snippet, prompt, explanation),
+      bodyMarkdown: deepExplanation ?? renderCardMarkdownWithQuestion(concept, conceptState, questionPlane, snippet, prompt, explanation),
       prompt,
       explanationMarkdown: explanation,
       expectedFocus: focus,
@@ -251,7 +252,7 @@ function buildLearningItems(state: TutorState, preferences: UserPreferences, cou
       generation,
       source,
     };
-    const quality = applyPriorFeedbackToQuality(evaluateCardQuality(item, [...existing, ...selected]), item, state);
+    const quality = applyPriorFeedbackToQuality(evaluateCardQuality(item, [...existing, ...selected], { sourceQuestion: acceptedQuestion }), item, state);
     if (quality.verdict !== 'blocked') selected.push({ ...item, quality });
   }
   return selected;
