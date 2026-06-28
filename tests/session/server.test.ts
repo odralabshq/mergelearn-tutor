@@ -200,6 +200,10 @@ describe('review session server', () => {
       const timeline = await fetch(`${review.url}/api/evidence-timeline`).then((res) => res.json()) as { nodes: unknown[]; edges: unknown[] };
       expect(timeline.nodes.length).toBeGreaterThan(0);
       expect(timeline.edges.length).toBeGreaterThan(0);
+      const limitedTimeline = await fetch(`${review.url}/api/evidence-timeline?limit=3`).then((res) => res.json()) as { nodes: unknown[]; truncated: boolean; limit: number };
+      expect(limitedTimeline.truncated).toBe(true);
+      expect(limitedTimeline.nodes.length).toBeLessThanOrEqual(3);
+      expect(limitedTimeline.limit).toBe(3);
       const graphHtml = await fetch(`${review.url}/graph`).then((res) => res.text());
       expect(graphHtml).toContain('Courses, docs, questions, cards');
       expect(graphHtml).toContain('Evidence graph map');
@@ -210,6 +214,7 @@ describe('review session server', () => {
       expect(graphHtml).toContain('data-graph-type="question"');
       expect(graphHtml).toContain('Open graph JSON');
       expect(graphHtml).toContain('Raw graph projection');
+      expect(graphHtml).toMatch(/Map shows .* nodes/);
 
       const preferences = await fetch(`${review.url}/api/preferences`).then((res) => res.json()) as { review: { mode: string } };
       expect(preferences.review.mode).toBe('snippet_first');

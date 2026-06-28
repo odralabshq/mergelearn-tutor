@@ -7,6 +7,7 @@ import { completeDelayedProbe, delayedProbeSummary, dueDelayedProbes } from '../
 import { diffSnippetCss, renderDiffSnippetHtml } from '../core/diffView.js';
 import { buildEvidenceTimeline, graphByType } from '../core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from '../core/events.js';
+import { GRAPH_MAP_LANES, isRollupNode, limitEvidenceTimeline, MAP_DISPLAY_LIMITS, parseDisplayLimit, parseTimelineOffset, parseTimelinePageSize, selectGraphMapDisplay, selectSkillMapConcepts, selectTimelineDisplay, type GraphMapMode } from '../core/mapScaling.js';
 import { activeLearningItems, generateCardBatch, recordAnswer } from '../core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from '../core/preferences.js';
 import { buildProgressGraph } from '../core/progress.js';
@@ -15,7 +16,7 @@ import { renderProgress, renderToday } from '../core/render.js';
 import { assignStudyConditions, completePassiveReview, studySummary } from '../core/study.js';
 import { loadState, saveState } from '../core/store.js';
 import { buildWorkbenchSummary } from '../core/workbench.js';
-import type { CardQualityResult, CorrectionType, EvidenceTimelineNode, LearningItem, QuestionBankEntry, ReviewEventType, TutorState, UserPreferences } from '../core/types.js';
+import type { CardQualityResult, CorrectionType, EvidenceTimelineEdge, EvidenceTimelineNode, LearningItem, QuestionBankEntry, ReviewEventType, TutorState, UserPreferences } from '../core/types.js';
 
 export type ReviewServer = {
   server: Server;
@@ -48,7 +49,7 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/plan') return sendHtml(res, 200, renderPlanHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/courses') return sendHtml(res, 200, renderCoursesHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/questions') return sendHtml(res, 200, renderQuestionsHtml(await loadState(repoPath)));
-  if (method === 'GET' && url.pathname === '/timeline') return sendHtml(res, 200, renderTimelineHtml(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/timeline') return sendHtml(res, 200, renderTimelineHtml(await loadState(repoPath), parseTimelinePageSize(url.searchParams.get('limit')), parseTimelineOffset(url.searchParams.get('offset'))));
   if (method === 'GET' && url.pathname === '/graph') return sendHtml(res, 200, renderGraphHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/progress') return sendHtml(res, 200, renderProgressHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/audit') return sendHtml(res, 200, renderAuditHtml(await loadState(repoPath)));
@@ -64,8 +65,16 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/api/cards/history') return sendJson(res, 200, cardHistoryData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/courses') return sendJson(res, 200, { courses: coursesSummary(await loadState(repoPath)) });
   if (method === 'GET' && url.pathname === '/api/questions') return sendJson(res, 200, questionBankData(await loadState(repoPath)));
-  if (method === 'GET' && url.pathname === '/api/evidence-timeline') return sendJson(res, 200, buildEvidenceTimeline(await loadState(repoPath)));
-  if (method === 'GET' && url.pathname === '/api/evidence-graph') return sendJson(res, 200, buildEvidenceTimeline(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/evidence-timeline') {
+    const timeline = buildEvidenceTimeline(await loadState(repoPath));
+    const limit = parseDisplayLimit(url.searchParams.get('limit'));
+    return sendJson(res, 200, limit ? limitEvidenceTimeline(timeline, limit) : timeline);
+  }
+  if (method === 'GET' && url.pathname === '/api/evidence-graph') {
+    const timeline = buildEvidenceTimeline(await loadState(repoPath));
+    const limit = parseDisplayLimit(url.searchParams.get('limit'));
+    return sendJson(res, 200, limit ? limitEvidenceTimeline(timeline, limit) : timeline);
+  }
   if (method === 'GET' && url.pathname === '/api/preferences') return sendJson(res, 200, await loadPreferences(repoPath));
   if (method === 'POST' && url.pathname === '/api/cards/generate') {
     const body = await readJson(req) as { count?: number; mode?: string; reason?: string; courseId?: string };
@@ -295,34 +304,45 @@ function renderMapModeBar(activeMode: string): string {
 function renderSkillMapHeatmap(state: TutorState): string {
   const graph = buildProgressGraph(state);
   const concepts = graph.nodes.filter((node) => node.kind !== 'group');
-  const cells = concepts.map((concept) => {
+  const display = selectSkillMapConcepts(concepts);
+  const cells = display.concepts.map((concept) => {
     const tone = concept.status === 'confident' ? 'skill-confident' : concept.status === 'needs_review' ? 'skill-weak' : concept.status === 'learning' ? 'skill-learning' : 'skill-new';
     return `<article class="skill-cell ${tone}" title="${escapeHtml(concept.label)} — ${Math.round(concept.mastery * 100)}% mastery"><strong>${escapeHtml(concept.label)}</strong><small>${Math.round(concept.mastery * 100)}% · ${escapeHtml(concept.status.replace(/_/g, ' '))}</small></article>`;
   }).join('');
-  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Skill map</p><h2>Concept mastery heatmap</h2><p>Green is confident, yellow is learning, red needs review, gray is new or unexposed.</p></div><a class="ghost" href="/api/progress">Open progress JSON</a></div><div class="skill-heatmap">${cells || '<p>No concepts yet. Ingest evidence to populate the skill map.</p>'}</div></section>`;
+  const overflow = display.hidden > 0
+    ? `<p class="setup-note">Showing ${display.concepts.length} of ${display.total} concepts (weak and low-mastery first). <a class="ghost" href="/api/progress">Open progress JSON</a> for the full list.</p>`
+    : '';
+  return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Skill map</p><h2>Concept mastery heatmap</h2><p>Green is confident, yellow is learning, red needs review, gray is new or unexposed.</p></div><a class="ghost" href="/api/progress">Open progress JSON</a></div><div class="skill-heatmap">${cells || '<p>No concepts yet. Ingest evidence to populate the skill map.</p>'}</div>${overflow}</section>`;
 }
 
 function renderGraphBody(state: TutorState): string {
   const timeline = buildEvidenceTimeline(state);
   const graphGroups = graphByType(timeline);
-  const groups = graphGroups.map((group) => `<section class="graph-column" data-graph-type="${escapeHtml(group.type)}"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, 12).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}</section>`).join('');
-  const map = renderGraphMap(timeline.nodes, timeline.edges);
+  const groups = graphGroups.map((group) => `<section class="graph-column" data-graph-type="${escapeHtml(group.type)}"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, MAP_DISPLAY_LIMITS.graphColumnNodes).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}${group.nodes.length > MAP_DISPLAY_LIMITS.graphColumnNodes ? `<p class="setup-note">+${group.nodes.length - MAP_DISPLAY_LIMITS.graphColumnNodes} more ${escapeHtml(group.type)} nodes in raw JSON.</p>` : ''}</section>`).join('');
+  const map = renderGraphMap(timeline.nodes, timeline.edges, 'local-graph');
   const raw = escapeHtml(JSON.stringify({ nodes: timeline.nodes, edges: timeline.edges }, null, 2));
   return `${map}${renderGraphFocusPanel(graphGroups, timeline.edges.length)}<section class="graph-grid">${groups}</section><details class="panel"><summary><strong>Raw graph projection</strong></summary><pre>${raw}</pre></details>${graphMapHoverScript()}`;
 }
 
-function renderTimelineBody(state: TutorState): string {
+function renderTimelineBody(state: TutorState, pageSize: number = MAP_DISPLAY_LIMITS.timelinePageSize, offset = 0): string {
   const timeline = buildEvidenceTimeline(state);
-  const docs = timeline.nodes.filter((node) => node.type === 'doc');
-  const items = timeline.nodes.slice().reverse().map((node) => `<article class="timeline-row" data-node-type="${escapeHtml(node.type)}"><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? '')}</small></article>`).join('');
+  const display = selectTimelineDisplay(timeline.nodes, pageSize, offset);
+  const docs = timeline.nodes.filter((node) => node.type === 'doc').slice(0, MAP_DISPLAY_LIMITS.timelineDocsLimit);
+  const hiddenDocs = Math.max(0, timeline.nodes.filter((node) => node.type === 'doc').length - docs.length);
+  const items = display.nodes.map((node) => `<article class="timeline-row" data-node-type="${escapeHtml(node.type)}"><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? '')}</small></article>`).join('');
   const metrics = `<div class="stats"><div>${timeline.summary.commit ?? 0}<span>commits</span></div><div>${timeline.summary.doc ?? 0}<span>docs</span></div><div>${timeline.summary.question ?? 0}<span>questions</span></div><div>${timeline.summary.card ?? 0}<span>cards</span></div></div>`;
-  return `${metrics}${renderTimelineFilterPanel(timeline.summary)}<section class="panel"><h2>Document lens</h2><div class="mini-grid">${docs.map((doc) => `<article class="mini-card"><strong>${escapeHtml(doc.label)}</strong><p>${escapeHtml(doc.path ?? doc.subtitle ?? '')}</p><small>${timeline.edges.filter((edge) => edge.from === doc.id || edge.to === doc.id).length} links</small></article>`).join('') || '<p>No markdown docs found yet.</p>'}</div></section><section class="panel"><h2>Timeline</h2><div class="timeline-list">${items}</div></section>`;
+  const timelineOverflow = display.hidden > 0
+    ? `<div class="actions"><a class="ghost" href="/timeline?limit=${pageSize}&offset=${offset + display.nodes.length}">Load ${Math.min(pageSize, display.hidden)} more</a><a class="ghost" href="/api/evidence-timeline">Open full timeline JSON</a></div><p class="setup-note">Showing ${offset + display.nodes.length} of ${display.total} timeline nodes (newest first).</p>`
+    : offset > 0
+      ? `<p class="setup-note">Showing all ${display.total} timeline nodes.</p>`
+      : '';
+  return `${metrics}${renderTimelineFilterPanel(timeline.summary)}<section class="panel"><h2>Document lens</h2><div class="mini-grid">${docs.map((doc) => `<article class="mini-card"><strong>${escapeHtml(doc.label)}</strong><p>${escapeHtml(doc.path ?? doc.subtitle ?? '')}</p><small>${timeline.edges.filter((edge) => edge.from === doc.id || edge.to === doc.id).length} links</small></article>`).join('') || '<p>No markdown docs found yet.</p>'}</div>${hiddenDocs > 0 ? `<p class="setup-note">+${hiddenDocs} more docs in full timeline JSON.</p>` : ''}</section><section class="panel"><h2>Timeline</h2><div class="timeline-list">${items}</div>${timelineOverflow}</section>`;
 }
 
 function renderProvenanceBody(state: TutorState): string {
   const timeline = buildEvidenceTimeline(state);
   const flowLegend = '<div class="provenance-flow-legend"><span>commit</span><span>→</span><span>file</span><span>→</span><span>concept</span><span>→</span><span>question</span><span>→</span><span>card</span></div>';
-  return `<section class="panel provenance-panel"><div class="section-head"><div><p class="eyebrow">Provenance lane</p><h2>Evidence timeline</h2><p>Follow the left-to-right chain from git commits through changed files, extracted concepts, generated questions, and review cards.</p></div><a class="ghost" href="/timeline">Full timeline</a></div>${flowLegend}${renderGraphMap(timeline.nodes, timeline.edges)}</section>${renderTimelineBody(state)}${graphMapHoverScript()}`;
+  return `<section class="panel provenance-panel"><div class="section-head"><div><p class="eyebrow">Provenance lane</p><h2>Evidence timeline</h2><p>Follow the left-to-right chain from git commits through changed files, extracted concepts, generated questions, and review cards.</p></div><a class="ghost" href="/timeline">Full timeline</a></div>${flowLegend}${renderGraphMap(timeline.nodes, timeline.edges, 'provenance')}</section>${renderTimelineBody(state)}${graphMapHoverScript()}`;
 }
 
 function renderProgressBody(state: TutorState): string {
@@ -353,9 +373,12 @@ function renderWorkbenchHtml(state: TutorState): string {
   const workbench = buildWorkbenchSummary(state);
   const metricCards = `<div class="stats workbench-stats"><div>${workbench.metrics.activeCards}<span>active cards</span></div><div>${workbench.metrics.dueDelayedProbes}<span>due probes</span></div><div>${workbench.metrics.weakConcepts}<span>weak concepts</span></div><div>${workbench.metrics.studyPending}<span>study pending</span></div></div>`;
   const chips = workbench.filters.map((filter) => `<button data-action="workbench-filter" data-filter-type="${filter.id}" aria-pressed="false">${escapeHtml(filter.label)} · ${filter.count}</button>`).join('');
-  const nodes = workbench.nodes.slice(0, 48).map((node) => `<button class="visual-node node-${escapeHtml(node.type)}" data-action="workbench-node" data-node-type="${escapeHtml(node.type)}" data-node-tags="${escapeHtml(node.tags.join(' '))}" data-node-id="${escapeHtml(node.id)}" data-node-label="${escapeHtml(node.label)}" data-node-status="${escapeHtml(node.status ?? 'ready')}" data-node-detail="${escapeHtml(node.detail)}" data-node-href="${escapeHtml(node.href ?? '')}"${node.path ? ` data-node-path="${escapeHtml(node.path)}"` : ''}${node.masteryPercent !== undefined ? ` data-node-mastery="${node.masteryPercent}"` : ''}${node.confidencePercent !== undefined ? ` data-node-confidence="${node.confidencePercent}"` : ''}><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.status ?? '')}</small></button>`).join('');
+  const nodes = workbench.nodes.slice(0, MAP_DISPLAY_LIMITS.workbenchMaxNodes).map((node) => `<button class="visual-node node-${escapeHtml(node.type)}" data-action="workbench-node" data-node-type="${escapeHtml(node.type)}" data-node-tags="${escapeHtml(node.tags.join(' '))}" data-node-id="${escapeHtml(node.id)}" data-node-label="${escapeHtml(node.label)}" data-node-status="${escapeHtml(node.status ?? 'ready')}" data-node-detail="${escapeHtml(node.detail)}" data-node-href="${escapeHtml(node.href ?? '')}"${node.path ? ` data-node-path="${escapeHtml(node.path)}"` : ''}${node.masteryPercent !== undefined ? ` data-node-mastery="${node.masteryPercent}"` : ''}${node.confidencePercent !== undefined ? ` data-node-confidence="${node.confidencePercent}"` : ''}><span>${escapeHtml(node.type)}</span><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.status ?? '')}</small></button>`).join('');
+  const workbenchOverflow = workbench.nodes.length > MAP_DISPLAY_LIMITS.workbenchMaxNodes
+    ? `<p class="setup-note">Showing ${MAP_DISPLAY_LIMITS.workbenchMaxNodes} of ${workbench.nodes.length} workbench nodes (due, weak, and recent items first). <a class="ghost" href="/api/workbench">Open workbench JSON</a></p>`
+    : '';
   const drawer = '<aside class="workbench-drawer" id="workbench-detail" aria-live="polite"><p class="eyebrow">Node detail</p><h2>Select a node</h2><p class="drawer-detail">Click any Workbench node to inspect why it matters and where to go next.</p><p class="drawer-meta is-hidden" id="workbench-detail-status"></p><code class="drawer-path is-hidden" id="workbench-detail-path"></code><p class="drawer-mastery is-hidden" id="workbench-detail-mastery"></p><a class="btn-primary is-hidden" id="workbench-detail-cta" href="#">Open related page</a><a class="ghost is-hidden" id="workbench-detail-link" href="#">Open related page</a></aside>';
-  const body = `<section class="workbench-layout"><div class="workbench-main"><section class="hero workbench-hero"><div><p class="eyebrow">Command center</p><h1>${escapeHtml(workbenchGreeting())} — Learning Workbench</h1><p>One navigable surface for active cards, due probes, weak concepts, study controls, and evidence links.</p><div class="actions"><a class="btn-primary" href="${workbench.nextAction.href}">${escapeHtml(workbench.nextAction.label)}</a></div><p class="setup-note">${escapeHtml(workbench.nextAction.reason)}</p></div></section>${metricCards}<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Interactive map</p><h2>Filter the learning graph</h2><p>Semantic filters for due probes, weak concepts, study controls, and evidence links.</p></div><a class="ghost" href="/api/workbench">Open workbench JSON</a></div><div class="actions"><button data-action="workbench-filter" data-filter-type="all" aria-pressed="true">All</button>${chips}</div><div class="workbench-map">${nodes || '<p>No workbench nodes yet. Ingest evidence and generate cards first.</p>'}</div></section></div>${drawer}</section>${workbenchPageScript()}`;
+  const body = `<section class="workbench-layout"><div class="workbench-main"><section class="hero workbench-hero"><div><p class="eyebrow">Command center</p><h1>${escapeHtml(workbenchGreeting())} — Learning Workbench</h1><p>One navigable surface for active cards, due probes, weak concepts, study controls, and evidence links.</p><div class="actions"><a class="btn-primary" href="${workbench.nextAction.href}">${escapeHtml(workbench.nextAction.label)}</a></div><p class="setup-note">${escapeHtml(workbench.nextAction.reason)}</p></div></section>${metricCards}<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Interactive map</p><h2>Filter the learning graph</h2><p>Semantic filters for due probes, weak concepts, study controls, and evidence links.</p></div><a class="ghost" href="/api/workbench">Open workbench JSON</a></div><div class="actions"><button data-action="workbench-filter" data-filter-type="all" aria-pressed="true">All</button>${chips}</div><div class="workbench-map">${nodes || '<p>No workbench nodes yet. Ingest evidence and generate cards first.</p>'}</div>${workbenchOverflow}</section></div>${drawer}</section>${workbenchPageScript()}`;
   return pageShell('MergeLearn Tutor Workbench', body, 'Workbench', shellOpts(state, 'workbench'));
 }
 
@@ -640,8 +663,8 @@ function renderQuestionWorkflowGuide(state: TutorState): string {
   return `<section class="panel onboarding-panel"><div class="section-head"><div><p class="eyebrow">Question workflow</p><h2>Draft, accept, then review</h2><p>The bank is intentionally a staging area: drafts are cheap, accepted questions are the stable source for course cards.</p></div><a class="ghost" href="/api/questions">Open question JSON</a></div><ol class="onboarding-steps">${items}</ol></section>`;
 }
 
-function renderTimelineHtml(state: TutorState): string {
-  const body = `<section class="hero"><div><p class="eyebrow">Evidence timeline</p><h1>GitLens-style learning provenance</h1><p>See the commits, files, docs, questions, cards, and answer events that explain why each study item exists.</p></div></section>${nav()}${renderTimelineBody(state)}`;
+function renderTimelineHtml(state: TutorState, pageSize: number = MAP_DISPLAY_LIMITS.timelinePageSize, offset = 0): string {
+  const body = `<section class="hero"><div><p class="eyebrow">Evidence timeline</p><h1>GitLens-style learning provenance</h1><p>See the commits, files, docs, questions, cards, and answer events that explain why each study item exists.</p></div></section>${nav()}${renderTimelineBody(state, pageSize, offset)}`;
   return pageShell('MergeLearn Tutor Evidence Timeline', body, 'Timeline', shellOpts(state, 'map'));
 }
 
@@ -671,44 +694,41 @@ function renderGraphHtml(state: TutorState): string {
 
 function renderGraphFocusPanel(groups: Array<{ type: string; nodes: EvidenceTimelineNode[] }>, edgeCount: number): string {
   const chips = groups.map((group) => `<button data-action="graph-filter" data-filter-type="${escapeHtml(group.type)}">${escapeHtml(group.type)} · ${group.nodes.length}</button>`).join('');
-  const hiddenNodes = groups.reduce((count, group) => count + Math.max(0, group.nodes.length - 12), 0);
-  return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Graph focus</p><h2>Drill into one lane before reading raw JSON</h2><p>The map shows the first few nodes per lane and ${edgeCount} relationships. Focus a lane below to inspect courses, concepts, questions, cards, or events as the graph grows.</p></div><a class="ghost" href="/timeline">Open timeline</a></div><div class="actions"><button data-action="graph-filter" data-filter-type="all">All lanes</button>${chips}</div><p class="setup-note" id="graph-filter-note">Showing all graph lanes${hiddenNodes > 0 ? `; ${hiddenNodes} additional dense nodes are still available in raw JSON.` : '.'}</p></section>`;
+  const hiddenNodes = groups.reduce((count, group) => count + Math.max(0, group.nodes.length - MAP_DISPLAY_LIMITS.graphColumnNodes), 0);
+  return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Graph focus</p><h2>Drill into one lane before reading raw JSON</h2><p>The map shows up to ${MAP_DISPLAY_LIMITS.graphNodesPerLane} nodes per lane (most relevant first) and ${MAP_DISPLAY_LIMITS.graphMaxEdges} of ${edgeCount} relationships. Focus a lane below to inspect courses, concepts, questions, cards, or events as the graph grows.</p></div><a class="ghost" href="/timeline">Open timeline</a></div><div class="actions"><button data-action="graph-filter" data-filter-type="all">All lanes</button>${chips}</div><p class="setup-note" id="graph-filter-note">Showing all graph lanes${hiddenNodes > 0 ? `; ${hiddenNodes} additional nodes are summarized in lane rollups or raw JSON.` : '.'}</p></section>`;
 }
 
-function renderGraphMap(nodes: EvidenceTimelineNode[], edges: Array<{ from: string; to: string; type: string }>): string {
-  const lanes = [
-    { id: 'evidence', label: 'Evidence', types: ['commit', 'doc', 'file'] },
-    { id: 'course', label: 'Courses', types: ['course'] },
-    { id: 'concept', label: 'Concepts', types: ['concept'] },
-    { id: 'question', label: 'Questions', types: ['question'] },
-    { id: 'card', label: 'Cards', types: ['batch', 'card'] },
-    { id: 'event', label: 'Events', types: ['event'] },
-  ];
-  const laneNodes = lanes.map((lane) => ({ ...lane, nodes: nodes.filter((node) => lane.types.includes(node.type)).slice(0, 7) }));
-  const maxRows = Math.max(2, ...laneNodes.map((lane) => lane.nodes.length));
+function renderGraphMap(nodes: EvidenceTimelineNode[], edges: EvidenceTimelineEdge[], mode: GraphMapMode = 'local-graph'): string {
+  const display = selectGraphMapDisplay(nodes, edges, { mode });
+  const lanes = GRAPH_MAP_LANES.map((lane) => ({ ...lane, nodes: display.nodes.filter((node) => lane.types.includes(node.type)) }));
+  const maxRows = Math.max(2, ...lanes.map((lane) => lane.nodes.length));
   const width = 1080;
   const laneWidth = width / lanes.length;
   const top = 72;
   const rowHeight = 86;
   const height = top + maxRows * rowHeight + 46;
   const positions = new Map<string, { x: number; y: number }>();
-  const laneRects = laneNodes.map((lane, laneIndex) => {
+  const laneRects = lanes.map((lane, laneIndex) => {
     const x = laneIndex * laneWidth + 10;
     return `<g><rect x="${x}" y="16" width="${laneWidth - 20}" height="${height - 32}" rx="20" class="graph-lane-bg"/><text x="${x + 16}" y="46" class="graph-lane-title">${escapeHtml(lane.label)}</text></g>`;
   }).join('');
-  const nodeRects = laneNodes.flatMap((lane, laneIndex) => lane.nodes.map((node, rowIndex) => {
+  const nodeRects = lanes.flatMap((lane, laneIndex) => lane.nodes.map((node, rowIndex) => {
     const x = laneIndex * laneWidth + 22;
     const y = top + rowIndex * rowHeight;
     positions.set(node.id, { x: x + 68, y: y + 30 });
-    return `<g class="graph-map-node" data-graph-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(node.label)}${node.path ? ` · ${escapeHtml(node.path)}` : ''}</title><rect x="${x}" y="${y}" width="${laneWidth - 44}" height="62" rx="14"/><text x="${x + 12}" y="${y + 24}" class="graph-node-type">${escapeHtml(node.type)}</text><text x="${x + 12}" y="${y + 45}" class="graph-node-label">${escapeHtml(shortGraphLabel(node.label))}</text></g>`;
+    const rollupClass = isRollupNode(node) ? ' graph-map-node-rollup' : '';
+    return `<g class="graph-map-node${rollupClass}" data-graph-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(node.label)}${node.path ? ` · ${escapeHtml(node.path)}` : ''}</title><rect x="${x}" y="${y}" width="${laneWidth - 44}" height="62" rx="14"/><text x="${x + 12}" y="${y + 24}" class="graph-node-type">${escapeHtml(node.type)}</text><text x="${x + 12}" y="${y + 45}" class="graph-node-label">${escapeHtml(shortGraphLabel(node.label))}</text></g>`;
   })).join('');
-  const edgeLines = edges.filter((edge) => positions.has(edge.from) && positions.has(edge.to)).slice(0, 60).map((edge) => {
+  const edgeLines = display.edges.filter((edge) => positions.has(edge.from) && positions.has(edge.to)).map((edge) => {
     const from = positions.get(edge.from)!;
     const to = positions.get(edge.to)!;
     return `<path class="graph-edge" data-edge-from="${escapeHtml(edge.from)}" data-edge-to="${escapeHtml(edge.to)}" d="M ${from.x} ${from.y} C ${(from.x + to.x) / 2} ${from.y}, ${(from.x + to.x) / 2} ${to.y}, ${to.x} ${to.y}"><title>${escapeHtml(edge.type)}</title></path>`;
   }).join('');
+  const overflowNote = display.overflowByLane.length > 0
+    ? `<p class="setup-note graph-overflow-note">Map shows ${display.nodes.length} of ${display.totalNodes} nodes across lanes (${display.edges.length} of ${display.totalEdges} edges). Rollup tiles summarize hidden ${display.overflowByLane.map((lane) => `${lane.hidden} ${lane.laneLabel.toLowerCase()}`).join(', ')}.</p>`
+    : `<p class="setup-note graph-overflow-note">Map shows ${display.nodes.length} nodes and ${display.edges.length} of ${display.totalEdges} prioritized edges.</p>`;
   const legend = '<div class="graph-legend"><span>commit/doc/file → concept</span><span>course → question</span><span>question → card</span><span>card → review event</span></div>';
-  return `<section class="panel graph-map-panel"><div class="section-head"><div><h2>Evidence graph map</h2><p>Follow the chain from repository evidence to concepts, accepted questions, review cards, and learner events.</p></div><a class="ghost" href="/api/evidence-graph">Open graph JSON</a></div>${legend}<svg class="graph-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evidence graph map"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#38bdf8"/></marker></defs>${laneRects}<g>${edgeLines}</g><g>${nodeRects}</g></svg></section>`;
+  return `<section class="panel graph-map-panel"><div class="section-head"><div><h2>Evidence graph map</h2><p>Follow the chain from repository evidence to concepts, accepted questions, review cards, and learner events.</p></div><a class="ghost" href="/api/evidence-graph">Open graph JSON</a></div>${overflowNote}${legend}<svg class="graph-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evidence graph map"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#38bdf8"/></marker></defs>${laneRects}<g>${edgeLines}</g><g>${nodeRects}</g></svg></section>`;
 }
 
 function shortGraphLabel(label: string): string {
@@ -1152,6 +1172,9 @@ pre{overflow:auto;background:var(--color-bg-overlay);border:1px solid var(--colo
 .skill-new{border-color:var(--color-border-subtle);background:var(--color-bg-overlay);color:var(--color-text-secondary)}
 .graph-map-node.is-dimmed{opacity:.4}
 .graph-map-node.is-focused rect{stroke:var(--color-success-border);fill:var(--color-success-bg)}
+.graph-map-node-rollup rect{stroke-dasharray:4 3;fill:var(--color-bg-surface)}
+.graph-map-node-rollup .graph-node-label{fill:var(--color-text-muted)}
+.graph-overflow-note{margin:0 0 var(--space-3)}
 .btn-primary{display:inline-flex;align-items:center;justify-content:center;padding:var(--space-2) var(--space-4);font-size:var(--text-sm);font-weight:var(--font-semibold);text-decoration:none;border-radius:var(--radius-md);border:1px solid var(--color-accent-primary);background:var(--color-accent-primary);color:#fff;transition:background var(--transition-fast),transform var(--transition-base)}
 .btn-primary:hover{background:var(--color-accent-primary-hover);transform:translateY(-1px);text-decoration:none}
 .workbench-main{display:grid;gap:var(--space-6)}
@@ -1209,6 +1232,7 @@ body[class*="surface-"] .app-subnav [data-group]:hover,body[class*="surface-"] .
 .calibration-bar span{display:block;height:100%;background:linear-gradient(90deg,var(--color-accent-primary),var(--color-success))}
 .audit-list{margin:0;padding-left:var(--space-5);color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-relaxed)}
 .modal-overlay{position:fixed;inset:0;z-index:50;display:grid;place-items:center;padding:var(--space-6);background:rgba(1,4,9,0.72)}
+.modal-overlay.is-hidden{display:none}
 .modal-panel{width:min(720px,100%);max-height:80vh;overflow:auto;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-raised);box-shadow:var(--shadow-lg)}
 .modal-head{display:flex;justify-content:space-between;gap:var(--space-3);align-items:center;padding:var(--space-5);border-bottom:1px solid var(--color-border-subtle)}
 .modal-head h2{margin:0;font-size:var(--text-xl)}

@@ -1,6 +1,7 @@
 import { summarizeCalibration } from './calibration.js';
 import { delayedProbeSummary, dueDelayedProbes } from './delayedProbes.js';
 import { buildEvidenceTimeline } from './evidenceTimeline.js';
+import { MAP_DISPLAY_LIMITS } from './mapScaling.js';
 import { buildProgressGraph } from './progress.js';
 import { studySummary } from './study.js';
 import type { TutorState } from './types.js';
@@ -70,7 +71,7 @@ export function buildWorkbenchSummary(state: TutorState, nowIso?: string): Workb
       { id: 'evidence', label: 'Evidence links', count: taggedCount('evidence') },
     ],
     nodes,
-    links: timeline.edges.slice(0, 80).map((edge) => ({ from: edge.from, to: edge.to, type: edge.type })),
+    links: timeline.edges.slice(0, MAP_DISPLAY_LIMITS.workbenchLinkCap).map((edge) => ({ from: edge.from, to: edge.to, type: edge.type })),
   };
 }
 
@@ -90,7 +91,7 @@ type VisualNodeInputs = {
 };
 
 function visualNodes(state: TutorState, conceptNodes: ReturnType<typeof buildProgressGraph>['nodes'], inputs: VisualNodeInputs): WorkbenchNode[] {
-  const conceptVisuals: WorkbenchNode[] = conceptNodes.slice(0, 24).map((node) => ({
+  const conceptVisuals: WorkbenchNode[] = conceptNodes.slice(0, MAP_DISPLAY_LIMITS.workbenchConceptNodes).map((node) => ({
     id: `concept:${node.id}`,
     type: 'concept',
     label: node.label,
@@ -101,7 +102,7 @@ function visualNodes(state: TutorState, conceptNodes: ReturnType<typeof buildPro
     masteryPercent: Math.round(node.mastery * 100),
     confidencePercent: Math.round(node.confidence * 100),
   }));
-  const cardVisuals: WorkbenchNode[] = state.learningItems.filter((item) => item.status !== 'archived').slice(0, 12).map((item) => ({
+  const cardVisuals: WorkbenchNode[] = state.learningItems.filter((item) => item.status !== 'archived').slice(0, MAP_DISPLAY_LIMITS.workbenchCardNodes).map((item) => ({
     id: `card:${item.id}`,
     type: 'card',
     label: item.title,
@@ -111,7 +112,7 @@ function visualNodes(state: TutorState, conceptNodes: ReturnType<typeof buildPro
     path: item.snippet.path,
     tags: [ ...(inputs.dueItemIds.has(item.id) ? ['due' as const] : []), ...(item.evidence.length > 0 ? ['evidence' as const] : []) ],
   }));
-  const dueProbeVisuals: WorkbenchNode[] = state.delayedProbes?.filter((probe) => inputs.dueProbeIds.has(probe.id)).slice(0, 12).map((probe) => ({
+  const dueProbeVisuals: WorkbenchNode[] = state.delayedProbes?.filter((probe) => inputs.dueProbeIds.has(probe.id)).slice(0, MAP_DISPLAY_LIMITS.workbenchCardNodes).map((probe) => ({
     id: `probe:${probe.id}`,
     type: 'probe',
     label: `${probe.intervalDays}-day delayed probe`,
@@ -120,7 +121,7 @@ function visualNodes(state: TutorState, conceptNodes: ReturnType<typeof buildPro
     detail: `Delayed recall probe due for card ${probe.sourceItemId} and concept ${probe.conceptId}.`,
     tags: ['due'],
   })) ?? [];
-  const evidenceVisuals: WorkbenchNode[] = inputs.timeline.nodes.filter((node) => ['commit', 'doc', 'file'].includes(node.type)).slice(0, 12).map((node) => ({
+  const evidenceVisuals: WorkbenchNode[] = inputs.timeline.nodes.filter((node) => ['commit', 'doc', 'file'].includes(node.type)).slice(0, MAP_DISPLAY_LIMITS.workbenchEvidenceNodes).map((node) => ({
     id: node.id,
     type: 'evidence',
     label: node.label,
