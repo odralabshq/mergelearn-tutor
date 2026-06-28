@@ -6,7 +6,13 @@ export type EvidenceTimeline = {
   edges: EvidenceTimelineEdge[];
 };
 
-export function buildEvidenceTimeline(state: TutorState): EvidenceTimeline {
+export type BuildEvidenceTimelineOptions = {
+  includeEvents?: boolean;
+  courseId?: string;
+};
+
+export function buildEvidenceTimeline(state: TutorState, options: BuildEvidenceTimelineOptions = {}): EvidenceTimeline {
+  const includeEvents = options.includeEvents ?? true;
   const nodes = new Map<string, EvidenceTimelineNode>();
   const edges: EvidenceTimelineEdge[] = [];
   const addNode = (node: EvidenceTimelineNode) => nodes.set(node.id, { ...nodes.get(node.id), ...node });
@@ -67,17 +73,25 @@ export function buildEvidenceTimeline(state: TutorState): EvidenceTimeline {
     addEdge(pathNodeId(item.snippet.path), cardId, 'uses_evidence');
   }
 
-  for (const event of state.learningEvents) {
-    const eventId = `event:${event.id}`;
-    addNode({ id: eventId, type: 'event', label: event.eventType, subtitle: event.correct === undefined ? undefined : event.correct ? 'correct' : 'missed', createdAt: event.createdAt });
-    addEdge(`card:${event.itemId}`, eventId, 'answered');
+  if (includeEvents) {
+    for (const event of state.learningEvents) {
+      const eventId = `event:${event.id}`;
+      addNode({ id: eventId, type: 'event', label: event.eventType, subtitle: event.correct === undefined ? undefined : event.correct ? 'correct' : 'missed', createdAt: event.createdAt });
+      addEdge(`card:${event.itemId}`, eventId, 'answered');
+    }
   }
 
-  const resultNodes = [...nodes.values()];
+  let resultNodes = [...nodes.values()];
+  let resultEdges = uniqueEdges(edges);
+  if (options.courseId) {
+    const scoped = filterTimelineForCourse(resultNodes, resultEdges, options.courseId);
+    resultNodes = scoped.nodes;
+    resultEdges = scoped.edges;
+  }
   return {
     summary: summarize(resultNodes),
     nodes: resultNodes.sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? '') || a.type.localeCompare(b.type)),
-    edges: uniqueEdges(edges),
+    edges: resultEdges,
   };
 }
 
@@ -85,6 +99,35 @@ export function graphByType(timeline: EvidenceTimeline): Array<{ type: string; n
   const groups = new Map<string, EvidenceTimelineNode[]>();
   for (const node of timeline.nodes) groups.set(node.type, [...(groups.get(node.type) ?? []), node]);
   return [...groups.entries()].map(([type, nodes]) => ({ type, nodes }));
+}
+
+function filterTimelineForCourse(nodes: EvidenceTimelineNode[], edges: EvidenceTimelineEdge[], courseId: string): { nodes: EvidenceTimelineNode[]; edges: EvidenceTimelineEdge[] } {
+  const courseNodeId = `course:${courseId}`;
+  const keep = new Set<string>();
+  const queue = [courseNodeId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    if (keep.has(current)) continue;
+    keep.add(current);
+    for (const edge of edges) {
+      if (edge.from === current && !keep.has(edge.to)) queue.push(edge.to);
+      if (edge.to === current && !keep.has(edge.from)) queue.push(edge.from);
+    }
+  }
+  for (const node of nodes) {
+    if (node.type === 'concept' && edges.some((edge) => edge.from === courseNodeId && edge.to === node.id)) keep.add(node.id);
+    if (node.type === 'question' && node.id.startsWith('question:')) {
+      const qId = node.id.slice('question:'.length);
+      if (edges.some((edge) => edge.from === courseNodeId && edge.to === node.id)) keep.add(node.id);
+      const cardEdge = edges.find((edge) => edge.from.startsWith('question:') && edge.to.startsWith('card:'));
+      if (cardEdge) keep.add(cardEdge.to);
+    }
+    if (node.type === 'card' && edges.some((edge) => edge.from === courseNodeId && edge.to === node.id)) keep.add(node.id);
+  }
+  const filteredNodes = nodes.filter((node) => keep.has(node.id));
+  const filteredIds = new Set(filteredNodes.map((node) => node.id));
+  const filteredEdges = edges.filter((edge) => filteredIds.has(edge.from) && filteredIds.has(edge.to));
+  return { nodes: filteredNodes, edges: filteredEdges };
 }
 
 function pathNodeId(path: string): string {
