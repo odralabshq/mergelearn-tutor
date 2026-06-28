@@ -5,13 +5,15 @@ import { coursesSummary, upsertCourse } from '../core/courses.js';
 import { evaluateCardQuality } from '../core/cardQuality.js';
 import { completeDelayedProbe, delayedProbeSummary, dueDelayedProbes } from '../core/delayedProbes.js';
 import { diffSnippetCss, renderDiffSnippetHtml } from '../core/diffView.js';
-import { buildEvidenceTimeline, graphByType } from '../core/evidenceTimeline.js';
+import { buildEvidenceTimeline, graphByType, type BuildEvidenceTimelineOptions } from '../core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from '../core/events.js';
+import { buildHistoryActivity } from '../core/historyActivity.js';
 import { GRAPH_MAP_LANES, isRollupNode, limitEvidenceTimeline, MAP_DISPLAY_LIMITS, parseDisplayLimit, parseTimelineOffset, parseTimelinePageSize, selectGraphMapDisplay, selectSkillMapConcepts, selectTimelineDisplay, type GraphMapMode } from '../core/mapScaling.js';
 import { activeLearningItems, generateCardBatch, recordAnswer } from '../core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from '../core/preferences.js';
+import { buildPracticeQueue, parseReviewedInSession, practiceItemAt } from '../core/practiceQueue.js';
 import { buildProgressGraph } from '../core/progress.js';
-import { draftQuestionsForCourse, questionSummary, updateQuestionStatus } from '../core/questions.js';
+import { bulkUpdateQuestionStatus, draftQuestionsForCourse, questionCandidates, questionSummary, updateQuestionStatus } from '../core/questions.js';
 import { renderProgress, renderToday } from '../core/render.js';
 import { assignStudyConditions, completePassiveReview, studySummary } from '../core/study.js';
 import { loadState, saveState } from '../core/store.js';
@@ -43,8 +45,22 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, renderSessionHtml(await loadState(repoPath), await loadPreferences(repoPath)));
-  if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPracticeHtml(await loadState(repoPath), await loadPreferences(repoPath)));
-  if (method === 'GET' && url.pathname === '/map') return sendHtml(res, 200, renderMapHtml(await loadState(repoPath), url.searchParams.get('mode') ?? 'local-graph'));
+  if (method === 'GET' && url.pathname === '/practice') {
+    const state = await loadState(repoPath);
+    const preferences = await loadPreferences(repoPath);
+    const indexParam = url.searchParams.get('index');
+    const reviewedInSession = parseReviewedInSession(url.searchParams.get('reviewed'));
+    const index = indexParam !== null ? Number.parseInt(indexParam, 10) : undefined;
+    return sendHtml(res, 200, renderPracticeHtml(state, preferences, { index: Number.isFinite(index) ? index : undefined, reviewedInSession }));
+  }
+  if (method === 'GET' && url.pathname === '/api/practice/queue') {
+    const state = await loadState(repoPath);
+    const indexParam = url.searchParams.get('index');
+    const reviewedInSession = parseReviewedInSession(url.searchParams.get('reviewed'));
+    const index = indexParam !== null ? Number.parseInt(indexParam, 10) : undefined;
+    return sendJson(res, 200, buildPracticeQueue(state, { index: Number.isFinite(index) ? index : undefined, reviewedInSession }));
+  }
+  if (method === 'GET' && url.pathname === '/map') return sendHtml(res, 200, renderMapHtml(await loadState(repoPath), url));
   if (method === 'GET' && url.pathname === '/workbench') return sendHtml(res, 200, renderWorkbenchHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/plan') return sendHtml(res, 200, renderPlanHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/courses') return sendHtml(res, 200, renderCoursesHtml(await loadState(repoPath)));
@@ -53,7 +69,24 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/graph') return sendHtml(res, 200, renderGraphHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/progress') return sendHtml(res, 200, renderProgressHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/audit') return sendHtml(res, 200, renderAuditHtml(await loadState(repoPath)));
-  if (method === 'GET' && url.pathname === '/history') return sendHtml(res, 200, renderHistoryHtml(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/history') {
+    const state = await loadState(repoPath);
+    const type = url.searchParams.get('type') ?? undefined;
+    const limit = parseDisplayLimit(url.searchParams.get('limit'), 20) ?? 20;
+    const offset = parseTimelineOffset(url.searchParams.get('offset'));
+    return sendHtml(res, 200, renderHistoryHtml(state, { type, limit, offset }));
+  }
+  if (method === 'GET' && url.pathname === '/api/history/activity') {
+    const state = await loadState(repoPath);
+    const type = url.searchParams.get('type') ?? undefined;
+    const limit = parseDisplayLimit(url.searchParams.get('limit'), 20) ?? 20;
+    const offset = parseTimelineOffset(url.searchParams.get('offset'));
+    return sendJson(res, 200, buildHistoryActivity(state, { type: type ?? undefined, limit, offset }));
+  }
+  if (method === 'GET' && url.pathname === '/api/questions/candidates') {
+    const state = await loadState(repoPath);
+    return sendJson(res, 200, { candidates: questionCandidates(state) });
+  }
   if (method === 'GET' && url.pathname === '/study') return sendHtml(res, 200, renderStudyHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/preferences') return sendHtml(res, 200, renderPreferencesHtml(await loadState(repoPath), await loadPreferences(repoPath)));
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
@@ -66,12 +99,12 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/api/courses') return sendJson(res, 200, { courses: coursesSummary(await loadState(repoPath)) });
   if (method === 'GET' && url.pathname === '/api/questions') return sendJson(res, 200, questionBankData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/evidence-timeline') {
-    const timeline = buildEvidenceTimeline(await loadState(repoPath));
+    const timeline = buildEvidenceTimeline(await loadState(repoPath), timelineOptionsFromUrl(url, true));
     const limit = parseDisplayLimit(url.searchParams.get('limit'));
     return sendJson(res, 200, limit ? limitEvidenceTimeline(timeline, limit) : timeline);
   }
   if (method === 'GET' && url.pathname === '/api/evidence-graph') {
-    const timeline = buildEvidenceTimeline(await loadState(repoPath));
+    const timeline = buildEvidenceTimeline(await loadState(repoPath), timelineOptionsFromUrl(url, true));
     const limit = parseDisplayLimit(url.searchParams.get('limit'));
     return sendJson(res, 200, limit ? limitEvidenceTimeline(timeline, limit) : timeline);
   }
@@ -93,7 +126,14 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   }
   if (method === 'POST' && url.pathname === '/api/questions/draft') {
     const body = await readJson(req) as { courseId?: string; provider?: string; model?: string; count?: number };
-    const next = draftQuestionsForCourse(await loadState(repoPath), { courseId: body.courseId, provider: body.provider as never, model: body.model, count: body.count ?? 6 });
+    const next = await draftQuestionsForCourse(await loadState(repoPath), { courseId: body.courseId, provider: body.provider as never, model: body.model, count: body.count ?? 6 });
+    await saveState(repoPath, next);
+    return sendJson(res, 200, { ok: true, questions: questionBankData(next) });
+  }
+  if (method === 'POST' && url.pathname === '/api/questions/bulk-status') {
+    const body = await readJson(req) as { ids?: string[]; status?: 'accepted' | 'rejected' };
+    if (!body.ids?.length || !body.status) return sendJson(res, 400, { ok: false, error: 'ids and status are required' });
+    const next = bulkUpdateQuestionStatus(await loadState(repoPath), body.ids, body.status);
     await saveState(repoPath, next);
     return sendJson(res, 200, { ok: true, questions: questionBankData(next) });
   }
@@ -264,7 +304,28 @@ type PageShellOptions = {
   repoPath?: string;
   mapModeBar?: string;
   surface?: string;
+  practiceIndex?: number;
+  practiceTotal?: number;
+  reviewedInSession?: string[];
 };
+
+function timelineOptionsFromUrl(url: URL, defaultIncludeEvents: boolean): BuildEvidenceTimelineOptions {
+  const includeEvents = url.searchParams.has('includeEvents')
+    ? url.searchParams.get('includeEvents') === 'true'
+    : defaultIncludeEvents;
+  const courseId = url.searchParams.get('course') ?? undefined;
+  return { includeEvents, courseId: courseId || undefined };
+}
+
+function mapTimelineOptions(state: TutorState, url: URL): BuildEvidenceTimelineOptions {
+  return { includeEvents: false, courseId: url.searchParams.get('course') ?? undefined };
+}
+
+function renderLearnMoreSection(item: LearningItem): string {
+  const deep = item.bodyMarkdown?.trim();
+  if (!deep || deep === item.explanationMarkdown.trim()) return '';
+  return `<details class="learn-more"><summary>Learn more</summary><div class="learn-more-body">${escapeHtml(deep)}</div></details>`;
+}
 
 function shortRepoLabel(repoPath?: string): string {
   if (!repoPath) return 'local session';
@@ -290,10 +351,37 @@ function shellOpts(state: TutorState, surface: string, extra: Partial<PageShellO
   return { repoPath: state.repoPath, surface, ...extra };
 }
 
-function renderMapModeBar(activeMode: string): string {
+function renderMapCourseFilter(state: TutorState, activeCourseId?: string): string {
+  if (state.courses.length === 0) return '';
+  const links = state.courses.map((course) => {
+    const active = course.id === activeCourseId ? ' is-active' : '';
+    return `<a class="ghost map-course-link${active}" href="/map?mode=local-graph&amp;course=${encodeURIComponent(course.id)}">${escapeHtml(course.title)}</a>`;
+  }).join('');
+  const allLink = !activeCourseId ? '<a class="ghost map-course-link is-active" href="/map?mode=local-graph">All courses</a>' : '<a class="ghost map-course-link" href="/map?mode=local-graph">All courses</a>';
+  return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Course scope</p><h2>Filter map to one learning track</h2></div></div><div class="actions">${allLink}${links}</div></section>`;
+}
+
+function renderHistoryActivityPanel(state: TutorState, options: { type?: string; limit: number; offset: number }): string {
+  const activity = buildHistoryActivity(state, options);
+  const types = [...new Set(state.learningEvents.map((event) => event.eventType))].sort();
+  const chips = types.map((type) => {
+    const active = options.type === type ? ' aria-current="page"' : '';
+    const query = new URLSearchParams({ type, limit: String(options.limit), offset: '0' });
+    return `<a class="ghost history-type-chip${options.type === type ? ' is-active' : ''}" href="/history?${query}"${active}>${escapeHtml(type)}</a>`;
+  }).join('');
+  const rows = activity.items.map((row) => `<article class="timeline-row history-activity-row" data-event-type="${escapeHtml(row.eventType)}"><span>${escapeHtml(row.eventType)}</span><strong>${escapeHtml(row.title)}</strong><small>${escapeHtml(row.detail)}</small><time>${escapeHtml(row.createdAt)}</time></article>`).join('');
+  const nextOffset = options.offset + activity.items.length;
+  const pagination = nextOffset < activity.total
+    ? `<a class="ghost" href="/history?limit=${options.limit}&offset=${nextOffset}${options.type ? `&type=${encodeURIComponent(options.type)}` : ''}">Load more</a>`
+    : '';
+  return `<section class="panel history-activity-panel"><div class="section-head"><div><p class="eyebrow">Learning events</p><h2>Activity timeline</h2><p>Chronological review events from local state. Filter by event type or open <a href="/api/history/activity">activity JSON</a>.</p></div></div><div class="actions"><a class="ghost history-type-chip${!options.type ? ' is-active' : ''}" href="/history?limit=${options.limit}">All types</a>${chips}</div><div class="timeline-list">${rows || '<p>No learning events yet.</p>'}</div><p class="setup-note">Showing ${Math.min(nextOffset, activity.total)} of ${activity.total} events.${pagination ? ` ${pagination}` : ''}</p></section>`;
+}
+
+function renderMapModeBar(activeMode: string, courseId?: string): string {
+  const courseQuery = courseId ? `&course=${encodeURIComponent(courseId)}` : '';
   const tabs = [
-    { id: 'local-graph', label: 'Local graph', href: '/map?mode=local-graph', description: 'What concepts, cards, and evidence are related?' },
-    { id: 'provenance', label: 'Provenance lane', href: '/map?mode=provenance', description: 'Where did each card and question come from?' },
+    { id: 'local-graph', label: 'Local graph', href: `/map?mode=local-graph${courseQuery}`, description: 'What concepts, cards, and evidence are related?' },
+    { id: 'provenance', label: 'Provenance lane', href: `/map?mode=provenance${courseQuery}`, description: 'Where did each card and question come from?' },
     { id: 'skill-map', label: 'Skill map', href: '/map?mode=skill-map', description: 'Which concepts are weak, strong, or due for review?' },
   ];
   const tabHtml = tabs.map((tab) => `<a class="map-mode-tab ${tab.id === activeMode ? 'is-active' : ''}" href="${tab.href}" ${tab.id === activeMode ? 'aria-current="page"' : ''}>${escapeHtml(tab.label)}</a>`).join('');
@@ -315,17 +403,18 @@ function renderSkillMapHeatmap(state: TutorState): string {
   return `<section class="panel"><div class="section-head"><div><p class="eyebrow">Skill map</p><h2>Concept mastery heatmap</h2><p>Green is confident, yellow is learning, red needs review, gray is new or unexposed.</p></div><a class="ghost" href="/api/progress">Open progress JSON</a></div><div class="skill-heatmap">${cells || '<p>No concepts yet. Ingest evidence to populate the skill map.</p>'}</div>${overflow}</section>`;
 }
 
-function renderGraphBody(state: TutorState): string {
-  const timeline = buildEvidenceTimeline(state);
-  const graphGroups = graphByType(timeline);
+function renderGraphBody(state: TutorState, options: BuildEvidenceTimelineOptions = { includeEvents: false }): string {
+  const timeline = buildEvidenceTimeline(state, options);
+  const graphGroups = graphByType(timeline).filter((group) => group.type !== 'event');
   const groups = graphGroups.map((group) => `<section class="graph-column" data-graph-type="${escapeHtml(group.type)}"><h2>${escapeHtml(group.type)}</h2>${group.nodes.slice(0, MAP_DISPLAY_LIMITS.graphColumnNodes).map((node) => `<article class="graph-node"><strong>${escapeHtml(node.label)}</strong><small>${escapeHtml(node.subtitle ?? node.path ?? node.status ?? '')}</small></article>`).join('')}${group.nodes.length > MAP_DISPLAY_LIMITS.graphColumnNodes ? `<p class="setup-note">+${group.nodes.length - MAP_DISPLAY_LIMITS.graphColumnNodes} more ${escapeHtml(group.type)} nodes in raw JSON.</p>` : ''}</section>`).join('');
-  const map = renderGraphMap(timeline.nodes, timeline.edges, 'local-graph');
+  const map = renderGraphMap(timeline.nodes, timeline.edges, 'local-graph', false);
   const raw = escapeHtml(JSON.stringify({ nodes: timeline.nodes, edges: timeline.edges }, null, 2));
-  return `${map}${renderGraphFocusPanel(graphGroups, timeline.edges.length)}<section class="graph-grid">${groups}</section><details class="panel"><summary><strong>Raw graph projection</strong></summary><pre>${raw}</pre></details>${graphMapHoverScript()}`;
+  const courseFilter = renderMapCourseFilter(state, options.courseId);
+  return `${courseFilter}${map}${renderGraphFocusPanel(graphGroups, timeline.edges.length)}<section class="graph-grid">${groups}</section><details class="panel"><summary><strong>Raw graph projection</strong></summary><pre>${raw}</pre></details>${graphMapHoverScript()}`;
 }
 
-function renderTimelineBody(state: TutorState, pageSize: number = MAP_DISPLAY_LIMITS.timelinePageSize, offset = 0): string {
-  const timeline = buildEvidenceTimeline(state);
+function renderTimelineBody(state: TutorState, pageSize: number = MAP_DISPLAY_LIMITS.timelinePageSize, offset = 0, options: BuildEvidenceTimelineOptions = { includeEvents: true }): string {
+  const timeline = buildEvidenceTimeline(state, options);
   const display = selectTimelineDisplay(timeline.nodes, pageSize, offset);
   const docs = timeline.nodes.filter((node) => node.type === 'doc').slice(0, MAP_DISPLAY_LIMITS.timelineDocsLimit);
   const hiddenDocs = Math.max(0, timeline.nodes.filter((node) => node.type === 'doc').length - docs.length);
@@ -339,10 +428,11 @@ function renderTimelineBody(state: TutorState, pageSize: number = MAP_DISPLAY_LI
   return `${metrics}${renderTimelineFilterPanel(timeline.summary)}<section class="panel"><h2>Document lens</h2><div class="mini-grid">${docs.map((doc) => `<article class="mini-card"><strong>${escapeHtml(doc.label)}</strong><p>${escapeHtml(doc.path ?? doc.subtitle ?? '')}</p><small>${timeline.edges.filter((edge) => edge.from === doc.id || edge.to === doc.id).length} links</small></article>`).join('') || '<p>No markdown docs found yet.</p>'}</div>${hiddenDocs > 0 ? `<p class="setup-note">+${hiddenDocs} more docs in full timeline JSON.</p>` : ''}</section><section class="panel"><h2>Timeline</h2><div class="timeline-list">${items}</div>${timelineOverflow}</section>`;
 }
 
-function renderProvenanceBody(state: TutorState): string {
-  const timeline = buildEvidenceTimeline(state);
+function renderProvenanceBody(state: TutorState, options: BuildEvidenceTimelineOptions = { includeEvents: false }): string {
+  const timeline = buildEvidenceTimeline(state, options);
   const flowLegend = '<div class="provenance-flow-legend"><span>commit</span><span>→</span><span>file</span><span>→</span><span>concept</span><span>→</span><span>question</span><span>→</span><span>card</span></div>';
-  return `<section class="panel provenance-panel"><div class="section-head"><div><p class="eyebrow">Provenance lane</p><h2>Evidence timeline</h2><p>Follow the left-to-right chain from git commits through changed files, extracted concepts, generated questions, and review cards.</p></div><a class="ghost" href="/timeline">Full timeline</a></div>${flowLegend}${renderGraphMap(timeline.nodes, timeline.edges, 'provenance')}</section>${renderTimelineBody(state)}${graphMapHoverScript()}`;
+  const courseFilter = renderMapCourseFilter(state, options.courseId);
+  return `${courseFilter}<section class="panel provenance-panel"><div class="section-head"><div><p class="eyebrow">Provenance lane</p><h2>Evidence timeline</h2><p>Follow the left-to-right chain from git commits through changed files, extracted concepts, generated questions, and review cards.</p></div><a class="ghost" href="/timeline">Full timeline</a></div>${flowLegend}${renderGraphMap(timeline.nodes, timeline.edges, 'provenance', false)}</section>${renderTimelineBody(state, MAP_DISPLAY_LIMITS.timelinePageSize, 0, options)}${graphMapHoverScript()}`;
 }
 
 function renderProgressBody(state: TutorState): string {
@@ -417,8 +507,10 @@ function renderSessionHtml(state: TutorState, preferences: UserPreferences): str
         <button data-action="reveal">Reveal explanation</button>
       </div>
       <section class="reveal-panel ${preferences.review.showExplanationsByDefault ? '' : 'is-hidden'}">
-        <p class="label">Explanation and expected focus</p>
-        <p>${escapeHtml(item.explanationMarkdown)}</p>
+        <p class="label">Short answer</p>
+        <p class="short-answer">${escapeHtml(item.explanationMarkdown)}</p>
+        ${renderLearnMoreSection(item)}
+        <p class="label">Expected focus</p>
         <ul>${item.expectedFocus.map((focus) => `<li>${escapeHtml(focus)}</li>`).join('')}</ul>
         <div class="actions grade-actions">
           <button data-action="answer-grade" data-correct="true">I knew it</button>
@@ -435,16 +527,20 @@ function renderSessionHtml(state: TutorState, preferences: UserPreferences): str
   return pageShell('MergeLearn Tutor Review', `${hero}${renderStartHerePanel(state)}${controls}<section class="review-grid">${cards || '<p>No cards yet. Follow Start here to ingest evidence and generate your first cards.</p>'}</section>`, 'Ready', shellOpts(state, 'practice'));
 }
 
-function renderPracticeHtml(state: TutorState, preferences: UserPreferences): string {
-  const active = activeLearningItems(state);
-  const item = active[0];
-  if (!item) {
+function renderPracticeHtml(state: TutorState, preferences: UserPreferences, options: { index?: number; reviewedInSession?: string[] } = {}): string {
+  const { item, queue } = practiceItemAt(state, options);
+  if (!item || queue.total === 0) {
     return pageShell('MergeLearn Tutor Practice', `<section class="hero"><div><p class="eyebrow">Focused Practice</p><h1>No active card yet</h1><p>Generate a card from local evidence, then come back for one-card retrieval practice.</p></div><div class="hero-card"><strong>0</strong><span>active cards</span><a class="ghost" href="/">Open legacy review</a></div></section>${nav()}${renderStartHerePanel(state)}`, 'Practice', shellOpts(state, 'practice'));
   }
   const quality = qualityForCard(item);
-  const card = `<article class="card recall-card practice-card" data-item="${escapeHtml(item.id)}"><div class="card-topline"><span>Focused card</span>${item.courseId ? `<span>course ${escapeHtml(item.courseId)}</span>` : ''}${item.questionId ? '<span>accepted question</span>' : ''}<span>${escapeHtml(item.questionPlane.replace(/_/g, ' '))}</span><span>${escapeHtml(item.difficulty)}</span><span class="card-state">not reviewed</span></div><h2 class="practice-title">${escapeHtml(item.title)}</h2><p class="why">${escapeHtml(item.whyShown ?? 'Shown from recent repo evidence.')}</p><div class="snippet-head"><span>${escapeHtml(item.snippet.path)}</span><span>generation ${item.generation}</span></div>${renderDiffSnippetHtml(item.snippet.code)}<section class="question-box practice-question"><p class="label">Active recall question</p><p>${escapeHtml(item.prompt)}</p></section><textarea aria-label="Your answer" placeholder="Answer from memory before revealing the explanation."></textarea><section class="confidence-panel" aria-label="Confidence before reveal"><p class="label">Before reveal: how confident are you?</p><div class="confidence-options"><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="1" /> Guessing</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="2" /> Low</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="3" /> Medium</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="4" /> High</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="5" /> Certain</label></div></section><p class="setup-note" id="practice-outcome">Outcome will appear here after grading: calibration pairing, delayed probe scheduling, and weak-concept updates stay local.</p><div class="actions primary-actions"><button data-action="reveal">Reveal explanation</button></div><section class="reveal-panel ${preferences.review.showExplanationsByDefault ? '' : 'is-hidden'}"><p class="label">Explanation and expected focus</p><p>${escapeHtml(item.explanationMarkdown)}</p><ul>${item.expectedFocus.map((focus) => `<li>${escapeHtml(focus)}</li>`).join('')}</ul><details class="practice-details"><summary>Evidence and quality details</summary>${renderQualityPanel(quality)}</details><div class="actions grade-actions"><button data-action="answer-grade" data-correct="true">I knew it <kbd class="shortcut-hint">Y</kbd></button><button data-action="feedback" data-event="marked_unsure">Partly</button><button data-action="answer-grade" data-correct="false">Missed it <kbd class="shortcut-hint">N</kbd></button><button data-action="feedback" data-event="marked_bad_card">Bad card</button><button data-action="feedback" data-event="marked_wrong_evidence">Wrong evidence</button></div></section></article>`;
-  const focusBody = `<header class="practice-focus-header" aria-label="Focused Practice"><div class="progress-track practice-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span id="session-progress" style="width:0%"></span></div><span class="sr-only">One card, one answer, one grade</span></header><section class="review-grid practice-grid practice-focus">${card}</section><footer class="practice-focus-footer"><p><strong>Keyboard shortcuts</strong> · 1-5 confidence · Enter reveal · Y knew it · N missed it</p></footer>${practiceKeyboardScript()}`;
-  return pageShell('MergeLearn Tutor Practice', focusBody, 'Practice', { ...shellOpts(state, 'practice'), focus: true });
+  const position = queue.index + 1;
+  const progressPct = queue.total > 0 ? Math.round((position / queue.total) * 100) : 0;
+  const reviewedQuery = queue.reviewedInSession.length > 0 ? `&reviewed=${encodeURIComponent(queue.reviewedInSession.join(','))}` : '';
+  const prevLink = queue.index > 0 ? `<a class="ghost practice-nav-btn" href="/practice?index=${queue.index - 1}${reviewedQuery}">Previous</a>` : '<span class="practice-nav-btn is-disabled">Previous</span>';
+  const nextLink = queue.index < queue.total - 1 ? `<a class="ghost practice-nav-btn" href="/practice?index=${queue.index + 1}${reviewedQuery}">Next</a>` : '<span class="practice-nav-btn is-disabled">Next</span>';
+  const card = `<article class="card recall-card practice-card" data-item="${escapeHtml(item.id)}"><div class="card-topline"><span>Focused card</span>${item.courseId ? `<span>course ${escapeHtml(item.courseId)}</span>` : ''}${item.questionId ? '<span>accepted question</span>' : ''}<span>${escapeHtml(item.questionPlane.replace(/_/g, ' '))}</span><span>${escapeHtml(item.difficulty)}</span><span class="card-state">not reviewed</span></div><h2 class="practice-title">${escapeHtml(item.title)}</h2><p class="why">${escapeHtml(item.whyShown ?? 'Shown from recent repo evidence.')}</p><div class="snippet-head"><span>${escapeHtml(item.snippet.path)}</span><span>generation ${item.generation}</span></div>${renderDiffSnippetHtml(item.snippet.code)}<section class="question-box practice-question"><p class="label">Active recall question</p><p>${escapeHtml(item.prompt)}</p></section><textarea aria-label="Your answer" placeholder="Answer from memory before revealing the explanation."></textarea><section class="confidence-panel" aria-label="Confidence before reveal"><p class="label">Before reveal: how confident are you?</p><div class="confidence-options"><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="1" /> Guessing</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="2" /> Low</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="3" /> Medium</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="4" /> High</label><label><input type="radio" name="confidence-${escapeHtml(item.id)}" value="5" /> Certain</label></div></section><p class="setup-note" id="practice-outcome">Outcome will appear here after grading: calibration pairing, delayed probe scheduling, and weak-concept estimates update from this grade.</p><div class="actions primary-actions"><button data-action="reveal">Reveal explanation</button></div><section class="reveal-panel ${preferences.review.showExplanationsByDefault ? '' : 'is-hidden'}"><p class="label">Short answer</p><p class="short-answer">${escapeHtml(item.explanationMarkdown)}</p>${renderLearnMoreSection(item)}<p class="label">Expected focus</p><ul>${item.expectedFocus.map((focus) => `<li>${escapeHtml(focus)}</li>`).join('')}</ul><details class="practice-details"><summary>Evidence and quality details</summary>${renderQualityPanel(quality)}</details><div class="actions grade-actions"><button data-action="answer-grade" data-correct="true">I knew it <kbd class="shortcut-hint">Y</kbd></button><button data-action="feedback" data-event="marked_unsure">Partly</button><button data-action="answer-grade" data-correct="false">Missed it <kbd class="shortcut-hint">N</kbd></button><button data-action="feedback" data-event="marked_bad_card">Bad card</button><button data-action="feedback" data-event="marked_wrong_evidence">Wrong evidence</button></div></section></article>`;
+  const focusBody = `<header class="practice-focus-header" aria-label="Focused Practice"><div class="practice-position"><span>${position} / ${queue.total}</span></div><div class="progress-track practice-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${queue.total}" aria-valuenow="${position}"><span id="session-progress" style="width:${progressPct}%"></span></div><span class="sr-only">Card ${position} of ${queue.total}</span></header><section class="review-grid practice-grid practice-focus">${card}</section><footer class="practice-queue-footer"><div class="practice-queue-nav">${prevLink}<strong class="practice-queue-position">${position} / ${queue.total}</strong>${nextLink}</div><p class="practice-shortcuts"><strong>Keyboard shortcuts</strong> · 1-5 confidence · Enter reveal · Y knew it · N missed it</p></footer>${practiceKeyboardScript()}`;
+  return pageShell('MergeLearn Tutor Practice', focusBody, 'Practice', { ...shellOpts(state, 'practice'), focus: true, practiceIndex: queue.index, practiceTotal: queue.total, reviewedInSession: queue.reviewedInSession });
 }
 
 function practiceKeyboardScript(): string {
@@ -674,16 +770,18 @@ function renderTimelineFilterPanel(summary: Record<string, number>): string {
   return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Provenance filters</p><h2>Scan one evidence type at a time</h2><p>Timeline can get noisy after several card generations. Use these local filters to focus on docs, accepted questions, cards, or review events without leaving the page.</p></div><a class="ghost" href="/api/evidence-timeline">Open timeline JSON</a></div><div class="actions"><button data-action="timeline-filter" data-filter-type="all">All types</button>${chips}</div><p class="setup-note" id="timeline-filter-note">Showing all timeline nodes.</p></section>`;
 }
 
-function renderMapHtml(state: TutorState, mode: string): string {
+function renderMapHtml(state: TutorState, url: URL): string {
   const validModes = ['local-graph', 'provenance', 'skill-map'];
-  const activeMode = validModes.includes(mode) ? mode : 'local-graph';
+  const activeMode = validModes.includes(url.searchParams.get('mode') ?? '') ? url.searchParams.get('mode')! : 'local-graph';
+  const mapOptions = mapTimelineOptions(state, url);
   let body = '';
-  if (activeMode === 'provenance') body = renderProvenanceBody(state);
+  if (activeMode === 'provenance') body = renderProvenanceBody(state, mapOptions);
   else if (activeMode === 'skill-map') body = renderProgressBody(state);
-  else body = renderGraphBody(state);
+  else body = renderGraphBody(state, mapOptions);
   const activeCards = state.learningItems.filter((item) => item.status !== 'archived').length;
-  const intro = renderPageIntro('Unified Map', 'One surface for relationships, provenance, and mastery', 'Switch modes to answer three questions: what is related, where did this come from, and what is weak or due.', `<div class="page-intro-stats"><span>${state.concepts.length} concepts</span><span>${activeCards} active cards</span></div>`);
-  return pageShell('MergeLearn Tutor Map', `${intro}${body}`, 'Map', { ...shellOpts(state, 'map'), mapModeBar: renderMapModeBar(activeMode) });
+  const courseNote = mapOptions.courseId ? ` · course ${escapeHtml(mapOptions.courseId)}` : '';
+  const intro = renderPageIntro('Unified Map', 'One surface for relationships, provenance, and mastery', `Switch modes to answer three questions: what is related, where did this come from, and what is weak or due.${courseNote}`, `<div class="page-intro-stats"><span>${state.concepts.length} concepts</span><span>${activeCards} active cards</span></div>`);
+  return pageShell('MergeLearn Tutor Map', `${intro}${body}`, 'Map', { ...shellOpts(state, 'map'), mapModeBar: renderMapModeBar(activeMode, mapOptions.courseId) });
 }
 
 function renderGraphHtml(state: TutorState): string {
@@ -698,9 +796,10 @@ function renderGraphFocusPanel(groups: Array<{ type: string; nodes: EvidenceTime
   return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Graph focus</p><h2>Drill into one lane before reading raw JSON</h2><p>The map shows up to ${MAP_DISPLAY_LIMITS.graphNodesPerLane} nodes per lane (most relevant first) and ${MAP_DISPLAY_LIMITS.graphMaxEdges} of ${edgeCount} relationships. Focus a lane below to inspect courses, concepts, questions, cards, or events as the graph grows.</p></div><a class="ghost" href="/timeline">Open timeline</a></div><div class="actions"><button data-action="graph-filter" data-filter-type="all">All lanes</button>${chips}</div><p class="setup-note" id="graph-filter-note">Showing all graph lanes${hiddenNodes > 0 ? `; ${hiddenNodes} additional nodes are summarized in lane rollups or raw JSON.` : '.'}</p></section>`;
 }
 
-function renderGraphMap(nodes: EvidenceTimelineNode[], edges: EvidenceTimelineEdge[], mode: GraphMapMode = 'local-graph'): string {
+function renderGraphMap(nodes: EvidenceTimelineNode[], edges: EvidenceTimelineEdge[], mode: GraphMapMode = 'local-graph', includeEvents = true): string {
   const display = selectGraphMapDisplay(nodes, edges, { mode });
-  const lanes = GRAPH_MAP_LANES.map((lane) => ({ ...lane, nodes: display.nodes.filter((node) => lane.types.includes(node.type)) }));
+  const laneSpecs = includeEvents ? GRAPH_MAP_LANES : GRAPH_MAP_LANES.filter((lane) => lane.id !== 'event');
+  const lanes = laneSpecs.map((lane) => ({ ...lane, nodes: display.nodes.filter((node) => lane.types.includes(node.type)) }));
   const maxRows = Math.max(2, ...lanes.map((lane) => lane.nodes.length));
   const width = 1080;
   const laneWidth = width / lanes.length;
@@ -712,12 +811,13 @@ function renderGraphMap(nodes: EvidenceTimelineNode[], edges: EvidenceTimelineEd
     const x = laneIndex * laneWidth + 10;
     return `<g><rect x="${x}" y="16" width="${laneWidth - 20}" height="${height - 32}" rx="20" class="graph-lane-bg"/><text x="${x + 16}" y="46" class="graph-lane-title">${escapeHtml(lane.label)}</text></g>`;
   }).join('');
+  const labelWidth = Math.max(80, laneWidth - 68);
   const nodeRects = lanes.flatMap((lane, laneIndex) => lane.nodes.map((node, rowIndex) => {
     const x = laneIndex * laneWidth + 22;
     const y = top + rowIndex * rowHeight;
     positions.set(node.id, { x: x + 68, y: y + 30 });
     const rollupClass = isRollupNode(node) ? ' graph-map-node-rollup' : '';
-    return `<g class="graph-map-node${rollupClass}" data-graph-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(node.label)}${node.path ? ` · ${escapeHtml(node.path)}` : ''}</title><rect x="${x}" y="${y}" width="${laneWidth - 44}" height="62" rx="14"/><text x="${x + 12}" y="${y + 24}" class="graph-node-type">${escapeHtml(node.type)}</text><text x="${x + 12}" y="${y + 45}" class="graph-node-label">${escapeHtml(shortGraphLabel(node.label))}</text></g>`;
+    return `<g class="graph-map-node${rollupClass}" data-graph-node-id="${escapeHtml(node.id)}"><title>${escapeHtml(node.label)}${node.path ? ` · ${escapeHtml(node.path)}` : ''}</title><rect x="${x}" y="${y}" width="${laneWidth - 44}" height="62" rx="14"/><text x="${x + 12}" y="${y + 24}" class="graph-node-type">${escapeHtml(node.type)}</text><foreignObject x="${x + 10}" y="${y + 28}" width="${labelWidth}" height="34"><div xmlns="http://www.w3.org/1999/xhtml" class="graph-node-label-wrap">${escapeHtml(node.label)}</div></foreignObject></g>`;
   })).join('');
   const edgeLines = display.edges.filter((edge) => positions.has(edge.from) && positions.has(edge.to)).map((edge) => {
     const from = positions.get(edge.from)!;
@@ -727,8 +827,10 @@ function renderGraphMap(nodes: EvidenceTimelineNode[], edges: EvidenceTimelineEd
   const overflowNote = display.overflowByLane.length > 0
     ? `<p class="setup-note graph-overflow-note">Map shows ${display.nodes.length} of ${display.totalNodes} nodes across lanes (${display.edges.length} of ${display.totalEdges} edges). Rollup tiles summarize hidden ${display.overflowByLane.map((lane) => `${lane.hidden} ${lane.laneLabel.toLowerCase()}`).join(', ')}.</p>`
     : `<p class="setup-note graph-overflow-note">Map shows ${display.nodes.length} nodes and ${display.edges.length} of ${display.totalEdges} prioritized edges.</p>`;
-  const legend = '<div class="graph-legend"><span>commit/doc/file → concept</span><span>course → question</span><span>question → card</span><span>card → review event</span></div>';
-  return `<section class="panel graph-map-panel"><div class="section-head"><div><h2>Evidence graph map</h2><p>Follow the chain from repository evidence to concepts, accepted questions, review cards, and learner events.</p></div><a class="ghost" href="/api/evidence-graph">Open graph JSON</a></div>${overflowNote}${legend}<svg class="graph-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evidence graph map"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#38bdf8"/></marker></defs>${laneRects}<g>${edgeLines}</g><g>${nodeRects}</g></svg></section>`;
+  const legend = includeEvents
+    ? '<div class="graph-legend"><span>commit/doc/file → concept</span><span>course → question</span><span>question → card</span><span>card → review event</span></div>'
+    : '<div class="graph-legend"><span>commit/doc/file → concept</span><span>course → question</span><span>question → card</span></div>';
+  return `<section class="panel graph-map-panel"><div class="section-head"><div><h2>Evidence graph map</h2><p>Follow the chain from repository evidence to concepts, accepted questions, and review cards.</p></div><a class="ghost" href="/api/evidence-graph?includeEvents=false">Open graph JSON</a></div>${overflowNote}${legend}<svg class="graph-map" viewBox="0 0 ${width} ${height}" role="img" aria-label="Evidence graph map"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L0,6 L9,3 z" fill="#38bdf8"/></marker></defs>${laneRects}<g>${edgeLines}</g><g>${nodeRects}</g></svg></section>`;
 }
 
 function shortGraphLabel(label: string): string {
@@ -825,15 +927,14 @@ function renderAuditHtml(state: TutorState): string {
   return pageShell('MergeLearn Tutor Audit', `${intro}${nav()}${pipelineHtml}${auditHtml}${modal}${auditPageScript()}`, 'Audit', shellOpts(state, 'audit'));
 }
 
-function renderHistoryHtml(state: TutorState): string {
+function renderHistoryHtml(state: TutorState, options: { type?: string; limit: number; offset: number } = { limit: 20, offset: 0 }): string {
   const data = cardHistoryData(state);
   const batches = data.batches.map((batch) => `<article class="mini-card"><strong>${escapeHtml(batch.mode)}</strong><p>${escapeHtml(batch.id)} · ${batch.itemIds.length} created · ${batch.archivedItemIds.length} archived</p><small>${escapeHtml(batch.createdAt)}</small></article>`).join('');
   const activeCards = data.cards.filter((card) => card.status !== 'archived');
   const archivedCards = data.cards.filter((card) => card.status === 'archived');
   const cardList = (cards: typeof data.cards) => cards.slice().reverse().map((card) => `<article class="mini-card ${card.status === 'archived' ? 'is-archived' : ''}"><div class="card-topline"><span>${escapeHtml(card.status)}</span><span>gen ${card.generation}</span><span>${escapeHtml(card.source)}</span></div><h3>${escapeHtml(card.title)}</h3><p>${escapeHtml(card.id)}${card.courseId ? ` · course ${escapeHtml(card.courseId)}` : ''}${card.questionId ? ` · question ${escapeHtml(card.questionId)}` : ''}</p><details><summary>${card.events.length} timeline events</summary><ul>${card.events.map((event) => `<li><strong>${escapeHtml(event.eventType)}</strong>${event.correct === undefined ? '' : ` · ${event.correct ? 'correct' : 'missed'}`} ${event.answerText ? `— ${escapeHtml(event.answerText)}` : ''}${event.note ? ` — ${escapeHtml(event.note)}` : ''}</li>`).join('')}</ul></details></article>`).join('');
-  const activity = recentHistoryActivity(state);
   const metrics = `<div class="stats"><div>${data.summary.activeCards}<span>active</span></div><div>${data.summary.archivedCards}<span>archived</span></div><div>${data.summary.batches}<span>batches</span></div><div>${data.summary.events}<span>events</span></div></div>`;
-  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Summary first. Dense card details are grouped below so regenerate history stays available without overwhelming the demo.</p></div></section>${nav()}${metrics}${renderHistorySourceAudit(state)}<section class="panel"><h2>Recent activity</h2><div class="timeline-list">${activity || '<p>No learning activity yet. Generate cards, answer one, or mark card quality to start the audit trail.</p>'}</div></section><section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet. Use Review source to generate a queue; batch details will appear here.</p>'}</div></section><details class="panel" open><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards. Generate cards from all evidence or a selected course on Review.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards. Regenerate from source to preserve the old queue here.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History', shellOpts(state, 'audit'));
+  return pageShell('MergeLearn Tutor History', `<section class="hero"><div><p class="eyebrow">Learning memory</p><h1>History without the wall of cards</h1><p>Activity timeline first. Dense card details stay grouped below.</p></div></section>${nav()}${metrics}${renderHistoryActivityPanel(state, options)}${renderHistorySourceAudit(state)}<section class="panel"><h2>Batches</h2><div class="mini-grid">${batches || '<p>No batches yet. Use Review source to generate a queue; batch details will appear here.</p>'}</div></section><details class="panel"><summary><strong>Active cards</strong> · ${activeCards.length}</summary><div class="mini-grid">${cardList(activeCards) || '<p>No active cards. Generate cards from all evidence or a selected course on Review.</p>'}</div></details><details class="panel"><summary><strong>Archived cards</strong> · ${archivedCards.length}</summary><div class="mini-grid">${cardList(archivedCards) || '<p>No archived cards. Regenerate from source to preserve the old queue here.</p>'}</div></details><p><a href="/api/cards/history">Raw history JSON</a></p>`, 'History', shellOpts(state, 'audit'));
 }
 
 function renderHistorySourceAudit(state: TutorState): string {
@@ -898,9 +999,15 @@ function pageShell(title: string, body: string, status: string, options: PageShe
     options.focus ? 'practice-focus-shell' : '',
     options.surface ? `surface-${options.surface}` : '',
   ].filter(Boolean).join(' ');
+  const bodyAttrs = [
+    bodyClasses ? `class="${bodyClasses}"` : '',
+    options.practiceIndex !== undefined ? `data-practice-index="${options.practiceIndex}"` : '',
+    options.practiceTotal !== undefined ? `data-practice-total="${options.practiceTotal}"` : '',
+    options.reviewedInSession ? `data-practice-reviewed="${escapeHtml(options.reviewedInSession.join(','))}"` : '',
+  ].filter(Boolean).join(' ');
   const repoBadge = escapeHtml(shortRepoLabel(options.repoPath));
   const mapBar = options.mapModeBar ? options.mapModeBar.replace('class="map-mode-bar"', 'class="map-mode-bar map-mode-bar--shell"') : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>${style()}</style></head><body${bodyClasses ? ` class="${bodyClasses}"` : ''}><div class="status" id="status">${escapeHtml(status)}</div><header class="global-header" role="banner"><div class="header-brand"><span class="app-logo">MergeLearn Tutor</span><span class="repo-badge" id="shell-repo-badge" title="${escapeHtml(options.repoPath ?? '')}">${repoBadge}</span><span class="sr-only">Local learning workbench</span><span class="sr-only">No remote LLM calls. State is read from this local session.</span></div>${appNav()}<div class="header-metrics" aria-label="Current local plan snapshot"><span class="metric-pill">Due probes <strong id="shell-due-probes">—</strong></span><span class="metric-pill">Active cards <strong id="shell-cards">—</strong></span><a class="header-cta" id="shell-next-action" href="/plan">Loading plan state…</a><span class="sr-only" id="shell-concepts">—</span><span class="sr-only" id="shell-courses">—</span><span class="sr-only" id="shell-questions">—</span></div></header>${mapBar}${appSubnav()}<main class="content-area">${body}</main><script>${script()}</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>${style()}</style></head><body${bodyAttrs ? ` ${bodyAttrs}` : ''}><div class="status" id="status">${escapeHtml(status)}</div><header class="global-header" role="banner"><div class="header-brand"><span class="app-logo">MergeLearn Tutor</span><span class="repo-badge" id="shell-repo-badge" title="${escapeHtml(options.repoPath ?? '')}">${repoBadge}</span><span class="sr-only">Local learning workbench</span><span class="sr-only">No remote LLM calls. State is read from this local session.</span></div>${appNav()}<div class="header-metrics" aria-label="Current local plan snapshot"><span class="metric-pill">Due probes <strong id="shell-due-probes">—</strong></span><span class="metric-pill">Active cards <strong id="shell-cards">—</strong></span><a class="header-cta" id="shell-next-action" href="/plan">Loading plan state…</a><span class="sr-only" id="shell-concepts">—</span><span class="sr-only" id="shell-courses">—</span><span class="sr-only" id="shell-questions">—</span></div></header>${mapBar}${appSubnav()}<main class="content-area">${body}</main><script>${script()}</script></body></html>`;
 }
 
 function style(): string {
@@ -1098,6 +1205,12 @@ textarea{min-height:96px;resize:vertical}
 .graph-map-node:hover rect{stroke:var(--color-success-border);fill:var(--color-success-bg)}
 .graph-node-type{fill:var(--color-text-muted);font-size:9px;font-weight:var(--font-bold);text-transform:uppercase;letter-spacing:var(--tracking-wider)}
 .graph-node-label{fill:var(--color-text-primary);font-size:11px;font-weight:var(--font-semibold)}
+.graph-node-label-wrap{font:600 11px/1.25 Inter,system-ui,sans-serif;color:var(--color-text-primary);word-wrap:break-word;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.map-course-link.is-active,.history-type-chip.is-active{border-color:var(--color-accent-primary-border);color:var(--color-accent-primary)}
+.history-activity-row time{display:block;font-size:var(--text-xs);color:var(--color-text-muted);margin-top:var(--space-1)}
+.learn-more{margin:var(--space-3) 0}
+.learn-more-body{white-space:pre-wrap;color:var(--color-text-muted);font-size:var(--text-sm);line-height:var(--leading-relaxed)}
+.short-answer{font-size:var(--text-base);line-height:var(--leading-relaxed)}
 .graph-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--space-4)}
 .graph-column{border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);padding:var(--space-5)}
 .graph-node{border:1px solid var(--color-border-subtle);border-radius:var(--radius-md);background:var(--color-bg-raised);padding:var(--space-3) var(--space-4);margin:var(--space-2) 0;display:grid;gap:var(--space-2);transition:background var(--transition-fast),border-color var(--transition-fast)}
@@ -1189,7 +1302,12 @@ body.practice-focus-shell .app-subnav{display:none}
 body.practice-focus-shell .content-area{max-width:var(--max-w-md);padding-top:var(--space-4)}
 body.practice-focus-shell .status{font-size:var(--text-xs);padding:var(--space-1) var(--space-4)}
 .practice-focus-footer{margin-top:var(--space-4);text-align:center}
-.practice-focus-footer p{margin:0;color:var(--color-text-muted);font-size:var(--text-xs);line-height:var(--leading-normal)}
+.practice-queue-footer{margin-top:var(--space-4);padding:var(--space-3) 0;border-top:1px solid var(--color-border-muted)}
+.practice-queue-nav{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);margin-bottom:var(--space-2)}
+.practice-queue-position{font-size:var(--text-sm);color:var(--color-text-muted)}
+.practice-nav-btn.is-disabled{opacity:.4;pointer-events:none;font-size:var(--text-sm)}
+.practice-position{text-align:center;font-size:var(--text-sm);color:var(--color-text-muted);margin-bottom:var(--space-2)}
+.practice-shortcuts{margin:0;text-align:center;color:var(--color-text-muted);font-size:var(--text-xs);line-height:var(--leading-normal)}
 .page-intro{margin:0 0 var(--space-6);padding:0 0 var(--space-4);border-bottom:1px solid var(--color-border-subtle)}
 .page-intro h1{font-size:var(--text-2xl);line-height:var(--leading-tight);margin:var(--space-1) 0 var(--space-2);letter-spacing:var(--tracking-tight);font-weight:var(--font-bold)}
 .page-intro p{color:var(--color-text-secondary);font-size:var(--text-sm);line-height:var(--leading-normal);margin:0;max-width:52rem}
@@ -1267,7 +1385,8 @@ function primaryNavHref(path){if(path==='/workbench')return '/workbench';if(path
 function activateShellNav(){const path=location.pathname==='/'?'/':location.pathname;const primary=primaryNavHref(path);document.querySelectorAll('.app-nav a').forEach((link)=>{const active=link.getAttribute('href')===primary;if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});document.querySelectorAll('.app-subnav a').forEach((link)=>{const active=link.getAttribute('href')===path;if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');});}
 async function updateShellContext(){try{const res=await fetch('/api/state');if(!res.ok)throw new Error('state unavailable');const state=await res.json();const accepted=(state.questionBank||[]).filter((entry)=>entry.status==='accepted').length;const due=(state.delayedProbes||[]).filter((probe)=>probe.status==='scheduled'&&(!probe.dueAt||probe.dueAt<=new Date().toISOString())).length;const fields=[['shell-concepts',(state.concepts||[]).length],['shell-courses',(state.courses||[]).length],['shell-questions',accepted],['shell-cards',countActiveCards(state)],['shell-due-probes',due]];fields.forEach(([id,value])=>{const el=document.getElementById(id);if(el)el.textContent=String(value);});const next=shellNext(state);const action=document.getElementById('shell-next-action');if(action){action.textContent=next.label;action.setAttribute('href',next.href);}}catch(error){const action=document.getElementById('shell-next-action');if(action)action.textContent='Plan state unavailable';}}
 function updateProgress(){const cards=[...document.querySelectorAll('.recall-card')];const done=cards.filter((card)=>card.classList.contains('completed')).length;const bar=document.getElementById('session-progress');if(bar&&cards.length){bar.style.width=Math.round(done/cards.length*100)+'%';}}
-function markComplete(card,label){card.classList.add('completed');const state=card.querySelector('.card-state');if(state)state.textContent=label;card.querySelectorAll('.grade-actions button').forEach((button)=>button.disabled=true);const outcome=document.getElementById('practice-outcome');if(outcome)outcome.textContent='Outcome saved locally: confidence can be paired with correctness, delayed probes are scheduled after answered cards, and weak-concept estimates update from this grade.';updateProgress();}
+function markComplete(card,label){card.classList.add('completed');const state=card.querySelector('.card-state');if(state)state.textContent=label;card.querySelectorAll('.grade-actions button').forEach((button)=>button.disabled=true);const outcome=document.getElementById('practice-outcome');if(outcome)outcome.textContent='Outcome saved locally: confidence can be paired with correctness, delayed probes are scheduled after answered cards, and weak-concept estimates update from this grade.';updateProgress();if(document.body.classList.contains('practice-focus-shell')){advancePracticeQueue(card);}}
+function advancePracticeQueue(card){const idx=Number(document.body.dataset.practiceIndex||0);const total=Number(document.body.dataset.practiceTotal||1);const itemId=card.dataset.item;let reviewed=(document.body.dataset.practiceReviewed||'').split(',').filter(Boolean);if(itemId&&!reviewed.includes(itemId))reviewed.push(itemId);const next=idx+1;if(next<total){const query='?index='+next+(reviewed.length?'&reviewed='+encodeURIComponent(reviewed.join(',')):'');setTimeout(()=>{location.href='/practice'+query;},350);}else{status('Practice session complete for this queue.');}}
 function updatePreferenceSummary(){const enabled=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippet=document.getElementById('snippet-lines')?.value||14;const explanations=document.getElementById('show-explanations')?.checked?'on':'off';const summary=document.getElementById('preferences-summary');if(summary)summary.textContent='Current setup: '+enabled.length+' question categories · '+snippet+' snippet lines · explanations '+explanations+'.';}
 document.addEventListener('click',async(event)=>{const target=event.target;if(!(target instanceof Element))return;const button=target.closest('button');if(!button)return;if(button.dataset.action==='timeline-filter'){const type=button.dataset.filterType||'all';const rows=[...document.querySelectorAll('[data-node-type]')];rows.forEach((row)=>row.classList.toggle('is-filtered-out',type!=='all'&&row.dataset.nodeType!==type));document.querySelectorAll('[data-action="timeline-filter"]').forEach((chip)=>chip.setAttribute('aria-pressed',String(chip===button)));const note=document.getElementById('timeline-filter-note');if(note)note.textContent=type==='all'?'Showing all timeline nodes.':'Showing '+rows.filter((row)=>row.dataset.nodeType===type).length+' '+type+' timeline nodes.';status(type==='all'?'Timeline filter cleared':'Timeline filtered to '+type);return;}if(button.dataset.action==='graph-filter'){const type=button.dataset.filterType||'all';const columns=[...document.querySelectorAll('[data-graph-type]')];columns.forEach((column)=>column.classList.toggle('is-filtered-out',type!=='all'&&column.dataset.graphType!==type));document.querySelectorAll('[data-action="graph-filter"]').forEach((chip)=>chip.setAttribute('aria-pressed',String(chip===button)));const note=document.getElementById('graph-filter-note');if(note)note.textContent=type==='all'?'Showing all graph lanes.':'Showing the '+type+' graph lane.';status(type==='all'?'Graph filter cleared':'Graph focused on '+type);return;}if(button.dataset.action==='generate-cards'){button.disabled=true;const courseId=document.getElementById('review-course')?.value||undefined;status(courseId?'Generating course cards...':'Generating cards...');const json=await post('/api/cards/generate',{count:5,mode:button.dataset.mode,reason:courseId?'website selected course':'website button',courseId});if(json.ok) location.reload();return;}if(button.dataset.action==='preferences-preset'){const planes=String(button.dataset.planes||'').split(',').filter(Boolean);document.querySelectorAll('input[data-plane]').forEach((input)=>{input.checked=planes.includes(input.dataset.plane);});const snippet=document.getElementById('snippet-lines');if(snippet)snippet.value=button.dataset.snippetLines||snippet.value;const explanations=document.getElementById('show-explanations');if(explanations)explanations.checked=button.dataset.showExplanations==='true';updatePreferenceSummary();status('Preset applied locally. Save preferences to keep it.');return;}if(button.dataset.action==='save-preferences'){const enabledPlanes=[...document.querySelectorAll('input[data-plane]:checked')].map((input)=>input.dataset.plane);const snippetLineCount=Number(document.getElementById('snippet-lines').value||14);const showExplanationsByDefault=document.getElementById('show-explanations').checked;await put('/api/preferences',{review:{enabledPlanes,snippetLineCount,showExplanationsByDefault}});updatePreferenceSummary();return;}if(button.dataset.action==='save-course'){const title=document.getElementById('course-title').value;const goal=document.getElementById('course-goal').value;if(!title||!goal){status('Course title and goal are required.');return;}const json=await post('/api/courses',{id:document.getElementById('course-id').value,title,goal,materialPaths:csv(document.getElementById('course-materials').value),docPaths:csv(document.getElementById('course-docs').value)});if(json.ok)location.reload();return;}if(button.dataset.action==='draft-questions'){const courseId=document.getElementById('question-course')?.value||undefined;const json=await post('/api/questions/draft',{provider:'fake',count:5,courseId});if(json.ok)location.reload();return;}if(button.dataset.action==='question-status'){const json=await post('/api/questions/status',{id:button.dataset.question,status:button.dataset.status});if(json.ok)location.reload();return;}const card=button.closest('.recall-card');if(!card)return;const itemId=card.dataset.item;const textarea=card.querySelector('textarea');if(button.dataset.action==='reveal'){const selectedConfidence=card.querySelector('input[name="confidence-'+itemId+'"]:checked');if(!selectedConfidence){status('Choose confidence before reveal.');return;}const confidenceBeforeReveal=Number(selectedConfidence.value);const json=await post('/feedback',{itemId,eventType:'revealed',confidenceBeforeReveal,note:'confidence before reveal'});if(!json.ok)return;card.querySelector('.reveal-panel')?.classList.remove('is-hidden');button.disabled=true;status('Explanation revealed. Self-grade when ready.');return;}if(button.dataset.action==='answer-grade'){const correct=button.dataset.correct==='true';const answer=textarea.value.trim();if(correct&&!answer){status('Write an answer before marking this as known.');textarea.focus();return;}const json=await post('/answer',{itemId,answer:answer||'I missed this after reveal.',correct});if(json.ok)markComplete(card,correct?'knew it':'missed it');return;}if(button.dataset.action==='feedback'){const json=await post('/feedback',{itemId,eventType:button.dataset.event,note:'from local review session'});if(json.ok)markComplete(card,button.dataset.event==='marked_bad_card'?'quality issue':button.textContent.trim().toLowerCase());}});
 activateShellNav();updateShellContext();updateProgress();`;

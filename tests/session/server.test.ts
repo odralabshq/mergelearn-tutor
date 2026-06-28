@@ -18,7 +18,7 @@ function state(repoPath: string): TutorState {
     artifacts: [],
     concepts: [{ id: 'repo.auth', label: 'auth', kind: 'repo_domain', description: 'Auth term', difficulty: 'beginner', parentIds: [], prerequisiteIds: [], relatedIds: [], evidence: [{ path: 'src/auth.ts', label: 'evidence' }] }],
     conceptStates: [{ conceptId: 'repo.auth', exposureCount: 1, activeRecallCount: 0, correctCount: 0, failedCount: 0, hintCount: 0, masteryEstimate: 0.2, confidence: 0.2, importance: 0.6, repoRelevance: 0.5 }],
-    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: auth', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function auth() { return true; }' }, bodyMarkdown: 'body', prompt: 'What happens in this snippet?', explanationMarkdown: 'The function returns true.', expectedFocus: ['auth'], whyShown: 'Snippet-first local behavior card.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }],
+    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: auth', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function auth() { return true; }' }, bodyMarkdown: 'body', prompt: 'What happens in this snippet?', explanationMarkdown: 'The function returns true.', expectedFocus: ['auth'], whyShown: 'Snippet-first local behavior card.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }, { id: 'item_second', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: second', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function gate() { return false; }' }, bodyMarkdown: 'body', prompt: 'Second card?', explanationMarkdown: 'Returns false.', expectedFocus: ['gate'], evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-02T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }],
     cardBatches: [],
     courses: [{ id: 'learn-auth', title: 'Learn auth', goal: 'Understand auth flow', enabledPlanes: ['local_behavior', 'repo_domain'], materialPaths: ['src/**'], docPaths: ['docs/**'], conceptIds: ['repo.auth'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
     questionBank: [],
@@ -82,16 +82,35 @@ describe('review session server', () => {
 
       const practiceHtml = await fetch(`${review.url}/practice`).then((res) => res.text());
       expect(practiceHtml).toContain('Focused Practice');
-      expect(practiceHtml).toContain('One card, one answer, one grade');
+      expect(practiceHtml).toContain('Card 1 of 2');
+      expect(practiceHtml).toContain('practice-queue-nav');
+      expect(practiceHtml).toContain('practice-queue-position');
+      expect(practiceHtml).toContain('Previous');
+      expect(practiceHtml).toContain('Next');
+      expect(practiceHtml).toContain('1 / 2');
+      expect(practiceHtml).toContain('data-practice-index="0"');
       expect(practiceHtml).toContain('Before reveal: how confident are you?');
       expect(practiceHtml).toContain('Reveal explanation');
       expect(practiceHtml).toContain('I knew it');
       expect(practiceHtml).toContain('id="practice-outcome"');
+      expect(practiceHtml).toContain('advancePracticeQueue');
       expect(practiceHtml).toContain('Keyboard shortcuts');
       expect((practiceHtml.match(/class="card recall-card/g) ?? []).length).toBe(1);
 
+      const practiceIndex1 = await fetch(`${review.url}/practice?index=1`).then((res) => res.text());
+      expect(practiceIndex1).toContain('data-practice-index="1"');
+      expect(practiceIndex1).toContain('2 / 2');
+      expect(practiceIndex1).toContain('Second card?');
+
+      const queue = await fetch(`${review.url}/api/practice/queue`).then((res) => res.json()) as { items: Array<{ id: string }>; index: number; total: number };
+      expect(queue.total).toBe(2);
+      expect(queue.index).toBe(0);
+      expect(queue.items).toHaveLength(2);
+
       const mapHtml = await fetch(`${review.url}/map`).then((res) => res.text());
       expect(mapHtml).toContain('Unified Map');
+      expect(mapHtml).toContain('Course scope');
+      expect(mapHtml).toContain('graph-node-label-wrap');
       expect(mapHtml).toContain('One surface for relationships, provenance, and mastery');
       expect(mapHtml).toContain('Map mode');
       expect(mapHtml).toContain('Local graph');
@@ -126,7 +145,7 @@ describe('review session server', () => {
       expect(workbenchHtml).toContain('data-node-tags=');
       expect(workbenchHtml).toContain('data-node-detail=');
       const workbench = await fetch(`${review.url}/api/workbench`).then((res) => res.json()) as { metrics: { activeCards: number }; filters: Array<{ id: string; count: number }>; nodes: Array<{ tags: string[]; detail: string }> };
-      expect(workbench.metrics.activeCards).toBe(1);
+      expect(workbench.metrics.activeCards).toBe(2);
       expect(workbench.filters.length).toBeGreaterThan(0);
       expect(workbench.nodes.length).toBeGreaterThan(0);
       expect(workbench.nodes.every((node) => Array.isArray(node.tags) && node.detail.length > 0)).toBe(true);
@@ -159,12 +178,14 @@ describe('review session server', () => {
       expect(historyHtml).toContain('All due repo evidence cards');
       expect(historyHtml).toContain('Card-quality events');
       expect(historyHtml).toContain('Delayed probes due');
-      expect(historyHtml).toContain('Recent activity');
+      expect(historyHtml).toContain('Activity timeline');
+      expect(historyHtml).toContain('history-activity-panel');
+      expect(historyHtml).toContain('history-type-chip');
       expect(historyHtml).toContain('Raw history JSON');
 
       const history = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { summary: { activeCards: number }; cards: unknown[]; batches: unknown[] };
-      expect(history.summary.activeCards).toBe(1);
-      expect(history.cards).toHaveLength(1);
+      expect(history.summary.activeCards).toBe(2);
+      expect(history.cards).toHaveLength(2);
       const initialCalibration = await fetch(`${review.url}/api/calibration`).then((res) => res.json()) as { pairedCount: number };
       expect(initialCalibration.pairedCount).toBe(0);
 
@@ -197,9 +218,11 @@ describe('review session server', () => {
       expect(timelineHtml).toContain('Scan one evidence type at a time');
       expect(timelineHtml).toContain('data-action="timeline-filter"');
       expect(timelineHtml).toContain('data-node-type="question"');
-      const timeline = await fetch(`${review.url}/api/evidence-timeline`).then((res) => res.json()) as { nodes: unknown[]; edges: unknown[] };
-      expect(timeline.nodes.length).toBeGreaterThan(0);
-      expect(timeline.edges.length).toBeGreaterThan(0);
+      const timeline = await fetch(`${review.url}/api/evidence-timeline?includeEvents=false`).then((res) => res.json()) as { nodes: Array<{ type: string }>; summary: Record<string, number> };
+      expect(timeline.summary.event ?? 0).toBe(0);
+      const timelineWithEvents = await fetch(`${review.url}/api/evidence-timeline?includeEvents=true`).then((res) => res.json()) as { nodes: unknown[]; edges: unknown[] };
+      expect(timelineWithEvents.nodes.length).toBeGreaterThan(0);
+      expect(timelineWithEvents.edges.length).toBeGreaterThan(0);
       const limitedTimeline = await fetch(`${review.url}/api/evidence-timeline?limit=3`).then((res) => res.json()) as { nodes: unknown[]; truncated: boolean; limit: number };
       expect(limitedTimeline.truncated).toBe(true);
       expect(limitedTimeline.nodes.length).toBeLessThanOrEqual(3);
@@ -238,7 +261,7 @@ describe('review session server', () => {
 
       const generated = await fetch(`${review.url}/api/cards/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ count: 1, mode: 'more', courseId: 'learn-auth' }) }).then((res) => res.json()) as { ok: boolean; state: { activeCards: number; archivedCards: number } };
       expect(generated.ok).toBe(true);
-      expect(generated.state.activeCards).toBe(2);
+      expect(generated.state.activeCards).toBe(3);
       const courseHistory = await fetch(`${review.url}/api/cards/history`).then((res) => res.json()) as { cards: Array<{ courseId?: string; questionId?: string }> };
       expect(courseHistory.cards.some((card) => card.courseId === 'learn-auth' && card.questionId === firstQuestion.id)).toBe(true);
       const focusedReviewHtml = await fetch(review.url).then((res) => res.text());
