@@ -1,23 +1,38 @@
 import { DEFAULT_PREFERENCES } from './preferences.js';
+import { assertOutboundAllowed, createOutboundPreview, loadPrivacyConfig, type PrivacyConfig } from './privacy.js';
+import type { LlmClient } from './llmClient.js';
+import { resolveLlmClientFromEnv } from './llmClient.js';
 import type { Concept, EvidenceRef, LearningCourse, QuestionBankEntry, QuestionDraftBatch, QuestionPlane, QuestionProvider, TutorState } from './types.js';
 import { nowIso, stableId } from './util.js';
 
 export type DraftQuestionOptions = {
   courseId?: string;
-  provider?: QuestionProvider | 'remote';
+  provider?: QuestionProvider;
   model?: string;
   count?: number;
+  llmClient?: LlmClient;
+  privacyConfig?: PrivacyConfig;
 };
 
-const PROMPT_VERSION = 'question-draft-v1';
+const PROMPT_VERSION = 'question-draft-v2';
+const ENABLED_PLANES: QuestionPlane[] = ['language_mechanics', 'local_behavior', 'file_role', 'architecture_flow', 'risk_and_tests', 'repo_domain'];
 
-export function draftQuestionsForCourse(state: TutorState, options: DraftQuestionOptions = {}): TutorState {
+type RemoteQuestionDraft = {
+  prompt: string;
+  shortAnswer: string;
+  deepExplanation: string;
+  questionPlane: string;
+  expectedFocus: string[];
+};
+
+export async function draftQuestionsForCourse(state: TutorState, options: DraftQuestionOptions = {}): Promise<TutorState> {
   const provider = options.provider ?? 'fake';
-  if (provider === 'remote') throw new Error('Remote LLM question drafting requires privacy preview and explicit opt-in. Use --provider fake or local for now.');
   const course = courseFor(state, options.courseId);
   const concepts = selectConceptsForCourse(state, course, options.count ?? 6);
   const now = nowIso();
-  const entries = concepts.map((concept, index) => buildDraftEntry(concept, course, provider, options.model, now, index));
+  const entries = provider === 'remote'
+    ? await buildRemoteDraftEntries(state, concepts, course, options, now)
+    : concepts.map((concept, index) => buildDraftEntry(concept, course, provider, options.model, now, index));
   const batch: QuestionDraftBatch = {
     id: stableId('qbatch', [now, course?.id ?? 'all', provider, String(state.questionDraftBatches.length + 1)]),
     courseId: course?.id,
@@ -26,7 +41,7 @@ export function draftQuestionsForCourse(state: TutorState, options: DraftQuestio
     promptVersion: PROMPT_VERSION,
     entryIds: entries.map((entry) => entry.id),
     createdAt: now,
-    networkUsed: false,
+    networkUsed: provider === 'remote',
   };
   return { ...state, questionBank: [...state.questionBank, ...entries], questionDraftBatches: [...state.questionDraftBatches, batch] };
 }
@@ -39,6 +54,19 @@ export function updateQuestionStatus(state: TutorState, entryId: string, status:
   };
 }
 
+export function bulkUpdateQuestionStatus(state: TutorState, ids: string[], status: QuestionBankEntry['status']): TutorState {
+  const idSet = new Set(ids);
+  const now = nowIso();
+  return {
+    ...state,
+    questionBank: state.questionBank.map((entry) => idSet.has(entry.id) ? { ...entry, status, updatedAt: now } : entry),
+  };
+}
+
+export function questionCandidates(state: TutorState): QuestionBankEntry[] {
+  return state.questionBank.filter((entry) => entry.status === 'draft');
+}
+
 export function questionSummary(state: TutorState) {
   return {
     total: state.questionBank.length,
@@ -48,6 +76,85 @@ export function questionSummary(state: TutorState) {
     batches: state.questionDraftBatches.length,
     networkUsed: state.questionDraftBatches.some((batch) => batch.networkUsed),
   };
+}
+
+async function buildRemoteDraftEntries(
+  state: TutorState,
+  concepts: Concept[],
+  course: LearningCourse | undefined,
+  options: DraftQuestionOptions,
+  now: string,
+): Promise<QuestionBankEntry[]> {
+  const privacy = options.privacyConfig ?? await loadPrivacyConfig(state.repoPath);
+  assertOutboundAllowed(privacy, 'remote');
+  const client = options.llmClient ?? resolveLlmClientFromEnv();
+  if (!client) throw new Error('Remote LLM drafting requires OPENAI_API_KEY in the environment.');
+  const preview = createOutboundPreview(state, privacy, { provider: 'remote', limit: concepts.length });
+  const entries: QuestionBankEntry[] = [];
+  for (const [index, concept] of concepts.entries()) {
+    const evidence = concept.evidence.slice(0, 3);
+    const primary = evidence[0];
+    const suggestedPlane = planeFor(concept, course);
+    const previewItem = preview.payload.items.find((item) => item.conceptId === concept.id);
+    const draft = await client.completeJson<RemoteQuestionDraft>({
+      schemaHint: 'Fields: prompt, shortAnswer, deepExplanation, questionPlane, expectedFocus (string[]).',
+      messages: [
+        {
+          role: 'system',
+          content: 'You draft evidence-grounded active-recall questions for a local code-learning tutor. Stay concrete and cite file paths from evidence.',
+        },
+        {
+          role: 'user',
+          content: JSON.stringify({
+            repo: preview.payload.repoName,
+            goals: preview.payload.goals,
+            courseGoal: course?.goal,
+            concept: { id: concept.id, label: concept.label, kind: concept.kind },
+            evidence: evidence.map((item) => ({ path: item.path, label: item.label, snippet: item.snippet?.slice(0, 400) })),
+            suggestedPlane,
+            previewItem,
+          }),
+        },
+      ],
+    });
+    const questionPlane = validateQuestionPlane(draft.questionPlane, concept, course);
+    entries.push({
+      id: stableId('question', [course?.id ?? 'all', concept.id, questionPlane, 'remote', String(index), now]),
+      courseId: course?.id,
+      conceptId: concept.id,
+      questionPlane,
+      prompt: draft.prompt.trim(),
+      expectedAnswer: draft.shortAnswer.trim(),
+      shortAnswer: draft.shortAnswer.trim(),
+      deepExplanation: draft.deepExplanation.trim(),
+      expectedFocus: normalizeFocus(draft.expectedFocus, concept, primary?.path),
+      difficulty: concept.difficulty,
+      evidence,
+      status: 'draft',
+      author: { type: 'llm', provider: 'remote', model: options.model ?? 'remote-question-author', promptVersion: PROMPT_VERSION },
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  return entries;
+}
+
+export function validateQuestionPlane(value: string, concept: Concept, course?: LearningCourse): QuestionPlane {
+  const preferred = planeFor(concept, course);
+  const enabled = course?.enabledPlanes?.length ? course.enabledPlanes : DEFAULT_PREFERENCES.review.enabledPlanes;
+  let candidate = ENABLED_PLANES.includes(value as QuestionPlane) ? value as QuestionPlane : preferred;
+  if (candidate !== preferred && !isPlaneNaturalForConcept(candidate, concept)) candidate = preferred;
+  return enabled.includes(candidate) ? candidate : (enabled[0] ?? preferred);
+}
+
+function isPlaneNaturalForConcept(plane: QuestionPlane, concept: Concept): boolean {
+  if (concept.kind === 'language') return plane === 'language_mechanics' || plane === 'local_behavior';
+  if (concept.kind === 'security' || concept.kind === 'testing' || concept.kind === 'data') {
+    return plane === 'risk_and_tests' || plane === 'local_behavior';
+  }
+  if (concept.kind === 'repo_architecture') return plane === 'architecture_flow' || plane === 'file_role' || plane === 'local_behavior';
+  if (concept.kind === 'repo_domain') return plane === 'repo_domain' || plane === 'file_role' || plane === 'local_behavior';
+  return plane === 'local_behavior' || plane === 'file_role';
 }
 
 function courseFor(state: TutorState, courseId?: string): LearningCourse | undefined {
@@ -79,13 +186,16 @@ function buildDraftEntry(concept: Concept, course: LearningCourse | undefined, p
   const prompt = provider === 'deterministic'
     ? deterministicPrompt(concept.label, primary?.path ?? 'the evidence', plane)
     : llmStylePrompt(concept.label, primary?.path ?? 'the evidence', plane, course?.goal);
+  const expectedAnswer = expectedAnswerText(concept.label, primary?.path ?? 'the cited file', plane);
   return {
     id: stableId('question', [course?.id ?? 'all', concept.id, plane, provider, String(index), now]),
     courseId: course?.id,
     conceptId: concept.id,
     questionPlane: plane,
     prompt,
-    expectedAnswer: expectedAnswer(concept.label, primary?.path ?? 'the cited file', plane),
+    expectedAnswer,
+    shortAnswer: expectedAnswer,
+    deepExplanation: `Deep dive: cite ${primary?.path ?? 'the evidence'} and explain how ${concept.label} matters for ${plane.replace(/_/g, ' ')} in this repo.`,
     expectedFocus: [...new Set([concept.label, primary?.path, ...(evidence.map((item) => item.path))].filter(Boolean) as string[])].slice(0, 6),
     difficulty: concept.difficulty,
     evidence,
@@ -115,8 +225,13 @@ function llmStylePrompt(label: string, path: string, plane: QuestionPlane, goal?
   return `From the cited snippet in ${path}, what should you understand about ${label}${goalText}? Answer as a concrete ${plane.replace(/_/g, ' ')} recall question.`;
 }
 
-function expectedAnswer(label: string, path: string, plane: QuestionPlane): string {
+function expectedAnswerText(label: string, path: string, plane: QuestionPlane): string {
   return `A strong answer cites ${path}, names the relevant behavior for ${label}, and explains why it matters for ${plane.replace(/_/g, ' ')}.`;
+}
+
+function normalizeFocus(values: string[] | undefined, concept: Concept, path?: string): string[] {
+  const focus = [...new Set([...(values ?? []), concept.label, path].filter(Boolean) as string[])];
+  return focus.slice(0, 6);
 }
 
 function pathMatches(filePath: string, pattern: string): boolean {

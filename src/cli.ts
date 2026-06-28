@@ -206,7 +206,7 @@ questions.command('draft')
   .option('--model <name>', 'provider model label')
   .option('-n, --count <count>', 'number of questions to draft', '6')
   .action(async (options: { repo: string; course?: string; provider: string; model?: string; count: string }) => {
-    const next = draftQuestionsForCourse(await loadState(options.repo), { courseId: options.course, provider: options.provider as never, model: options.model, count: Number.parseInt(options.count, 10) });
+    const next = await draftQuestionsForCourse(await loadState(options.repo), { courseId: options.course, provider: options.provider as never, model: options.model, count: Number.parseInt(options.count, 10) });
     await saveState(options.repo, next);
     const batch = next.questionDraftBatches.at(-1)!;
     process.stdout.write(`Drafted ${batch.entryIds.length} questions in ${batch.id}. Network used: ${batch.networkUsed ? 'yes' : 'no'}.\n`);

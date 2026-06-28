@@ -20,7 +20,7 @@ export type CorrectionType = 'wrong_concept' | 'wrong_evidence' | 'duplicate' | 
 export type ManualRatingTargetType = 'concept' | 'card';
 export type QuestionBankStatus = 'draft' | 'accepted' | 'rejected' | 'active' | 'archived';
 export type QuestionAuthorType = 'deterministic' | 'llm';
-export type QuestionProvider = 'deterministic' | 'fake' | 'local';
+export type QuestionProvider = 'deterministic' | 'fake' | 'local' | 'remote';
 export type CardQualityVerdict = 'ready' | 'needs_review' | 'blocked';
 export type DelayedProbeStatus = 'scheduled' | 'completed';
 export type StudyCondition = 'mergelearn' | 'active_control';
@@ -159,6 +159,8 @@ export type QuestionBankEntry = {
   questionPlane: QuestionPlane;
   prompt: string;
   expectedAnswer: string;
+  shortAnswer?: string;
+  deepExplanation?: string;
   expectedFocus: string[];
   difficulty: Difficulty;
   evidence: EvidenceRef[];
