@@ -52,12 +52,27 @@ export function parseReviewedInSession(value: string | null | undefined): string
 
 export function resolvePracticeIndex(queue: LearningItem[], requestedIndex: number | undefined, reviewedInSession: string[]): number {
   if (queue.length === 0) return 0;
+  const sessionReviewed = new Set(reviewedInSession);
   if (requestedIndex !== undefined && Number.isFinite(requestedIndex) && requestedIndex >= 0 && requestedIndex < queue.length) {
+    const atIndex = queue[requestedIndex];
+    if (atIndex && sessionReviewed.has(atIndex.id)) {
+      const nextUnreviewed = queue.findIndex((item) => !sessionReviewed.has(item.id));
+      if (nextUnreviewed >= 0) return nextUnreviewed;
+    }
     return requestedIndex;
   }
-  const sessionReviewed = new Set(reviewedInSession);
   const next = queue.findIndex((item) => !sessionReviewed.has(item.id));
   return next >= 0 ? next : 0;
+}
+
+export function nextUnreviewedInSession(queue: LearningItem[], reviewedInSession: string[]): number | undefined {
+  const reviewed = new Set(reviewedInSession);
+  const index = queue.findIndex((item) => !reviewed.has(item.id));
+  return index >= 0 ? index : undefined;
+}
+
+export function isPracticeSessionComplete(queue: LearningItem[], reviewedInSession: string[]): boolean {
+  return queue.length > 0 && nextUnreviewedInSession(queue, reviewedInSession) === undefined;
 }
 
 export function buildPracticeQueue(state: TutorState, options: { index?: number; reviewedInSession?: string[] } = {}): PracticeQueue {

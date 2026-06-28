@@ -18,7 +18,7 @@ function state(repoPath: string): TutorState {
     artifacts: [],
     concepts: [{ id: 'repo.auth', label: 'auth', kind: 'repo_domain', description: 'Auth term', difficulty: 'beginner', parentIds: [], prerequisiteIds: [], relatedIds: [], evidence: [{ path: 'src/auth.ts', label: 'evidence' }] }],
     conceptStates: [{ conceptId: 'repo.auth', exposureCount: 1, activeRecallCount: 0, correctCount: 0, failedCount: 0, hintCount: 0, masteryEstimate: 0.2, confidence: 0.2, importance: 0.6, repoRelevance: 0.5 }],
-    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: auth', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function auth() { return true; }' }, bodyMarkdown: 'body', prompt: 'What happens in this snippet?', explanationMarkdown: 'The function returns true.', expectedFocus: ['auth'], whyShown: 'Snippet-first local behavior card.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }, { id: 'item_second', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: second', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function gate() { return false; }' }, bodyMarkdown: 'body', prompt: 'Second card?', explanationMarkdown: 'Returns false.', expectedFocus: ['gate'], evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-02T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }],
+    learningItems: [{ id: 'item_auth', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: auth', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function auth() { return true; }' }, bodyMarkdown: '## Deep dive\n\n- Auth gates access\n\n```ts\nreturn true;\n```', prompt: 'What happens in this snippet?', explanationMarkdown: 'The function returns true.', expectedFocus: ['auth'], whyShown: 'Snippet-first local behavior card.', evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-01T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }, { id: 'item_second', conceptId: 'repo.auth', type: 'explain_back', questionPlane: 'local_behavior', title: 'src/auth.ts: second', snippet: { path: 'src/auth.ts', label: 'evidence', language: 'typescript', code: 'export function gate() { return false; }' }, bodyMarkdown: 'body', prompt: 'Second card?', explanationMarkdown: 'Returns false.', expectedFocus: ['gate'], evidence: [{ path: 'src/auth.ts', label: 'evidence' }], difficulty: 'beginner', createdAt: '2026-01-02T00:00:00.000Z', status: 'active', generation: 1, source: 'ingest' }],
     cardBatches: [],
     courses: [{ id: 'learn-auth', title: 'Learn auth', goal: 'Understand auth flow', enabledPlanes: ['local_behavior', 'repo_domain'], materialPaths: ['src/**'], docPaths: ['docs/**'], conceptIds: ['repo.auth'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }],
     questionBank: [],
@@ -94,6 +94,12 @@ describe('review session server', () => {
       expect(practiceHtml).toContain('I knew it');
       expect(practiceHtml).toContain('id="practice-outcome"');
       expect(practiceHtml).toContain('advancePracticeQueue');
+      expect(practiceHtml).toContain('copy-learn-more');
+      expect(practiceHtml).toContain('markdown-body');
+      expect(practiceHtml).toContain('<h2>Deep dive</h2>');
+      expect(practiceHtml).toContain('item_auth');
+      expect(practiceHtml).toContain('repo.auth');
+      expect(practiceHtml).toContain('Card 1 of 2');
       expect(practiceHtml).toContain('Keyboard shortcuts');
       expect((practiceHtml.match(/class="card recall-card/g) ?? []).length).toBe(1);
 
@@ -106,6 +112,10 @@ describe('review session server', () => {
       expect(queue.total).toBe(2);
       expect(queue.index).toBe(0);
       expect(queue.items).toHaveLength(2);
+
+      const reviewedNext = await fetch(`${review.url}/api/practice/queue?reviewed=item_auth`).then((res) => res.json()) as { index: number; items: Array<{ id: string }> };
+      expect(reviewedNext.index).toBe(1);
+      expect(reviewedNext.items[reviewedNext.index]?.id).toBe('item_second');
 
       const mapHtml = await fetch(`${review.url}/map`).then((res) => res.text());
       expect(mapHtml).toContain('Unified Map');

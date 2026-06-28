@@ -1,9 +1,38 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildPracticeQueue, sortPracticeQueue } from '../../src/core/practiceQueue.js';
-import type { TutorState } from '../../src/core/types.js';
+import {
+  buildPracticeQueue,
+  isPracticeSessionComplete,
+  nextUnreviewedInSession,
+  resolvePracticeIndex,
+  sortPracticeQueue,
+} from '../../src/core/practiceQueue.js';
+import type { LearningItem, TutorState } from '../../src/core/types.js';
 
-function baseState(overrides: Partial<TutorState> = {}): TutorState {
+function item(id: string, createdAt: string, batchId?: string): LearningItem {
+  return {
+    id,
+    conceptId: `concept.${id}`,
+    type: 'explain_back',
+    questionPlane: 'local_behavior',
+    title: `title ${id}`,
+    snippet: { path: `src/${id}.ts`, label: 'evidence', language: 'typescript', code: `export const ${id} = true;` },
+    bodyMarkdown: `body ${id}`,
+    prompt: `Prompt for ${id}?`,
+    explanationMarkdown: `Answer ${id}.`,
+    expectedFocus: ['focus'],
+    whyShown: 'test',
+    evidence: [{ path: `src/${id}.ts`, label: 'evidence' }],
+    difficulty: 'beginner',
+    createdAt,
+    status: 'active',
+    batchId,
+    generation: 1,
+    source: 'ingest',
+  };
+}
+
+function state(items: LearningItem[], events: TutorState['learningEvents'] = []): TutorState {
   return {
     version: 1,
     repoPath: '/repo',
@@ -13,41 +42,55 @@ function baseState(overrides: Partial<TutorState> = {}): TutorState {
     artifacts: [],
     concepts: [],
     conceptStates: [],
-    learningItems: [
-      { id: 'item_a', conceptId: 'c1', type: 'explain_back', questionPlane: 'local_behavior', title: 'A', snippet: { path: 'a.ts', label: 'a', code: 'a' }, bodyMarkdown: '', prompt: 'A?', explanationMarkdown: 'A', expectedFocus: ['a'], difficulty: 'beginner', createdAt: '2026-01-02T00:00:00.000Z', status: 'active', batchId: 'batch_1', generation: 1, source: 'manual_generate' },
-      { id: 'item_b', conceptId: 'c2', type: 'explain_back', questionPlane: 'local_behavior', title: 'B', snippet: { path: 'b.ts', label: 'b', code: 'b' }, bodyMarkdown: '', prompt: 'B?', explanationMarkdown: 'B', expectedFocus: ['b'], difficulty: 'beginner', createdAt: '2026-01-03T00:00:00.000Z', status: 'active', batchId: 'batch_1', generation: 1, source: 'manual_generate' },
-      { id: 'item_c', conceptId: 'c3', type: 'explain_back', questionPlane: 'local_behavior', title: 'C', snippet: { path: 'c.ts', label: 'c', code: 'c' }, bodyMarkdown: '', prompt: 'C?', explanationMarkdown: 'C', expectedFocus: ['c'], difficulty: 'beginner', createdAt: '2026-01-04T00:00:00.000Z', status: 'active', batchId: 'batch_2', generation: 2, source: 'manual_generate' },
-    ],
-    cardBatches: [
-      { id: 'batch_1', mode: 'more', requestedCount: 2, itemIds: ['item_a', 'item_b'], archivedItemIds: [], createdAt: '2026-01-02T00:00:00.000Z' },
-      { id: 'batch_2', mode: 'more', requestedCount: 1, itemIds: ['item_c'], archivedItemIds: [], createdAt: '2026-01-04T00:00:00.000Z' },
-    ],
+    learningItems: items,
+    cardBatches: [{ id: 'batch_a', mode: 'more', requestedCount: 2, itemIds: ['a', 'b'], archivedItemIds: [], createdAt: '2026-01-01T00:00:00.000Z' }],
     courses: [],
     questionBank: [],
     questionDraftBatches: [],
-    learningEvents: [{ id: 'e1', itemId: 'item_a', conceptId: 'c1', eventType: 'answered', correct: true, createdAt: '2026-01-05T00:00:00.000Z' }],
+    learningEvents: events,
     corrections: [],
     manualRatings: [],
-    ...overrides,
   };
 }
 
 describe('practiceQueue', () => {
-  it('sorts unreviewed items before globally reviewed ones, then by batch order', () => {
-    const sorted = sortPracticeQueue(baseState());
-    expect(sorted.map((item) => item.id)).toEqual(['item_b', 'item_c', 'item_a']);
+  it('sorts unreviewed cards before globally reviewed ones', () => {
+    const queue = sortPracticeQueue(state(
+      [item('a', '2026-01-01T00:00:00.000Z', 'batch_a'), item('b', '2026-01-02T00:00:00.000Z', 'batch_a')],
+      [{ id: 'e1', itemId: 'a', conceptId: 'concept.a', eventType: 'marked_correct', createdAt: '2026-01-03T00:00:00.000Z' }],
+    ));
+    expect(queue.map((entry) => entry.id)).toEqual(['b', 'a']);
   });
 
-  it('builds queue with index and reviewedInSession', () => {
-    const queue = buildPracticeQueue(baseState(), { index: 1, reviewedInSession: ['item_b'] });
-    expect(queue.total).toBe(3);
-    expect(queue.index).toBe(1);
-    expect(queue.items[1]?.id).toBe('item_c');
-    expect(queue.reviewedInSession).toEqual(['item_b']);
+  it('resolves the next unreviewed card in session when index is omitted', () => {
+    const queue = sortPracticeQueue(state([item('a', '2026-01-01T00:00:00.000Z'), item('b', '2026-01-02T00:00:00.000Z')]));
+    expect(resolvePracticeIndex(queue, undefined, ['a'])).toBe(1);
+    expect(nextUnreviewedInSession(queue, ['a'])).toBe(1);
   });
 
-  it('picks first unreviewed in session when index omitted', () => {
-    const queue = buildPracticeQueue(baseState(), { reviewedInSession: ['item_b'] });
-    expect(queue.items[queue.index]?.id).toBe('item_c');
+  it('skips session-reviewed cards even when an explicit index is requested', () => {
+    const queue = sortPracticeQueue(state([item('a', '2026-01-01T00:00:00.000Z'), item('b', '2026-01-02T00:00:00.000Z')]));
+    expect(resolvePracticeIndex(queue, 0, ['a'])).toBe(1);
+  });
+
+  it('detects when every card in the queue was reviewed this session', () => {
+    const tutorState = state([item('a', '2026-01-01T00:00:00.000Z'), item('b', '2026-01-02T00:00:00.000Z')]);
+    const queue = sortPracticeQueue(tutorState);
+    expect(isPracticeSessionComplete(queue, ['a', 'b'])).toBe(true);
+    expect(buildPracticeQueue(tutorState, { reviewedInSession: ['a'] }).index).toBe(1);
+  });
+
+  it('simulates post-grade advance without repeating the card just reviewed', () => {
+    const tutorState = state([item('a', '2026-01-01T00:00:00.000Z'), item('b', '2026-01-02T00:00:00.000Z')]);
+    const afterGrade = state(
+      tutorState.learningItems,
+      [{ id: 'e1', itemId: 'a', conceptId: 'concept.a', eventType: 'answered', createdAt: '2026-01-03T00:00:00.000Z' }],
+    );
+    const queue = sortPracticeQueue(afterGrade);
+    expect(queue.map((entry) => entry.id)).toEqual(['b', 'a']);
+    const reviewedInSession = ['a'];
+    const nextIndex = resolvePracticeIndex(queue, undefined, reviewedInSession);
+    expect(queue[nextIndex]?.id).toBe('b');
+    expect(queue[nextIndex]?.id).not.toBe('a');
   });
 });

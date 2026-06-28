@@ -57,6 +57,20 @@ Running log for P0–P4 platform evolution. Update after each phase.
 - Tracking commit: 0371f9b — chore: add platform evolution tracking and implementer subagent
 - All phases P0–P4 shipped on main; npm test — 97 tests passed.
 
+## Practice fixes — learn-more + queue advance (2026-06-28)
+
+**Status:** complete
+
+**Root cause (same cards):** After grading, `sortPracticeQueue` moves the card to the end of the queue (globally reviewed). Auto-advance used `index + 1`, so the next page often landed on the card just reviewed (e.g. queue `[B, A]` at index 1 shows `A` again). Cards were distinct in state; repetition was a navigation bug, not duplicate generation. Many cards from the same concept still share similar titles/snippets by design.
+
+**Fixes:**
+- `advancePracticeQueue` navigates with `?reviewed=` only (no index); server resolves next unreviewed via `resolvePracticeIndex`.
+- `resolvePracticeIndex` skips session-reviewed cards even when an explicit index is requested.
+- Learn more: lightweight `renderMarkdownHtml` (no new dep), styled panel, Copy button for raw markdown.
+- Practice header shows card id, concept id, and queue position.
+
+**Tests:** vitest — practiceQueue, markdownHtml, server learn-more/advance coverage
+
 ## Blockers
 
 None.
