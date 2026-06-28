@@ -9,7 +9,7 @@ All JSON responses use `content-type: application/json`. Write endpoints persist
 | GET path | Purpose |
 |----------|---------|
 | `/` | Review queue |
-| `/practice` | One-card practice |
+| `/practice` | Focused practice with queue navigation |
 | `/workbench` | Command center |
 | `/map` | Unified map |
 | `/audit` | Quality audit |
@@ -36,8 +36,11 @@ All JSON responses use `content-type: application/json`. Write endpoints persist
 | `/api/study` | `{ summary, assignments }` |
 | `/api/cards/history` | `{ summary, batches, cards[] }` with per-card `events` |
 | `/api/courses` | `{ courses: CourseSummary[] }` |
+| `/api/practice/queue` | `{ items, index, total, reviewedInSession }` practice queue |
+| `/api/history/activity` | Paginated `learningEvents` activity; `?type=&limit=&offset=` |
 | `/api/questions` | `{ summary, batches, questions }` |
-| `/api/evidence-timeline` | `{ nodes, edges }` provenance graph; optional `?limit=N` caps nodes (display-only truncation; full graph without param) |
+| `/api/questions/candidates` | `{ candidates: draft QuestionBankEntry[] }` |
+| `/api/evidence-timeline` | `{ nodes, edges }` provenance graph; `?includeEvents=false` omits review events; `?course=<id>` scopes subgraph; optional `?limit=N` |
 | `/api/evidence-graph` | Same as evidence-timeline |
 | `/api/preferences` | `UserPreferences` |
 
@@ -85,8 +88,33 @@ All JSON responses use `content-type: application/json`. Write endpoints persist
 }
 ```
 
-- `provider`: `fake` | `local` | `deterministic` (no network)
+- `provider`: `fake` | `local` | `deterministic` (no network) | `remote` (requires `privacy.json` consent + `OPENAI_API_KEY`)
 - Response: `{ "ok": true, "questions": questionBankData }`
+
+### `POST /api/questions/bulk-status`
+
+```json
+{
+  "ids": ["question-id-1", "question-id-2"],
+  "status": "accepted"
+}
+```
+
+- `status`: `"accepted"` | `"rejected"`
+- Response: `{ "ok": true, "questions": questionBankData }`
+
+### `GET /api/practice/queue`
+
+Query: `?index=N&reviewed=id1,id2`
+
+```json
+{
+  "items": [{ "id": "...", "title": "..." }],
+  "index": 0,
+  "total": 12,
+  "reviewedInSession": []
+}
+```
 
 ### `POST /api/questions/status`
 

@@ -53,7 +53,7 @@ If `.skilltrace/state.json` is missing, run `init` first. If no concepts/cards, 
 ## Safety
 
 - **Local-only default** — session binds `127.0.0.1`; no cloud sync or telemetry.
-- **No remote LLM without explicit opt-in** — `questions draft --provider fake|local` and API `POST /api/questions/draft` use no-network providers. Remote is blocked; do not enable `privacy.json` network flags unless the user explicitly requests it.
+- **No remote LLM without explicit opt-in** — enable `privacy.json` (`network.enabled`, `consentToSend`) and set `OPENAI_API_KEY` before `provider: remote`. Run `privacy preview` first; preview sends nothing.
 - **Privacy preview before any future remote** — run `privacy preview` (CLI) to inspect outbound payloads; preview sends nothing.
 - **Never commit secrets** — do not commit `.env`, tokens, or raw `.skilltrace/` from repos with sensitive snippets unless the user asks.
 - **Card-quality vs learner failure** — `marked_bad_card`, `marked_wrong_evidence`, `marked_duplicate` are quality flags, not mastery misses.
@@ -120,7 +120,10 @@ Use session base URL as `$BASE` (e.g. `http://127.0.0.1:39587`).
 | Card/batch audit | `GET $BASE/api/cards/history` |
 | Courses summary | `GET $BASE/api/courses` |
 | Question bank | `GET $BASE/api/questions` |
-| Provenance graph | `GET $BASE/api/evidence-timeline` |
+| Provenance graph | `GET $BASE/api/evidence-timeline?includeEvents=false&course=<id>` |
+| Practice queue | `GET $BASE/api/practice/queue` or `/practice?index=N` |
+| History activity | `GET $BASE/api/history/activity?type=answered&limit=20` |
+| Draft candidates | `GET $BASE/api/questions/candidates` |
 | Preferences | `GET $BASE/api/preferences` |
 | Due delayed probes | `GET $BASE/api/delayed-probes` |
 | Study assignments | `GET $BASE/api/study` |
@@ -140,19 +143,47 @@ curl -s -X POST "$BASE/api/courses" -H 'content-type: application/json' \
 
 CLI: `course create --id ... --title ... --goal ... --materials ... --docs ...`
 
-### Questions (draft → accept)
+### Questions (draft → judge → accept → cards)
 
 ```bash
-# Draft (fake/local = no network)
+# Privacy preview before remote (sends nothing)
+node dist/cli.js privacy preview --repo /path/to/target
+
+# Draft locally (no network)
 curl -s -X POST "$BASE/api/questions/draft" -H 'content-type: application/json' \
   -d '{"courseId":"learn-auth","provider":"fake","count":6}'
 
-# Accept or reject
+# Remote draft when privacy + OPENAI_API_KEY are configured
+curl -s -X POST "$BASE/api/questions/draft" -H 'content-type: application/json' \
+  -d '{"courseId":"learn-auth","provider":"remote","count":6}'
+
+# List draft candidates for rubric review
+curl -s "$BASE/api/questions/candidates"
+
+# Accept or reject one
 curl -s -X POST "$BASE/api/questions/status" -H 'content-type: application/json' \
   -d '{"id":"<question-id>","status":"accepted"}'
+
+# Bulk promote after judging
+curl -s -X POST "$BASE/api/questions/bulk-status" -H 'content-type: application/json' \
+  -d '{"ids":["<id1>","<id2>"],"status":"accepted"}'
 ```
 
-CLI: `questions draft`, `questions accept --id`, `questions reject --id`
+Judge rubric (agent): evidence cites real paths, prompt is answerable from snippet, `shortAnswer` is concise, `deepExplanation` adds repo context. Reject vague or duplicate prompts.
+
+Generate cards from accepted questions:
+
+```bash
+curl -s -X POST "$BASE/api/cards/generate" -H 'content-type: application/json' \
+  -d '{"count":5,"mode":"more","courseId":"learn-auth"}'
+```
+
+Practice queue navigation:
+
+```bash
+curl -s "$BASE/api/practice/queue?index=0"
+# Human UI: /practice?index=N — auto-advances after grade
+```
 
 ### Generate cards
 
