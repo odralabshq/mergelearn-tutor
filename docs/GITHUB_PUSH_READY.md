@@ -123,10 +123,10 @@ The repo can be pushed to GitHub as a private or internal development repo, but 
 
 Blockers:
 
-- No public license has been approved.
+- License: PolyForm Noncommercial 1.0.0 (see root LICENSE), aligned with odralabshq/mergelearn.
 - `package.json` has `private: true`.
-- `package.json` has `license: UNLICENSED`.
-- There is no root `LICENSE` file.
+- `package.json` has `license: PolyForm-Noncommercial-1.0.0`.
+- Root `LICENSE` matches odralabshq/mergelearn (Copyright 2026 Odra Labs).
 - Distribution channel is undecided.
 - Remote LLM mode is intentionally blocked until privacy policy and outbound preview behavior are approved.
 

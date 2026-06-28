@@ -6,7 +6,8 @@
   "files": [
     "dist/",
     "docs/*.md",
-    "docs/assets/screenshots/*.png"
+    "docs/assets/screenshots/*.png",
+    "LICENSE"
   ],
   "scripts": {
     "test": "vitest run",
@@ -27,7 +28,7 @@
     "developer-tools"
   ],
   "author": "",
-  "license": "UNLICENSED",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "description": "Local-first repo-aware code tutor that turns git history into daily learning cards",
   "dependencies": {
     "commander": "^12.1.0"

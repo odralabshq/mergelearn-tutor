@@ -23,7 +23,7 @@ This document is the local-only beta checklist. It prepares the package and veri
 These require human approval before any public beta:
 
 1. Product name: keep `MergeLearn Tutor` or rename before publishing.
-2. License: currently `UNLICENSED` and `private: true`.
+2. License: PolyForm Noncommercial 1.0.0; package remains `private: true`.
 3. Distribution: npm package, GitHub release, install script, or private archive.
 4. Positioning: personal AI-era learning companion vs. onboarding tool.
 5. Remote enrichment: still blocked unless explicitly approved separately.
@@ -113,7 +113,7 @@ Acceptance:
 - [x] README states no telemetry and no target code execution.
 - [x] README has screenshots and a page-by-page user manual.
 - [ ] Human approved name.
-- [ ] Human approved license.
+- [x] License aligned with mergelearn (PolyForm Noncommercial 1.0.0).
 - [ ] Human approved distribution channel.
 - [ ] Clean-clone verification run immediately before release.
 - [ ] At least one human-rated dogfood report confirms cards are useful and grounded.

@@ -223,8 +223,14 @@ This repository is ready for a local GitHub push after verification, but it is n
 Current release blockers:
 
 - The package is still `private: true`.
-- The package license is still `UNLICENSED`.
-- There is no public `LICENSE` file yet.
-- Product name, license, and distribution channel need explicit human approval before public release.
+- Product name and distribution channel still need explicit human approval before public npm publishing.
 
 See `docs/GITHUB_PUSH_READY.md` for the final push checklist.
+
+## License
+
+MergeLearn Tutor is licensed under the PolyForm Noncommercial License 1.0.0. See [LICENSE](./LICENSE).
+
+Noncommercial use is allowed under the public license. Commercial use requires separate permission from the copyright holder, Odra Labs. Odra Labs may also grant separate commercial, internal, or company-specific licenses outside the public license.
+
+This is a source-available license, not an OSI-approved open-source license.

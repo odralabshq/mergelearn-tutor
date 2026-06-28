@@ -19,7 +19,7 @@ describe('package beta-readiness manifest', () => {
     expect(pkg.main).toBe('dist/index.js');
     expect(pkg.types).toBe('dist/index.d.ts');
     expect(pkg.bin?.['mergelearn-tutor']).toBe('./dist/cli.js');
-    expect(pkg.files).toEqual(['dist/', 'docs/*.md', 'docs/assets/screenshots/*.png']);
+    expect(pkg.files).toEqual(['dist/', 'docs/*.md', 'docs/assets/screenshots/*.png', 'LICENSE']);
     expect(pkg.scripts?.['smoke:package']).toBe('node scripts/packaged-smoke.mjs');
   });
 
@@ -27,6 +27,6 @@ describe('package beta-readiness manifest', () => {
     const pkg = JSON.parse(await readFile('package.json', 'utf8')) as PackageJson;
 
     expect(pkg.private).toBe(true);
-    expect(pkg.license).toBe('UNLICENSED');
+    expect(pkg.license).toBe('PolyForm-Noncommercial-1.0.0');
   });
 });

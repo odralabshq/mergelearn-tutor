@@ -44,7 +44,7 @@ try {
 
   const manifest = require(path.join(root, 'package.json'));
   assert(manifest.private === true, 'package must stay private until release approval');
-  assert(manifest.license === 'UNLICENSED', 'license must remain UNLICENSED until human decision');
+  assert(manifest.license === 'PolyForm-Noncommercial-1.0.0', 'license must be PolyForm-Noncommercial-1.0.0');
   assert(manifest.bin?.['mergelearn-tutor'] === './dist/cli.js', 'bin path must target built CLI');
 
   const tarball = path.join(tmp, entry.filename);
