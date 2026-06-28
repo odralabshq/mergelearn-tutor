@@ -20,6 +20,8 @@ All JSON responses use `content-type: application/json`. Write endpoints persist
 | `/graph` | Evidence graph |
 | `/history` | Card history |
 | `/progress` | Mastery inspection |
+| `/learning-path` | Prerequisite DAG with recommended study order |
+| `/path` | Alias for learning path |
 | `/study` | Active-control pilot |
 | `/preferences` | Question plane wizard |
 | `/state.json` | Raw state (alias of `/api/state`) |
@@ -31,6 +33,7 @@ All JSON responses use `content-type: application/json`. Write endpoints persist
 | `/api/state` | Full `TutorState` |
 | `/api/workbench` | `WorkbenchSummary`: `nextAction`, `metrics`, `filters`, `nodes`, `links` |
 | `/api/progress` | Progress graph nodes/edges grouped by concept kind |
+| `/api/learning-path` | Learning path DAG: `{ nodes, edges, recommendedOrder, summary, cycleDetected, cycleNodes, courseId? }`; `?course=<id>` scopes concepts |
 | `/api/calibration` | Confidence vs correctness pairing stats |
 | `/api/delayed-probes` | `{ summary, due, upcoming, completed }` |
 | `/api/study` | `{ summary, assignments }` |
