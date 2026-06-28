@@ -129,6 +129,25 @@ describe('review session server', () => {
       expect(mapHtml).toContain('href="/map?mode=local-graph"');
       expect(mapHtml).toContain('href="/map?mode=provenance"');
       expect(mapHtml).toContain('href="/map?mode=skill-map"');
+      expect(mapHtml).toContain('Learning path');
+      expect(mapHtml).toContain('href="/learning-path"');
+
+      const learningPathHtml = await fetch(`${review.url}/learning-path`).then((res) => res.text());
+      expect(learningPathHtml).toContain('Prerequisite DAG with recommended study order');
+      expect(learningPathHtml).toContain('id="learning-path-cy"');
+      expect(learningPathHtml).toContain('cytoscape.min.js');
+      expect(learningPathHtml).toContain('cytoscape-dagre');
+      expect(learningPathHtml).toContain('Recommended study order');
+      expect(learningPathHtml).toContain('learning-path-order');
+      expect(learningPathHtml).toContain('repo.auth');
+
+      const pathAliasHtml = await fetch(`${review.url}/path`).then((res) => res.text());
+      expect(pathAliasHtml).toContain('learning-path-cy');
+
+      const learningPathApi = await fetch(`${review.url}/api/learning-path`).then((res) => res.json()) as { nodes: Array<{ id: string }>; recommendedOrder: string[]; summary: Record<string, number> };
+      expect(learningPathApi.nodes.length).toBeGreaterThan(0);
+      expect(learningPathApi.recommendedOrder.length).toBeGreaterThan(0);
+      expect(learningPathApi.summary).toMatchObject({ new: expect.any(Number), learning: expect.any(Number) });
 
       const mapProvenance = await fetch(`${review.url}/map?mode=provenance`).then((res) => res.text());
       expect(mapProvenance).toContain('Provenance lane');

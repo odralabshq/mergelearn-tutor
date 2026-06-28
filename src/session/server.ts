@@ -13,6 +13,7 @@ import { activeLearningItems, generateCardBatch, recordAnswer } from '../core/pl
 import { loadPreferences, normalizePreferences, savePreferences } from '../core/preferences.js';
 import { renderMarkdownHtml } from '../core/markdownHtml.js';
 import { buildPracticeQueue, parseReviewedInSession, practiceItemAt } from '../core/practiceQueue.js';
+import { buildLearningPathGraph } from '../core/learningPath.js';
 import { buildProgressGraph } from '../core/progress.js';
 import { bulkUpdateQuestionStatus, draftQuestionsForCourse, questionCandidates, questionSummary, updateQuestionStatus } from '../core/questions.js';
 import { renderProgress, renderToday } from '../core/render.js';
@@ -69,6 +70,7 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && url.pathname === '/timeline') return sendHtml(res, 200, renderTimelineHtml(await loadState(repoPath), parseTimelinePageSize(url.searchParams.get('limit')), parseTimelineOffset(url.searchParams.get('offset'))));
   if (method === 'GET' && url.pathname === '/graph') return sendHtml(res, 200, renderGraphHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/progress') return sendHtml(res, 200, renderProgressHtml(await loadState(repoPath)));
+  if (method === 'GET' && (url.pathname === '/learning-path' || url.pathname === '/path')) return sendHtml(res, 200, renderLearningPathHtml(await loadState(repoPath), url));
   if (method === 'GET' && url.pathname === '/audit') return sendHtml(res, 200, renderAuditHtml(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/history') {
     const state = await loadState(repoPath);
@@ -93,6 +95,10 @@ async function handleRequest(repoPath: string, req: IncomingMessage, res: Server
   if (method === 'GET' && (url.pathname === '/state.json' || url.pathname === '/api/state')) return sendJson(res, 200, await loadState(repoPath));
   if (method === 'GET' && url.pathname === '/api/workbench') return sendJson(res, 200, buildWorkbenchSummary(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/progress') return sendJson(res, 200, buildProgressGraph(await loadState(repoPath)));
+  if (method === 'GET' && url.pathname === '/api/learning-path') {
+    const courseId = url.searchParams.get('course') ?? undefined;
+    return sendJson(res, 200, buildLearningPathGraph(await loadState(repoPath), { courseId }));
+  }
   if (method === 'GET' && url.pathname === '/api/calibration') return sendJson(res, 200, summarizeCalibration(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/delayed-probes') return sendJson(res, 200, delayedProbeData(await loadState(repoPath)));
   if (method === 'GET' && url.pathname === '/api/study') return sendJson(res, 200, studyData(await loadState(repoPath)));
@@ -304,6 +310,7 @@ type PageShellOptions = {
   focus?: boolean;
   repoPath?: string;
   mapModeBar?: string;
+  extraHead?: string;
   surface?: string;
   practiceIndex?: number;
   practiceTotal?: number;
@@ -380,10 +387,12 @@ function renderHistoryActivityPanel(state: TutorState, options: { type?: string;
 
 function renderMapModeBar(activeMode: string, courseId?: string): string {
   const courseQuery = courseId ? `&course=${encodeURIComponent(courseId)}` : '';
+  const coursePathQuery = courseId ? `?course=${encodeURIComponent(courseId)}` : '';
   const tabs = [
     { id: 'local-graph', label: 'Local graph', href: `/map?mode=local-graph${courseQuery}`, description: 'What concepts, cards, and evidence are related?' },
     { id: 'provenance', label: 'Provenance lane', href: `/map?mode=provenance${courseQuery}`, description: 'Where did each card and question come from?' },
     { id: 'skill-map', label: 'Skill map', href: '/map?mode=skill-map', description: 'Which concepts are weak, strong, or due for review?' },
+    { id: 'learning-path', label: 'Learning path', href: `/learning-path${coursePathQuery}`, description: 'What order should I study concepts given prerequisites?' },
   ];
   const tabHtml = tabs.map((tab) => `<a class="map-mode-tab ${tab.id === activeMode ? 'is-active' : ''}" href="${tab.href}" ${tab.id === activeMode ? 'aria-current="page"' : ''}>${escapeHtml(tab.label)}</a>`).join('');
   const tabDescription = tabs.find((tab) => tab.id === activeMode)?.description ?? '';
@@ -843,6 +852,77 @@ function renderProgressHtml(state: TutorState): string {
   return pageShell('MergeLearn Tutor Progress', body, 'Progress map', shellOpts(state, 'map'));
 }
 
+const LEARNING_PATH_CDN_SCRIPTS = '<script src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.2/dist/cytoscape.min.js"></script><script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script><script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.js"></script>';
+
+function renderLearningPathCourseFilter(state: TutorState, activeCourseId?: string): string {
+  if (state.courses.length === 0) return '';
+  const links = state.courses.map((course) => {
+    const active = course.id === activeCourseId ? ' is-active' : '';
+    return `<a class="ghost map-course-link${active}" href="/learning-path?course=${encodeURIComponent(course.id)}">${escapeHtml(course.title)}</a>`;
+  }).join('');
+  const allLink = !activeCourseId ? '<a class="ghost map-course-link is-active" href="/learning-path">All courses</a>' : '<a class="ghost map-course-link" href="/learning-path">All courses</a>';
+  return `<section class="panel filter-panel"><div class="section-head"><div><p class="eyebrow">Course scope</p><h2>Filter path to one learning track</h2></div></div><div class="actions">${allLink}${links}</div></section>`;
+}
+
+function renderLearningPathLegend(): string {
+  const items = [
+    { className: 'skill-new', label: 'New' },
+    { className: 'skill-learning', label: 'Learning' },
+    { className: 'skill-confident', label: 'Confident' },
+    { className: 'skill-weak', label: 'Needs review' },
+  ];
+  return `<div class="learning-path-legend" aria-label="Mastery legend">${items.map((item) => `<span class="learning-path-legend-item ${item.className}">${escapeHtml(item.label)}</span>`).join('')}</div>`;
+}
+
+function learningPathPageScript(): string {
+  return `<script>(function(){var el=document.getElementById('learning-path-cy');var raw=document.getElementById('learning-path-data');if(!el||!raw||typeof cytoscape==='undefined')return;var payload=JSON.parse(raw.textContent);var statusFill={new:'#161b22',learning:'rgba(210,153,34,0.15)',confident:'rgba(63,185,80,0.15)',needs_review:'rgba(248,81,73,0.15)'};var statusBorder={new:'#484f58',learning:'#d29922',confident:'#3fb950',needs_review:'#f85149'};var statusText={new:'#8b949e',learning:'#e6edf3',confident:'#e6edf3',needs_review:'#e6edf3'};if(typeof cytoscapeDagre!=='undefined')cytoscape.use(cytoscapeDagre);var cy=cytoscape({container:el,elements:{nodes:payload.nodes,edges:payload.edges},style:[{selector:'node',style:{'label':'data(label)','text-valign':'center','text-halign':'center','font-size':'11px','font-family':'Inter, system-ui, sans-serif','color':function(ele){return statusText[ele.data('status')]||'#e6edf3';},'background-color':function(ele){return statusFill[ele.data('status')]||'#161b22';},'border-width':2,'border-color':function(ele){return statusBorder[ele.data('status')]||'#484f58';},'width':'label','height':'label','padding':'12px','shape':'roundrectangle','text-wrap':'wrap','text-max-width':'120px'}},{selector:'node.lp-cycle',style:{'border-width':3,'border-style':'dashed'}},{selector:'edge',style:{'width':1.5,'line-color':'#58a6ff','target-arrow-color':'#58a6ff','target-arrow-shape':'triangle','curve-style':'bezier','arrow-scale':0.8}}],layout:{name:'dagre',rankDir:'TB',nodeSep:40,rankSep:60,padding:24},minZoom:0.3,maxZoom:2.5,wheelSensitivity:0.2});cy.on('tap','node',function(evt){var id=evt.target.id();var href=payload.practiceLinks[id]||'/map?mode=skill-map';window.location.href=href;});})();</script>`;
+}
+
+function renderLearningPathHtml(state: TutorState, url: URL): string {
+  const courseId = url.searchParams.get('course') ?? undefined;
+  const graph = buildLearningPathGraph(state, { courseId });
+  const practiceByConcept = new Map<string, string>();
+  for (const item of state.learningItems) {
+    if (item.status !== 'archived') practiceByConcept.set(item.conceptId, '/practice');
+  }
+  const courseFilter = renderLearningPathCourseFilter(state, courseId);
+  const cycleWarning = graph.cycleDetected
+    ? `<p class="setup-note learning-path-cycle">Cycle detected among prerequisites. Recommended order is partial; involved nodes: ${graph.cycleNodes.map((id) => escapeHtml(id)).join(', ')}.</p>`
+    : '';
+  const orderedList = graph.recommendedOrder.length > 0
+    ? `<ol class="learning-path-order">${graph.recommendedOrder.map((id) => {
+      const node = graph.nodes.find((entry) => entry.id === id);
+      const label = node?.label ?? id;
+      const href = practiceByConcept.get(id) ?? '/map?mode=skill-map';
+      const status = node?.status.replace(/_/g, ' ') ?? '';
+      return `<li><a href="${href}">${escapeHtml(label)}</a><small>${escapeHtml(id)} · ${escapeHtml(status)}</small></li>`;
+    }).join('')}</ol>`
+    : '<p>No concepts in scope yet. Ingest evidence or widen course filter.</p>';
+  const graphPayload = safeJsonEmbed({
+    nodes: graph.nodes.map((node) => ({
+      data: { id: node.id, label: node.label, status: node.status, mastery: node.mastery },
+      classes: `lp-${node.status}${graph.cycleNodes.includes(node.id) ? ' lp-cycle' : ''}`,
+    })),
+    edges: graph.edges.map((edge) => ({ data: { id: `${edge.from}->${edge.to}`, source: edge.from, target: edge.to, type: edge.type } })),
+    practiceLinks: Object.fromEntries(practiceByConcept.entries()),
+  });
+  const emptyState = graph.nodes.length === 0
+    ? '<p class="setup-note">No concepts to display. Ingest repo evidence or select a course with linked concepts.</p>'
+    : '';
+  const stats = `<div class="stats"><div>${graph.nodes.length}<span>concepts</span></div><div>${graph.edges.length}<span>dependencies</span></div><div>${graph.summary.confident}<span>confident</span></div><div>${graph.summary.needs_review}<span>needs review</span></div></div>`;
+  const courseNote = courseId ? ` · course ${escapeHtml(courseId)}` : '';
+  const intro = renderPageIntro('Learning path', 'Prerequisite DAG with recommended study order', `Follow parent and prerequisite edges top-to-bottom. Colors match the skill map mastery states.${courseNote}`, `<div class="page-intro-stats"><span>${graph.recommendedOrder.length} in order</span><span>${graph.nodes.length} concepts</span></div>`);
+  const cyPanel = graph.nodes.length > 0
+    ? `<section class="panel learning-path-panel"><div class="section-head"><div><h2>Concept dependency graph</h2><p>Pan and zoom. Click a node to open practice or the skill map.</p></div></div><div class="learning-path-scroll"><div id="learning-path-cy" class="learning-path-cy" role="img" aria-label="Learning path directed acyclic graph"></div></div></section>`
+    : '';
+  const body = `${intro}${stats}${courseFilter}${cycleWarning}${emptyState}${renderLearningPathLegend()}${cyPanel}<section class="panel"><div class="section-head"><div><p class="eyebrow">Accessibility</p><h2>Recommended study order</h2><p>Ordered list fallback when the interactive graph is unavailable.</p></div><a class="ghost" href="/api/learning-path${courseId ? `?course=${encodeURIComponent(courseId)}` : ''}">Open path JSON</a></div>${orderedList}</section><script type="application/json" id="learning-path-data">${graphPayload}</script>${graph.nodes.length > 0 ? learningPathPageScript() : ''}`;
+  return pageShell('MergeLearn Tutor Learning Path', body, 'Learning path', {
+    ...shellOpts(state, 'map'),
+    mapModeBar: renderMapModeBar('learning-path', courseId),
+    extraHead: graph.nodes.length > 0 ? LEARNING_PATH_CDN_SCRIPTS : '',
+  });
+}
+
 function renderProgressGuide(state: TutorState): string {
   const answeredEvents = state.learningEvents.filter((event) => event.eventType === 'answered');
   const active = activeLearningItems(state).length;
@@ -992,7 +1072,7 @@ function appNav(): string {
 }
 
 function appSubnav(): string {
-  return '<nav class="app-subnav" aria-label="Secondary navigation"><span class="subnav-group" data-group="practice">Practice</span><a href="/practice" data-group="practice">Focused practice</a><a href="/" data-group="practice">Review cards</a><a href="/study" data-group="practice">Study controls</a><span class="subnav-group" data-group="map">Map</span><a href="/map?mode=local-graph" data-group="map">Local graph</a><a href="/map?mode=provenance" data-group="map">Provenance lane</a><a href="/map?mode=skill-map" data-group="map">Skill map</a><a href="/graph" data-group="map">Legacy graph</a><a href="/timeline" data-group="map">Legacy timeline</a><a href="/progress" data-group="map">Legacy progress</a><span class="subnav-group" data-group="audit">Audit</span><a href="/audit" data-group="audit">Audit overview</a><a href="/history" data-group="audit">History</a><a href="/questions" data-group="audit">Questions</a><span class="subnav-group" data-group="setup">Setup</span><a href="/plan" data-group="setup">Plan Builder</a><a href="/courses" data-group="setup">Courses</a><a href="/preferences" data-group="setup">Preferences</a></nav>';
+  return '<nav class="app-subnav" aria-label="Secondary navigation"><span class="subnav-group" data-group="practice">Practice</span><a href="/practice" data-group="practice">Focused practice</a><a href="/" data-group="practice">Review cards</a><a href="/study" data-group="practice">Study controls</a><span class="subnav-group" data-group="map">Map</span><a href="/map?mode=local-graph" data-group="map">Local graph</a><a href="/map?mode=provenance" data-group="map">Provenance lane</a><a href="/map?mode=skill-map" data-group="map">Skill map</a><a href="/learning-path" data-group="map">Learning path</a><a href="/graph" data-group="map">Legacy graph</a><a href="/timeline" data-group="map">Legacy timeline</a><a href="/progress" data-group="map">Legacy progress</a><span class="subnav-group" data-group="audit">Audit</span><a href="/audit" data-group="audit">Audit overview</a><a href="/history" data-group="audit">History</a><a href="/questions" data-group="audit">Questions</a><span class="subnav-group" data-group="setup">Setup</span><a href="/plan" data-group="setup">Plan Builder</a><a href="/courses" data-group="setup">Courses</a><a href="/preferences" data-group="setup">Preferences</a></nav>';
 }
 
 function pageShell(title: string, body: string, status: string, options: PageShellOptions = {}): string {
@@ -1008,7 +1088,8 @@ function pageShell(title: string, body: string, status: string, options: PageShe
   ].filter(Boolean).join(' ');
   const repoBadge = escapeHtml(shortRepoLabel(options.repoPath));
   const mapBar = options.mapModeBar ? options.mapModeBar.replace('class="map-mode-bar"', 'class="map-mode-bar map-mode-bar--shell"') : '';
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>${style()}</style></head><body${bodyAttrs ? ` ${bodyAttrs}` : ''}><div class="status" id="status">${escapeHtml(status)}</div><header class="global-header" role="banner"><div class="header-brand"><span class="app-logo">MergeLearn Tutor</span><span class="repo-badge" id="shell-repo-badge" title="${escapeHtml(options.repoPath ?? '')}">${repoBadge}</span><span class="sr-only">Local learning workbench</span><span class="sr-only">No remote LLM calls. State is read from this local session.</span></div>${appNav()}<div class="header-metrics" aria-label="Current local plan snapshot"><span class="metric-pill">Due probes <strong id="shell-due-probes">—</strong></span><span class="metric-pill">Active cards <strong id="shell-cards">—</strong></span><a class="header-cta" id="shell-next-action" href="/plan">Loading plan state…</a><span class="sr-only" id="shell-concepts">—</span><span class="sr-only" id="shell-courses">—</span><span class="sr-only" id="shell-questions">—</span></div></header>${mapBar}${appSubnav()}<main class="content-area">${body}</main><script>${script()}</script></body></html>`;
+  const headExtras = options.extraHead ?? '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${escapeHtml(title)}</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"><style>${style()}</style>${headExtras}</head><body${bodyAttrs ? ` ${bodyAttrs}` : ''}><div class="status" id="status">${escapeHtml(status)}</div><header class="global-header" role="banner"><div class="header-brand"><span class="app-logo">MergeLearn Tutor</span><span class="repo-badge" id="shell-repo-badge" title="${escapeHtml(options.repoPath ?? '')}">${repoBadge}</span><span class="sr-only">Local learning workbench</span><span class="sr-only">No remote LLM calls. State is read from this local session.</span></div>${appNav()}<div class="header-metrics" aria-label="Current local plan snapshot"><span class="metric-pill">Due probes <strong id="shell-due-probes">—</strong></span><span class="metric-pill">Active cards <strong id="shell-cards">—</strong></span><a class="header-cta" id="shell-next-action" href="/plan">Loading plan state…</a><span class="sr-only" id="shell-concepts">—</span><span class="sr-only" id="shell-courses">—</span><span class="sr-only" id="shell-questions">—</span></div></header>${mapBar}${appSubnav()}<main class="content-area">${body}</main><script>${script()}</script></body></html>`;
 }
 
 function style(): string {
@@ -1298,6 +1379,15 @@ pre{overflow:auto;background:var(--color-bg-overlay);border:1px solid var(--colo
 .skill-learning{border-color:var(--color-warning-border);background:var(--color-warning-bg)}
 .skill-weak{border-color:var(--color-danger-border);background:var(--color-danger-bg)}
 .skill-new{border-color:var(--color-border-subtle);background:var(--color-bg-overlay);color:var(--color-text-secondary)}
+.learning-path-panel{margin-bottom:var(--space-6)}
+.learning-path-scroll{overflow:auto;border:1px solid var(--color-border-subtle);border-radius:var(--radius-lg);background:var(--color-bg-overlay);min-height:480px;-webkit-overflow-scrolling:touch}
+.learning-path-cy{width:100%;min-height:480px;height:520px}
+.learning-path-legend{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:0 0 var(--space-4)}
+.learning-path-legend-item{display:inline-flex;align-items:center;padding:var(--space-1) var(--space-3);border-radius:var(--radius-full);font-size:var(--text-xs);font-weight:var(--font-semibold);border:1px solid var(--color-border-subtle)}
+.learning-path-order{margin:0;padding-left:var(--space-6);display:grid;gap:var(--space-3)}
+.learning-path-order li{display:grid;gap:var(--space-1)}
+.learning-path-order small{color:var(--color-text-secondary);font-size:var(--text-xs)}
+.learning-path-cycle{color:var(--color-warning)}
 .graph-map-node.is-dimmed{opacity:.4}
 .graph-map-node.is-focused rect{stroke:var(--color-success-border);fill:var(--color-success-bg)}
 .graph-map-node-rollup rect{stroke-dasharray:4 3;fill:var(--color-bg-surface)}
@@ -1428,6 +1518,10 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
 function sendText(res: ServerResponse, status: number, body: string): void {
   res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' });
   res.end(body);
+}
+
+function safeJsonEmbed(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c');
 }
 
 function escapeHtml(value: string): string {
