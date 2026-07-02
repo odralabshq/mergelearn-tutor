@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Lexicon"
+description: "Shared vocabulary and domain terms used across the tool."
+resource: docs/LEXICON.md
+tags: [glossary, terminology]
+timestamp: 2026-07-02
+---
+
 # Repo lexicon and concept packs
 
 MergeLearn Tutor keeps repo-specific teaching knowledge in local JSON under `.skilltrace/lexicon.json`. This file lets you add vocabulary, rename noisy extracted labels, and ignore concepts/paths without changing project source code.

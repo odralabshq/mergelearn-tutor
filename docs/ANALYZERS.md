@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Analyzers"
+description: "Code analyzers that extract concepts and evidence from a repository."
+resource: docs/ANALYZERS.md
+tags: [analysis, extraction, ast]
+timestamp: 2026-07-02
+---
+
 # Analyzer Architecture
 
 ## Current decision

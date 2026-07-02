@@ -1,3 +1,12 @@
+---
+type: guide
+title: "Customization"
+description: "How to configure planes, catalogs, and generation behavior."
+resource: docs/CUSTOMIZATION.md
+tags: [config, customization]
+timestamp: 2026-07-02
+---
+
 # Customization and API Surface
 
 MergeLearn Tutor is designed so humans, CLI commands, the localhost website, and future LLM agents can all use the same local control surface.

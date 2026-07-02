@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Privacy Model"
+description: "What data MergeLearn reads, stores locally, and never transmits; local-first guarantees."
+resource: docs/PRIVACY.md
+tags: [privacy, local-first, security]
+timestamp: 2026-07-02
+---
+
 # MergeLearn Tutor Privacy Boundary
 
 MergeLearn Tutor is local-first. The default commands read local git history and `.skilltrace` state only; they do not call a remote LLM, send telemetry, or execute target repo code.

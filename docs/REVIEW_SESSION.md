@@ -1,3 +1,12 @@
+---
+type: guide
+title: "Review Session"
+description: "The daily review flow: prompts, grading, and history capture."
+resource: docs/REVIEW_SESSION.md
+tags: [review, spaced-repetition]
+timestamp: 2026-07-02
+---
+
 # Interactive Local Review Session
 
 MergeLearn Tutor now has a local browser-based review session. It keeps the CLI as the control plane and stores all state locally in `.skilltrace/state.json`.
