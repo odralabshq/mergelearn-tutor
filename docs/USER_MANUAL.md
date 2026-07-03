@@ -1,3 +1,12 @@
+---
+type: guide
+title: "MergeLearn Tutor User Manual"
+description: "End-to-end guide to installing, generating cards, and running review sessions."
+resource: docs/USER_MANUAL.md
+tags: [usage, cli, onboarding]
+timestamp: 2026-07-02
+---
+
 # MergeLearn Tutor User Manual
 
 This manual explains how to use MergeLearn Tutor from setup through daily review. It is written for a developer who wants a local tool that turns recent repository work into grounded learning material.

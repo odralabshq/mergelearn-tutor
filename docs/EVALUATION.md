@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Evaluation"
+description: "How card generation and learning outcomes are evaluated."
+resource: docs/EVALUATION.md
+tags: [evaluation, metrics]
+timestamp: 2026-07-02
+---
+
 # MergeLearn Tutor Evaluation
 
 ## Purpose

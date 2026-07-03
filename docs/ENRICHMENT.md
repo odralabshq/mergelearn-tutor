@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Enrichment"
+description: "How concept metadata is enriched before card authoring."
+resource: docs/ENRICHMENT.md
+tags: [enrichment, metadata]
+timestamp: 2026-07-02
+---
+
 # Optional Local-Only Enrichment
 
 MergeLearn Tutor can compare deterministic cards with an optional wording enrichment experiment. This feature is intentionally local-only in Batch 8.

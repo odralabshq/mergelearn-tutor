@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Corrections"
+description: "The corrections mechanism for suppressing and pinning cards."
+resource: docs/CORRECTIONS.md
+tags: [corrections, feedback]
+timestamp: 2026-07-02
+---
+
 # Corrections and Learner Events
 
 MergeLearn Tutor must be correctable. If the tutor guesses wrong, the user should be able to fix the state instead of fighting the product.

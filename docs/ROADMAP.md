@@ -1,23 +1,37 @@
+---
+type: reference
+title: "Product Roadmap"
+description: "Planned direction and phased priorities for the tool."
+resource: docs/ROADMAP.md
+tags: [roadmap, planning]
+timestamp: 2026-07-02
+---
+
 # MergeLearn Tutor Roadmap
 
-## Active next-phase plan
+## Active direction
 
-Read this first for the current development direction:
-
-`docs/plans/2026-06-26-platform-next-phase-plan.md`
+The current, authoritative development direction is the core redesign under
+[`docs/design/`](design/CORE_PLATFORM_PLAN_2026_07_01.md). Read the
+[Core Platform Plan](design/CORE_PLATFORM_PLAN_2026_07_01.md) first, then the
+six-doc [design set](design/design-core-2026-07-01/00-overview-and-simplification.md)
+(overview through the multi-model review).
 
 Current goal:
 
-Build a fully tested local-first code tutoring platform that helps AI-heavy developers understand what they just shipped, correct the tutor when it is wrong, and return weekly because the review session is short and useful.
+Build a fully tested local-first code tutoring platform that helps AI-heavy
+developers understand what they just shipped, correct the tutor when it is wrong,
+and return weekly because the review session is short and useful.
 
-Recommended next implementation slice:
+The core bet: the LLM is the sole card author (guided by grep/git/AST context and
+verified by provenance guardrails), scheduling uses FSRS, and knowledge is
+represented as a typed concept graph. See the design set for the dependency-ordered
+build sequence and the honest time budget.
 
-1. Add duplicate/noisy card detection.
-2. Use persisted manual ratings to influence prompt/card ranking locally.
-3. Continue packaging/beta readiness only after human decisions for name, license, and distribution.
+Completed platform foundations include evaluation, corrections, AST extraction,
+local review session, repo lexicon, privacy preview, and fake/local no-network
+enrichment.
 
-Manual rating persistence is now part of the local quality loop; packaging readiness lives in `docs/BETA_READINESS.md`.
-
-Completed platform foundations now include evaluation, corrections, AST extraction, improved cards, local review session, repo lexicon, privacy preview, fake/local no-network enrichment, beta packaging readiness, and manual rating persistence.
-
-Do not start with a polished dashboard, IDE extension, cloud sync, or LLM grading. The current local-only critical path is improving quality signals and noisy-card detection without weakening the local-first/no-telemetry posture.
+Local-first is non-negotiable: no telemetry, and any cloud LLM endpoint is explicit
+opt-in. A polished dashboard, IDE extension, and cloud sync remain out of scope for
+the core phase.

@@ -1,3 +1,12 @@
+---
+type: reference
+title: "Card Quality"
+description: "Standards and heuristics that define a good flashcard."
+resource: docs/CARD_QUALITY.md
+tags: [cards, quality]
+timestamp: 2026-07-02
+---
+
 # Card Quality Rules
 
 MergeLearn Tutor should produce a small number of useful, answerable learning cards. Card quality matters more than card volume.
