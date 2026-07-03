@@ -1,3 +1,9 @@
+/**
+ * @deprecated (S0, doc 00) Deterministic question author. Superseded by the v2
+ * LLM-sole-author pipeline in author.ts. KEPT as a readable dead-path (behavior
+ * unchanged) until the S9 destructive migration; see DEPRECATIONS in
+ * featureFlags.ts for the authoritative removal inventory. Do not extend this.
+ */
 import { DEFAULT_PREFERENCES } from './preferences.js';
 import { assertOutboundAllowed, createOutboundPreview, loadPrivacyConfig, type PrivacyConfig } from './privacy.js';
 import type { LlmClient } from './llmClient.js';
