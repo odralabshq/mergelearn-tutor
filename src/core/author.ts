@@ -12,6 +12,7 @@
 
 import { readRange, grepRepo, gitContext } from './tools.js';
 import { extractFirstJson, type EndpointConfig } from './endpoint.js';
+import { planeBloom, exemplarBlock } from './exemplars.js';
 import type { QuestionPlane } from './types.js';
 
 /** Minimal completion interface so tests can inject a fake model. */
@@ -90,21 +91,32 @@ export interface AuthoredCard {
   snippet: { path: string; startLine: number; endLine: number; text: string; commit: string };
 }
 
-/** Builds the author prompt. Minimal seam here; S4 enriches with exemplars. */
+/**
+ * Builds the 5-block author prompt (doc 01): role, material, target (plane +
+ * Bloom + what a correct answer must demonstrate), exemplars, constraints+schema.
+ */
 export function buildAuthorPrompt(bundle: ContextBundle): Array<{ role: 'system' | 'user'; content: string }> {
   const t = bundle.target;
   const neighbors = bundle.neighbors.map((n) => `${n.path}:${n.line}: ${n.text}`).join('\n') || '(none)';
   const gits = bundle.gitSubjects.join('; ') || '(none)';
+  const bloom = planeBloom[t.plane];
+  // Block 1: role framing (system).
   const system = 'You are a senior engineer writing a spaced-repetition card to teach a colleague this codebase. Return strict JSON only.';
   const user = [
+    // Block 2: the material (the grounding).
+    `MATERIAL (the card must be answerable from this and nothing else):`,
     `Concept: ${t.conceptLabel}`,
-    `Plane: ${t.plane}`,
     `File: ${t.path} (lines ${t.startLine}-${t.endLine})`,
     `Snippet:\n${bundle.primarySnippet}`,
     `Neighbors:\n${neighbors}`,
     `Recent commits touching this file: ${gits}`,
-    'Write a card answerable ONLY from the material above. Prefer why / what-happens-if over what-is. Cite the file.',
-    'JSON fields: prompt, snippetPath, snippetStartLine, snippetEndLine, expectedAnswer, expectedFocus (string[]), explanationMarkdown, planeConfidence (0-1).',
+    // Block 3: the target.
+    `TARGET plane: ${t.plane} (Bloom: ${bloom.bloom}). A correct answer must ${bloom.mustDemonstrate}.`,
+    // Block 4: exemplars (few-shot, plane-specific).
+    `EXEMPLARS (match this style and cognitive level):\n${exemplarBlock(t.plane)}`,
+    // Block 5: constraints + output contract.
+    'CONSTRAINTS: cite the file; answerable only from the material; prefer why / what-happens-if over what-is; no trivia.',
+    'OUTPUT strict JSON fields: prompt, snippetPath, snippetStartLine, snippetEndLine, expectedAnswer, expectedFocus (string[]), explanationMarkdown, planeConfidence (0-1).',
   ].join('\n\n');
   return [{ role: 'system', content: system }, { role: 'user', content: user }];
 }

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { authorCard, buildContextBundle, type AuthorLlm, type AuthorTarget } from '../../src/core/author.js';
+import { authorCard, buildContextBundle, buildAuthorPrompt, type AuthorLlm, type AuthorTarget } from '../../src/core/author.js';
 import type { EndpointConfig } from '../../src/core/endpoint.js';
 
 let dir = '';
@@ -77,5 +77,14 @@ describe('authorCard (LLM-sole-author)', () => {
     const b = await buildContextBundle(dir, target);
     expect(b.primarySnippet).toContain('foo');
     expect(Array.isArray(b.neighbors)).toBe(true);
+  });
+
+  it('the author prompt carries the Bloom target and plane exemplars', async () => {
+    const b = await buildContextBundle(dir, target);
+    const msgs = buildAuthorPrompt(b);
+    const userText = msgs.find((m) => m.role === 'user')?.content ?? '';
+    expect(userText).toMatch(/Bloom: Apply/); // local_behavior -> Apply
+    expect(userText).toMatch(/EXEMPLARS/);
+    expect(userText).toMatch(/Q:/);
   });
 });
