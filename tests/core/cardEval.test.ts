@@ -46,19 +46,35 @@ describe('scoreCard', () => {
     expect(s.total).toBeCloseTo(1, 5);
   });
 
-  it('penalizes answer-key disagreement (0.6 total: format+fresh only)', async () => {
+  it('answer-key disagreement drives total to 0 (gates alone earn nothing)', async () => {
     const llm = scriptLlm(goodDraft, 'something else', JSON.stringify({ agree: false, reason: 'no' }));
     const s = await scoreCard(dir, target, { llm, endpoint: usable, commitSha: 'sha' });
+    expect(s.format).toBe(1);
+    expect(s.freshness).toBe(1);
     expect(s.answerKey).toBe(0);
-    expect(s.total).toBeCloseTo(0.6, 5);
+    // Under the gate model, passing format+freshness banks NOTHING; only the
+    // answer-key signal scores. Disagree => total 0, not the old 0.6.
+    expect(s.total).toBe(0);
     expect(s.notes).toContain('answer_key:disagree');
   });
 
-  it('scores 0 when the card fails to author', async () => {
+  it('an unproven (skipped) answer key scores a grounded-but-unproven 0.5', async () => {
+    // No usable endpoint => validateAnswerKey skips => neutral 0.5.
+    const noEndpoint: EndpointConfig = { ...usable, usable: false };
+    const llm = scriptLlm(goodDraft);
+    const s = await scoreCard(dir, target, { llm, endpoint: noEndpoint, commitSha: 'sha' });
+    if (s.authored) {
+      expect(s.answerKey).toBe(0.5);
+      expect(s.total).toBe(0.5);
+    }
+  });
+
+  it('scores 0 and flags disqualified when the card fails to author', async () => {
     const llm = scriptLlm('garbage', 'garbage');
     const s = await scoreCard(dir, target, { llm, endpoint: usable, commitSha: 'sha', });
     expect(s.authored).toBe(false);
     expect(s.total).toBe(0);
+    expect(s.disqualified).toBe('author');
   });
 });
 
@@ -75,6 +91,23 @@ describe('runEval', () => {
     const report = await runEval(dir, [], { endpoint: usable, commitSha: 'sha' });
     expect(report.passed).toBe(false);
     expect(report.threshold).toBe(DEFAULT_EVAL_THRESHOLD);
+  });
+
+  it('flags selfJudged=true when no independent judge is supplied', async () => {
+    const llm = scriptLlm(goodDraft, 'defines and calls foo', JSON.stringify({ agree: true, reason: 'same' }));
+    const report = await runEval(dir, [target], { llm, endpoint: usable, commitSha: 'sha' });
+    expect(report.selfJudged).toBe(true);
+  });
+
+  it('flags selfJudged=false and routes judging to an independent judgeLlm', async () => {
+    // Author model would self-agree; the independent judge DISAGREES. The judge
+    // must win, proving deps.judgeLlm is the one consulted for validation.
+    const author = scriptLlm(goodDraft, 'author self-derived', JSON.stringify({ agree: true, reason: 'self' }));
+    const judge = scriptLlm('judge-derived answer', JSON.stringify({ agree: false, reason: 'independent no' }));
+    const report = await runEval(dir, [target], { llm: author, judgeLlm: judge, endpoint: usable, commitSha: 'sha' });
+    expect(report.selfJudged).toBe(false);
+    expect(report.cards[0].answerKey).toBe(0);
+    expect(report.cards[0].total).toBe(0);
   });
 });
 
