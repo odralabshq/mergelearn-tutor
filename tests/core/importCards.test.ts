@@ -43,6 +43,8 @@ beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), 'mlt-import-'));
   await mkdir(join(dir, 'src'), { recursive: true });
   await writeFile(join(dir, 'src', 'a.ts'), 'line1\nexport function foo() {}\nfoo();\nline4\n', 'utf8');
+  // A file whose lines 1-4 are pure comment noise (low teachability signal).
+  await writeFile(join(dir, 'src', 'comments.ts'), '// header\n// more header\n/* block */\n// trailing\nexport const x = 1;\n', 'utf8');
 });
 
 describe('agent card import (S11)', () => {
@@ -91,6 +93,28 @@ describe('agent card import (S11)', () => {
     expect(results[0].attached).toBe(false);
     expect(results[0].status).toBe('needs_review');
     expect(results[0].reasons.some((r) => r.startsWith('format:'))).toBe(true);
+    expect(state.learningItems).toHaveLength(0);
+  });
+
+  it('routes a low-signal (comment-only) range to needs_review, even when it passes format', async () => {
+    // Cite lines 1-4 of comments.ts: all comments. A well-formed Q/A can still
+    // be written about it, but the range has no teachable content -> not scheduled.
+    const commentDraft: AgentCardDraft = {
+      conceptLabel: 'header comments',
+      plane: 'file_role',
+      path: 'src/comments.ts',
+      startLine: 1,
+      endLine: 4,
+      prompt: 'What does the header of this file describe?',
+      expectedAnswer: 'It is a block of descriptive comments with no executable logic.',
+      expectedFocus: ['header', 'comments'],
+      planeConfidence: 0.5,
+    };
+    const llm = fakeLlm('derived', JSON.stringify({ agree: true, reason: 'ok' }));
+    const { state, results } = await importAgentCards(dir, emptyState(), [commentDraft], 'sha1', { llm, endpoint: usable });
+    expect(results[0].attached).toBe(false);
+    expect(results[0].status).toBe('needs_review');
+    expect(results[0].reasons).toContain('teachability:low_signal');
     expect(state.learningItems).toHaveLength(0);
   });
 
