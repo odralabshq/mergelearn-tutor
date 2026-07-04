@@ -148,7 +148,14 @@ export async function authorCard(
   const maxAttempts = Math.max(1, deps.attempts ?? 2);
   let lastReason = 'author produced no valid JSON';
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const raw = await deps.llm.complete(messages);
+    let raw: string;
+    try {
+      raw = await deps.llm.complete(messages);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt + 1 < maxAttempts) { lastReason = `LLM call failed (attempt ${attempt + 1}): ${msg}`; continue; }
+      return { ok: false, reason: `LLM endpoint unreachable: ${msg}`, skipped: true };
+    }
     const draft = extractFirstJson<CardDraft>(raw);
     if (!draft || !validDraft(draft)) {
       lastReason = 'author produced no valid JSON';
