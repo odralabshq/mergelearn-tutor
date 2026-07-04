@@ -31,7 +31,8 @@
   "license": "PolyForm-Noncommercial-1.0.0",
   "description": "Local-first repo-aware code tutor that turns git history into daily learning cards",
   "dependencies": {
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "ts-fsrs": "5.4.1"
   },
   "devDependencies": {
     "@types/node": "^20.19.25",
