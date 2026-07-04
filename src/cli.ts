@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { readFile } from 'node:fs/promises';
+
 import { Command } from 'commander';
 
 import { extractConcepts } from './core/concepts.js';
@@ -7,7 +9,9 @@ import { completeDelayedProbe, delayedProbeSummary, dueDelayedProbes } from './c
 import { enrichLearningItems, renderEnrichmentComparison } from './core/enrichment.js';
 import { buildEvidenceTimeline } from './core/evidenceTimeline.js';
 import { addCorrection, recordReviewEvent } from './core/events.js';
-import { collectCommits, collectLastCommit } from './core/git.js';
+import { collectCommits, collectLastCommit, getLastCommitSha } from './core/git.js';
+import { resolveEndpoint } from './core/endpoint.js';
+import { importAgentCards, createEndpointLlm, type AgentCardDraft } from './core/importCards.js';
 import { applyLexicon, loadLexicon, promoteCorrectionsToLexicon, saveLexicon, type RepoLexicon } from './core/lexicon.js';
 import { generateCardBatch, mergeLearningState, recordAnswer } from './core/planner.js';
 import { loadPreferences, normalizePreferences, savePreferences } from './core/preferences.js';
@@ -152,6 +156,48 @@ cardsCommand.command('generate')
     await saveState(options.repo, next);
     const lastBatch = next.cardBatches.at(-1)!;
     process.stdout.write(`Generated ${lastBatch.itemIds.length} cards in ${lastBatch.id}. Archived ${lastBatch.archivedItemIds.length}.\n`);
+  });
+
+cardsCommand.command('import')
+  .description('Import agent-authored card drafts: freeze snippets from disk, verify format, answer-key gate, then stage')
+  .option('-r, --repo <path>', 'repository path', process.cwd())
+  .requiredOption('--file <path>', 'JSON file containing an array of card drafts authored by your coding agent')
+  .option('--oracle', 'run the independent answer-key oracle against the configured endpoint (default: honest skip)', false)
+  .action(async (options: { repo: string; file: string; oracle?: boolean }) => {
+    const raw = await readFile(options.file, 'utf8');
+    let drafts: AgentCardDraft[];
+    try {
+      drafts = JSON.parse(raw) as AgentCardDraft[];
+    } catch {
+      process.stderr.write(`Could not parse ${options.file} as JSON.\n`);
+      process.exitCode = 1;
+      return;
+    }
+    if (!Array.isArray(drafts) || drafts.length === 0) {
+      process.stdout.write('No drafts found in file (expected a non-empty JSON array).\n');
+      return;
+    }
+    const commitSha = await getLastCommitSha(options.repo);
+    const endpoint = resolveEndpoint();
+    const useOracle = Boolean(options.oracle) && endpoint.usable;
+    const deps = useOracle ? { llm: createEndpointLlm(endpoint), endpoint } : { endpoint };
+    const state = await loadState(options.repo);
+    const { state: next, results, batchId } = await importAgentCards(options.repo, state, drafts, commitSha, deps);
+    await saveState(options.repo, next);
+
+    const attached = results.filter((r) => r.attached).length;
+    const review = results.length - attached;
+    process.stdout.write(`Imported ${attached}/${results.length} cards into ${batchId} (${review} sent to needs_review, not scheduled).\n`);
+    if (!useOracle) {
+      process.stdout.write(options.oracle
+        ? `WARNING: oracle requested but endpoint not usable (${endpoint.reason ?? 'unknown'}). Answer keys were NOT independently checked.\n`
+        : `NOTE: answer-key oracle skipped. Cards are grounded and format-checked, but not truth-checked. Pass --oracle with a usable endpoint to enable.\n`);
+    }
+    for (const r of results) {
+      const mark = r.attached ? 'OK  ' : '--  ';
+      const why = r.reasons.length ? `; ${r.reasons.join(',')}` : '';
+      process.stdout.write(`  ${mark}[${r.status}] ${r.path} :: ${r.conceptLabel} (answerKey=${r.answerKey}${why})\n`);
+    }
   });
 
 const course = program.command('course')

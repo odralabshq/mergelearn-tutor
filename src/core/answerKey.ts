@@ -82,12 +82,21 @@ export async function validateAnswerKey(
   if (!deps.llm || !deps.endpoint.usable) {
     return { verdict: 'skipped', reason: deps.endpoint.reason ?? 'no usable LLM endpoint' };
   }
-  const derivedAnswer = await deriveAnswer(deps.llm, { prompt: input.prompt, snippet: input.snippet, path: input.path });
-  if (!derivedAnswer) {
-    return { verdict: 'skipped', reason: 'independent derivation was empty' };
+  // The oracle LLM is optional and must NEVER crash the caller: a dead endpoint
+  // (e.g. no local server running) throws on fetch. Treat any failure as an
+  // honest 'skipped' - the card is well-formed and grounded, truth just wasn't
+  // independently checked. Same contract as authorCard.
+  try {
+    const derivedAnswer = await deriveAnswer(deps.llm, { prompt: input.prompt, snippet: input.snippet, path: input.path });
+    if (!derivedAnswer) {
+      return { verdict: 'skipped', reason: 'independent derivation was empty' };
+    }
+    const judged = await judgeAgreement(deps.llm, {
+      prompt: input.prompt, snippet: input.snippet, authorAnswer: input.authorAnswer, derivedAnswer,
+    });
+    return { verdict: judged.agree ? 'agree' : 'disagree', derivedAnswer, reason: judged.reason };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { verdict: 'skipped', reason: `oracle endpoint unreachable: ${msg}` };
   }
-  const judged = await judgeAgreement(deps.llm, {
-    prompt: input.prompt, snippet: input.snippet, authorAnswer: input.authorAnswer, derivedAnswer,
-  });
-  return { verdict: judged.agree ? 'agree' : 'disagree', derivedAnswer, reason: judged.reason };
 }
