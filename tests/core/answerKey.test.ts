@@ -71,6 +71,15 @@ describe('answer-key validation (independent oracle)', () => {
     expect(r.verdict).toBe('disagree');
   });
 
+  it('skips (never throws) when the oracle endpoint is unreachable', async () => {
+    // A dead endpoint throws on fetch. The oracle must degrade to 'skipped',
+    // not crash the import run. Regression guard for the Ollama-removal case.
+    const throwing: AuthorLlm = { complete: async () => { throw new Error('fetch failed'); } };
+    const r = await validateAnswerKey(base, { llm: throwing, endpoint: usable });
+    expect(r.verdict).toBe('skipped');
+    expect(r.reason).toMatch(/unreachable/);
+  });
+
   it('deriveAnswer sends snippet + question but not an answer field', async () => {
     const { llm, seen } = recordingLlm(['derived answer']);
     const out = await deriveAnswer(llm, { prompt: base.prompt, snippet: base.snippet, path: base.path });
