@@ -75,6 +75,10 @@ signatures. They score 1.6-2.4 because there is nothing to reason about.
 - Empty prompt / answer / focus / snippet -> `format:empty_*`.
 - Answer the snippet does not support -> caught by `--oracle` (if enabled) as
   `answer_key:disagree`; without an oracle it is your responsibility.
+- A range that is mostly comments, imports, or lone braces -> `teachability:low_signal`.
+  This is a deterministic content gate (runs with or without an oracle): a cited
+  range must be at least ~1/3 substantive code lines. Cite executable logic, not
+  header comments or import blocks. This directly enforces the plane guidance above.
 
 ## Answer-key oracle (optional, recommended when available)
 

@@ -24,6 +24,7 @@ import { readRange } from './tools.js';
 import { verifyFormat, type VerifyResult } from './verify.js';
 import { validateAnswerKey, type AnswerKeyResult } from './answerKey.js';
 import { decideStaging, type StagingDecision } from './staging.js';
+import { scoreSnippetTeachability } from './teachability.js';
 import type { AuthoredCard, AuthorLlm } from './author.js';
 import type { EndpointConfig } from './endpoint.js';
 import type {
@@ -243,7 +244,15 @@ export async function importAgentCards(
       deps,
     );
     const decision: StagingDecision = decideStaging(verify, answerKey.verdict);
-    const attached = decision.status === 'active';
+
+    // Extra deterministic gate (eval blind-spot): a cited range that is mostly
+    // comments/imports/braces yields a weak card and, with no oracle, ships
+    // silently. A low-signal range can never be 'active'; route it to review.
+    const teach = scoreSnippetTeachability(card.snippet.text);
+    const status: StagingDecision['status'] =
+      !teach.teachable && decision.status === 'active' ? 'needs_review' : decision.status;
+    const reasons = teach.teachable ? decision.reasons : [...decision.reasons, 'teachability:low_signal'];
+    const attached = status === 'active';
 
     if (attached) {
       const conceptId = card.conceptId;
@@ -257,8 +266,8 @@ export async function importAgentCards(
     results.push({
       conceptLabel: draft.conceptLabel,
       path: draft.path,
-      status: decision.status,
-      reasons: decision.reasons,
+      status,
+      reasons,
       answerKey: answerKey.verdict,
       attached,
     });
