@@ -13,10 +13,8 @@
     "test": "vitest run",
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "cli": "tsx src/cli.ts",
-    "eval": "npm run build && node dist/eval/localEvaluation.js",
-    "eval:repos": "npm run build && node dist/eval/runRepos.js",
-    "smoke": "npm run build && node dist/cli.js --help >/tmp/mergelearn-tutor-help.txt",
+    "cli": "tsx src/libCli.ts",
+    "smoke": "npm run build && node dist/libCli.js --help >/tmp/mergelearn-help.txt",
     "smoke:package": "node scripts/packaged-smoke.mjs",
     "pack:dry-run": "npm run build && npm pack --dry-run",
     "prepack": "npm run build"
@@ -29,7 +27,7 @@
   ],
   "author": "",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "description": "Local-first repo-aware code tutor that turns git history into daily learning cards",
+  "description": "Local-first, model-free learning library and FSRS review shell for agent-authored card sets",
   "dependencies": {
     "commander": "^12.1.0",
     "ts-fsrs": "5.4.1"
@@ -42,7 +40,7 @@
   },
   "type": "module",
   "bin": {
-    "mergelearn-tutor": "./dist/cli.js"
+    "mergelearn": "./dist/libCli.js"
   },
   "engines": {
     "node": ">=20"

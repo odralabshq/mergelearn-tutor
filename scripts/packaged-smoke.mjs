@@ -31,11 +31,11 @@ try {
   const [entry] = JSON.parse(packed.stdout);
   const fileNames = entry.files.map((file) => file.path);
 
-  for (const required of ['dist/cli.js', 'dist/index.js', 'dist/index.d.ts', 'README.md', 'package.json']) {
+  for (const required of ['dist/libCli.js', 'dist/index.js', 'dist/index.d.ts', 'README.md', 'package.json']) {
     assert(fileNames.includes(required), `package is missing ${required}`);
   }
 
-  for (const forbidden of ['src/cli.ts', '.autoloop/state.json', 'docs/agent/CHANGELOG.md', 'docs/reserach/deep-research-report (2).md']) {
+  for (const forbidden of ['src/libCli.ts', 'dist/cli.js', '.autoloop/state.json', 'docs/agent/CHANGELOG.md', 'docs/reserach/deep-research-report (2).md']) {
     assert(!fileNames.includes(forbidden), `package should not include ${forbidden}`);
   }
 
@@ -45,7 +45,7 @@ try {
   const manifest = require(path.join(root, 'package.json'));
   assert(manifest.private === true, 'package must stay private until release approval');
   assert(manifest.license === 'PolyForm-Noncommercial-1.0.0', 'license must be PolyForm-Noncommercial-1.0.0');
-  assert(manifest.bin?.['mergelearn-tutor'] === './dist/cli.js', 'bin path must target built CLI');
+  assert(manifest.bin?.['mergelearn'] === './dist/libCli.js', 'bin path must target built CLI');
 
   const tarball = path.join(tmp, entry.filename);
   const extractDir = path.join(tmp, 'extract');
@@ -53,10 +53,10 @@ try {
   run('tar', ['-xzf', tarball, '-C', extractDir], { cwd: tmp });
   await symlink(path.join(root, 'node_modules'), path.join(extractDir, 'package', 'node_modules'), 'dir');
 
-  const help = run('node', ['package/dist/cli.js', '--help'], {
+  const help = run('node', ['package/dist/libCli.js', '--help'], {
     cwd: extractDir,
   });
-  assert(help.stdout.includes('mergelearn-tutor'), 'extracted CLI help did not run');
+  assert(help.stdout.includes('mergelearn'), 'extracted CLI help did not run');
 
   if (failures.length) {
     throw new Error(`Packaged smoke failed:\n- ${failures.join('\n- ')}`);
