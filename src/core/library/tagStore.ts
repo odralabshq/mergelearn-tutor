@@ -26,11 +26,10 @@ export async function saveTags(root: string, tags: CardTag[]): Promise<void> {
 
 /** Deterministic slug id for a new tag, derived from its label. */
 export function tagIdFromLabel(label: string): string {
-  const slug = label
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  // Linear split/filter/join (no anchored-quantifier regex — avoids ReDoS,
+  // CodeQL js/polynomial-redos). Splitting on non-alnum runs and dropping the
+  // empties yields the same slug as collapse-then-trim, without backtracking.
+  const slug = label.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join('-');
   return `tag_${slug || 'unnamed'}`;
 }
 

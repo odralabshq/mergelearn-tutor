@@ -33,9 +33,9 @@ export type ImportResult = {
 export type ImportOptions = { agentName?: string; agentModel?: string; now?: Date };
 
 function setIdFromTitle(title: string): string {
-  return (
-    title.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'set'
-  );
+  // Linear split/filter/join — no anchored-quantifier regex (ReDoS-safe,
+  // CodeQL js/polynomial-redos). Same slug as collapse-then-trim.
+  return title.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join('-') || 'set';
 }
 
 /**
