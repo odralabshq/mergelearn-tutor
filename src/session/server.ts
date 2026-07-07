@@ -153,14 +153,16 @@ function render(){
   var mount=document.getElementById('mount');
   if(pos>=queue.length){mount.innerHTML=queue.length?'<div class="done-note">Session complete — '+reviewed+' reviewed. Nothing more due.</div>':'<div class="empty">Nothing due right now. Come back later, or author more cards.</div>';return;}
   var c=queue[pos];
+  var fmt=function(s){return esc(s).replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>');};
   var srcs=(c.sources||[]).map(function(s){return '<div class="src"><div class="meta">'+esc(s.path)+':'+s.startLine+'-'+s.endLine+' @ '+esc(s.commit)+' ('+esc(s.status)+')</div><pre>'+esc(s.text)+'</pre></div>';}).join('');
-  var ctx=c.context?'<p class="ctx">'+esc(c.context)+'</p>':'';
-  var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+esc(m)+'</li>';}).join('')+'</ul>':'';
+  var examples=(c.examples||[]).map(function(x){var head=(x.label||'')+(x.language?' ('+x.language+')':'');var code=x.code?'<pre><code>'+esc(x.code)+'</code></pre>':'';var note=x.note?'<div class="ex-note">'+fmt(x.note)+'</div>':'';return '<div class="ex">'+(head?'<div class="ex-label">'+esc(head)+'</div>':'')+code+note+'</div>';}).join('');
+  var ctx=c.context?'<p class="ctx">'+fmt(c.context)+'</p>':'';
+  var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
-    '<p class="prompt">'+esc(c.prompt)+'</p>'+ctx+
+    '<p class="prompt">'+fmt(c.prompt)+'</p>'+ctx+
     '<div class="actions"><button class="primary" id="reveal">Reveal answer <kbd>space</kbd></button></div>'+
-    '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+esc(c.shortAnswer)+'</p>'+
-    '<p class="label">Explanation</p><div class="expl">'+esc(c.explanation)+'</div>'+mistakes+srcs+
+    '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
+    '<p class="label">Explanation</p><div class="expl">'+fmt(c.explanation)+'</div>'+examples+mistakes+srcs+
     '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
   document.getElementById('reveal').addEventListener('click',reveal);
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
@@ -290,6 +292,12 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .src{margin-top:14px;background:var(--overlay);border-radius:var(--radius-sm);padding:10px 12px}
 .src .meta{color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:6px}
 .src pre{margin:0;white-space:pre-wrap;overflow-x:auto}
+.short code,.expl code,.ctx code,.prompt code,.reveal li code{font-family:var(--mono);font-size:0.9em;background:var(--overlay);padding:1px 5px;border-radius:4px}
+.ex{margin-top:12px}
+.ex-label{color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:4px}
+.ex pre{margin:0;background:var(--overlay);border-radius:var(--radius-sm);padding:10px 12px;overflow-x:auto}
+.ex pre code{font-family:var(--mono);font-size:13px;white-space:pre-wrap;background:none;padding:0}
+.ex-note{color:var(--muted);font-size:13px;margin-top:6px}
 .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
 button{font:inherit;cursor:pointer;padding:9px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--overlay);color:var(--text);font-weight:500}
 button:hover{background:var(--hover)}
