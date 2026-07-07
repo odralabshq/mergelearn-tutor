@@ -42,7 +42,8 @@
   },
   "type": "module",
   "bin": {
-    "mergelearn-tutor": "./dist/cli.js"
+    "mergelearn-tutor": "./dist/cli.js",
+    "mergelearn": "./dist/libCli.js"
   },
   "engines": {
     "node": ">=20"

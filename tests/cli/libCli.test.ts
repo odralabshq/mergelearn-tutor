@@ -1,0 +1,87 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, expect, it } from 'vitest';
+
+import { buildProgram } from '../../src/libCli.js';
+import type { AgentSetPatch } from '../../src/core/library/types.js';
+
+/** Run the CLI with argv, capturing everything written to console.log. */
+async function run(root: string, ...args: string[]): Promise<string> {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (...a: unknown[]) => { lines.push(a.map(String).join(' ')); };
+  try {
+    await buildProgram().parseAsync(['node', 'libCli.js', '--home', root, ...args]);
+  } finally {
+    console.log = orig;
+  }
+  return lines.join('\n');
+}
+
+const patch: AgentSetPatch = {
+  version: 1,
+  set: { title: 'CLI Deck', folderPath: 'cli/deck', tagIds: [] },
+  tagPatch: { reuse: [], add: [{ localId: 'topic', label: 'cli-topic', kind: 'topic' }] },
+  order: ['c1'],
+  cards: [{
+    localId: 'c1', tagRefs: ['topic'],
+    front: { prompt: 'What does the CLI import do?' },
+    back: { shortAnswer: 'Applies an AgentSetPatch.', explanationMarkdown: 'It validates then writes the set.' },
+  }],
+};
+
+describe('library CLI (functional, end-to-end)', () => {
+  it('drives context -> import -> sets -> due -> show -> grade against a real library', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
+
+    // context: empty library -> empty sets/tags, but valid JSON with the goal
+    const ctxOut = await run(root, 'context', '--goal', 'author a CLI deck');
+    const ctx = JSON.parse(ctxOut);
+    expect(ctx.goal).toBe('author a CLI deck');
+    expect(ctx.existingSets).toEqual([]);
+    expect(ctx.existingTags).toEqual([]);
+
+    // import: write the patch, apply it
+    const patchFile = join(root, 'patch.json');
+    await writeFile(patchFile, JSON.stringify(patch), 'utf8');
+    const importOut = await run(root, 'import', '--file', patchFile, '--agent', 'tester');
+    expect(importOut).toContain('imported set "cli-deck": 1 active');
+    expect(importOut).toContain('+1 tags');
+
+    // sets: the new set shows up with its card count
+    const setsOut = await run(root, 'sets');
+    expect(setsOut).toContain('cli-deck');
+    expect(setsOut).toContain('[1 cards]');
+
+    // due: the fresh card is due
+    const dueOut = await run(root, 'due');
+    expect(dueOut).toContain('1 card(s) due');
+    const cardId = dueOut.split('cli-deck/')[1].split(/\s/)[0];
+
+    // show: front + back render (learn by reading)
+    const showOut = await run(root, 'show', '--set', 'cli-deck', '--card', cardId);
+    expect(showOut).toContain('Q: What does the CLI import do?');
+    expect(showOut).toContain('A: Applies an AgentSetPatch.');
+    expect(showOut).toContain('It validates then writes the set.');
+
+    // grade: Good pushes the card out of the due queue
+    const gradeOut = await run(root, 'grade', '--card', cardId, '--rating', '3');
+    expect(gradeOut).toContain(`graded ${cardId} (3)`);
+    const dueAfter = await run(root, 'due');
+    expect(dueAfter).toContain('0 card(s) due');
+  });
+
+  it('rejects a bad patch at the CLI boundary and writes nothing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
+    const bad: AgentSetPatch = { ...patch, order: [] }; // order misses the card
+    const badFile = join(root, 'bad.json');
+    await writeFile(badFile, JSON.stringify(bad), 'utf8');
+    const out = await run(root, 'import', '--file', badFile);
+    expect(out).toContain('import REJECTED');
+    expect(out).toContain('order_missing');
+    const setsOut = await run(root, 'sets');
+    expect(setsOut).toContain('no sets yet');
+  });
+});
