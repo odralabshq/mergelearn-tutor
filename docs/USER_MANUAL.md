@@ -97,9 +97,32 @@ explanation, then `grade` honestly. Only active cards are ever due;
 | `due [--set] [--tag] [--folder]` | list cards due now |
 | `show --set <id> --card <id>` | print a card front + back |
 | `grade --card <id> --rating <1-4>` | grade one due card |
+| `serve [--port <n>]` | open the local review GUI (Home + Practice) |
 
 Global: `--home <path>` overrides the library root (default `~/.mergelearn/`,
 or `$MERGELEARN_HOME`).
+
+## Review GUI
+
+If you prefer a browser to the terminal, `mergelearn serve` starts a local,
+offline web UI on `127.0.0.1` (no network calls, no bundled model):
+
+```bash
+mergelearn serve            # random free port
+mergelearn serve --port 4300
+```
+
+Two tabs, matching the CLI:
+
+- **Home** — your sets, a due-today count, and a Start-practice button.
+- **Practice** — one card at a time: read the prompt, reveal the answer
+  (space/Enter), then grade with `1`-`4` (Again/Hard/Good/Easy). Each grade
+  advances the card's FSRS state and drops it from the queue, same as
+  `grade` on the CLI. Graded cards write the same session files.
+
+The GUI is read-through to the same library on disk, so you can mix CLI and
+browser freely. Authoring is still import-only — the GUI reviews cards, it
+does not create them.
 
 ## What MergeLearn does not do
 

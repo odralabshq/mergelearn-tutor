@@ -85,7 +85,17 @@ mergelearn sets
 mergelearn due     [--set <id>] [--tag <id>] [--folder <path>]
 mergelearn show    --set <id> --card <id>
 mergelearn grade   --card <id> --rating <1-4>
+mergelearn serve   [--port <n>]
 ```
+
+## Review GUI
+
+Prefer a browser? `mergelearn serve` starts a local, offline web UI on
+`127.0.0.1` — no network calls, no bundled model. Two tabs: **Home** (your
+sets + what's due) and **Practice** (one card at a time; reveal with
+space/Enter, grade with `1`-`4`). It reads the same on-disk library as the
+CLI, so you can mix the two. Authoring stays import-only — the GUI reviews
+cards, it does not create them.
 
 ## Storage layout
 

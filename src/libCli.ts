@@ -27,6 +27,7 @@ import { listSetSummaries } from './core/library/setStore.js';
 import { loadCard } from './core/library/cardStore.js';
 import { getDueCards } from './core/library/review/dueQueue.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
+import { startReviewServer } from './session/server.js';
 import type { AgentSetPatch, ReviewRating } from './core/library/types.js';
 
 function rootFrom(opts: { home?: string }): string {
@@ -143,6 +144,18 @@ export function buildProgram(): Command {
       const updated = await gradeCard(root, session, card, rating);
       await endSession(root, session);
       out(`graded ${card.id} (${rating}); next due ${updated.fsrs.due}`);
+    });
+
+  program
+    .command('serve')
+    .description('open the local review GUI (Home + Practice) in your browser')
+    .option('--port <n>', 'port (default: random free port)', (v) => Number(v))
+    .action(async (opts: { port?: number }) => {
+      const root = rootFrom(homeOpt());
+      const { url } = await startReviewServer(root, opts.port ?? 0);
+      out(`MergeLearn review GUI running at ${url}`);
+      out('Open it in your browser. Press Ctrl+C to stop.');
+      // The listening socket keeps the process alive; nothing else to do.
     });
 
   return program;

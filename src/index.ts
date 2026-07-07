@@ -24,3 +24,6 @@ export * from './core/library/importAgentSet.js';
 export * from './core/library/fsrs.js';
 export * from './core/library/review/dueQueue.js';
 export * from './core/library/review/session.js';
+
+// Local review GUI
+export { startReviewServer, type ReviewServer } from './session/server.js';
