@@ -1,236 +1,140 @@
-# MergeLearn Tutor
+# MergeLearn
 
-MergeLearn Tutor is a local-first code learning tool for developers who use AI heavily but still want to understand the code they ship. It reads git history, extracts repo-specific concepts, and turns real diffs, files, docs, and commits into short active-recall cards.
+MergeLearn is a local-first, model-free learning library and spaced-repetition
+review shell. Your own coding agent authors the learning material; MergeLearn
+stores it, freezes any cited code, schedules reviews with FSRS, and gives you a
+simple loop to learn by reading and answering cards.
 
-It is not a SaaS dashboard, PR blocker, or remote AI code reviewer. It is a personal knowledge-debt tool that runs locally, keeps state in your repository, and makes the evidence behind every question inspectable.
+It ships no model and makes no network calls. All authoring intelligence lives
+in whatever coding agent you already use; MergeLearn is the deterministic
+library and review engine underneath it.
 
-![Workbench](docs/assets/screenshots/workbench.png)
+> **v2 redesign (2026-07).** This replaces the earlier repo-analysis tutor
+> (git ingestion, concept extraction, bundled card generation, browser UI).
+> The north-star design lives in `docs/design/redesign-2026-07/`.
 
-## What it does
+## Model
 
-- Ingests git history and changed files from a local repository.
-- Detects concepts using deterministic rules, repo lexicons, and TypeScript AST analysis.
-- Creates snippet-first learning cards tied to real files, commits, and docs.
-- Supports active recall: answer first, reveal explanation, then self-grade.
-- Preserves card history when you regenerate a queue.
-- Lets you create courses with goals, material paths, doc paths, and preferred question types.
-- Drafts fake/local LLM-style questions without network access, then lets you accept or reject them.
-- Shows a unified Map surface with local graph, provenance, and skill map modes.
-- Stores all local state in `.skilltrace/` so you can inspect or delete it at any time.
+- **CardSet** — the user-facing atom. A titled deck of cards in a folder.
+- **Card** — a self-contained front (`prompt`) and back (`shortAnswer` +
+  `explanationMarkdown`), so you learn by reading, not by opening the repo.
+- **Tags** — one taxonomy that *is* the learning graph (tags carry
+  `parentIds`/`relatedIds`). Cards belong to one set; tags cross-cut.
+- **SourceRef** — optional. When a card cites repo code, MergeLearn freezes the
+  exact lines from disk at a pinned commit — the agent never grades itself.
+- **FSRS** — per-card scheduling. Review history is grouped into session files.
 
-## Privacy stance
+## The authoring handshake
 
-MergeLearn Tutor is local-first by default.
+Card creation is import-only, in two steps:
 
-- No telemetry.
-- No target repo code execution.
-- No required LLM calls.
-- No remote question drafting.
-- Optional fake/local enrichment sends no network requests.
-- Remote providers are intentionally rejected until a human explicitly approves privacy behavior.
+1. `mergelearn context` emits an **AuthoringContext** (existing sets, the full
+   tag taxonomy, folders) for your agent to author against — so it reuses tags
+   instead of inventing synonyms.
+2. Your agent returns an **AgentSetPatch** JSON; `mergelearn import` validates
+   it (structure gate + tag-graph guard), freezes cited code, and writes it.
 
-Before any future enrichment, inspect what would leave your machine:
-
-```bash
-mergelearn-tutor privacy preview --repo . --provider fake --include-snippets
-```
+Both gates must pass or nothing is written.
 
 ## Requirements
 
 - Node.js 20 or newer.
-- npm.
-- Git available on `PATH`.
+- Git on `PATH` (only needed for cards that cite repo code).
 
-## Install for local development
+## Install (local development)
 
 ```bash
 npm install
 npm run build
+npm link            # optional: puts `mergelearn` on your PATH
 ```
 
-Optional local command:
+Or run the built CLI directly:
 
 ```bash
-npm link
-mergelearn-tutor --help
-```
-
-You can also run the built CLI directly:
-
-```bash
-node dist/cli.js --help
+node dist/libCli.js --help
 ```
 
 ## Quick start
 
-Run these commands from the MergeLearn Tutor repository, pointing `--repo` at the codebase you want to learn from:
-
 ```bash
-npm run build
-node dist/cli.js init --repo /path/to/your/repo
-node dist/cli.js ingest --repo /path/to/your/repo --since 30d
-node dist/cli.js cards generate --repo /path/to/your/repo --count 5 --mode more
-node dist/cli.js session --repo /path/to/your/repo
+# 1. Ask your agent to author against the current library state.
+#    (repo is optional; omit --repo for purely conceptual sets.)
+mergelearn context --goal "TypeScript union types" --repo /path/to/repo > context.json
+
+# 2. Hand context.json to your coding agent; it returns an AgentSetPatch JSON.
+
+# 3. Import the patch (validates, freezes cited code, writes the set).
+mergelearn import --file patch.json --agent my-coding-agent
+
+# 4. Review.
+mergelearn due                                  # what's due now
+mergelearn show --set ts-union-types --card <id>  # learn by reading
+mergelearn grade --card <id> --rating 3         # 1 Again, 2 Hard, 3 Good, 4 Easy
 ```
 
-The session command prints a local URL. Open it in your browser to start focused practice, inspect the map, audit quality, and manage your learning plan.
+The library lives at `~/.mergelearn/` (override with `MERGELEARN_HOME` or
+`--home`).
 
-## Browser surfaces
-
-The browser session is organized into five primary surfaces. Each primary surface has secondary pages for legacy and advanced workflows.
-
-### Workbench
-
-Command center: interactive map of local learning nodes with semantic filters (due, weak, study, evidence) and a detail drawer.
-
-![Workbench](docs/assets/screenshots/workbench.png)
-
-### Practice
-
-Focused one-card retrieval-practice loop. One card at a time: answer from memory, rate confidence, reveal, self-grade. Keyboard shortcuts: 1-5 confidence, Enter reveal, Y knew it, N missed it.
-
-![Practice](docs/assets/screenshots/practice.png)
-
-### Map
-
-Unified surface with three modes for inspecting relationships, provenance, and mastery:
-
-| Local graph | Provenance lane | Skill map |
-|---|---|---|
-| ![Local graph](docs/assets/screenshots/map-local-graph.png) | ![Provenance](docs/assets/screenshots/map-provenance.png) | ![Skill map](docs/assets/screenshots/map-skill-map.png) |
-
-Legacy graph, timeline, and progress pages are available as secondary navigation links.
-
-**Learning path** (Map subnav): prerequisite DAG over concepts with recommended study order and mastery-colored nodes. Open `/learning-path` or `/path`.
-
-![Learning path](docs/assets/screenshots/learning-path.png)
-
-### Audit
-
-Consolidated quality view combining card history and question bank. All badges are deterministic and computed from local state.
-
-![Audit](docs/assets/screenshots/audit.png)
-
-### Setup
-
-Guided learning plan wizard with inline course creation. The Plan Builder walks you from empty repo to first focused practice in one page.
-
-![Plan Builder](docs/assets/screenshots/plan.png)
-
-## Legacy pages
-
-All original pages remain accessible from secondary navigation:
-
-| Review | Courses |
-|---|---|
-| ![Review](docs/assets/screenshots/review.png) | ![Courses](docs/assets/screenshots/courses.png) |
-
-| Questions | Timeline |
-|---|---|
-| ![Questions](docs/assets/screenshots/questions.png) | ![Timeline](docs/assets/screenshots/timeline.png) |
-
-| Graph | History |
-|---|---|
-| ![Graph](docs/assets/screenshots/graph.png) | ![History](docs/assets/screenshots/history.png) |
-
-| Progress | Preferences |
-|---|---|
-| ![Progress](docs/assets/screenshots/progress.png) | ![Preferences](docs/assets/screenshots/preferences.png) |
-
-Read the full page-by-page guide in `docs/USER_MANUAL.md`.
-
-## Example: create a course and question bank
+## CLI commands
 
 ```bash
-mergelearn-tutor course create \
-  --repo . \
-  --id learn-auth \
-  --title "Learn auth" \
-  --goal "Understand auth from source, tests, and docs" \
-  --materials "src/**,tests/**" \
-  --docs "docs/**"
-
-mergelearn-tutor questions draft --repo . --course learn-auth --provider fake --count 5
-mergelearn-tutor questions list --repo . --course learn-auth
-mergelearn-tutor questions accept --repo . --id <question-id>
-mergelearn-tutor cards generate --repo . --course learn-auth --count 5
+mergelearn context --goal "..." [--repo <path>] [--target-set <id>]
+mergelearn import  --file <patch.json> [--agent <name>]
+mergelearn sets
+mergelearn due     [--set <id>] [--tag <id>] [--folder <path>]
+mergelearn show    --set <id> --card <id>
+mergelearn grade   --card <id> --rating <1-4>
 ```
 
-Accepted questions can drive future course cards. Drafting with `--provider fake` is deterministic and does not call a remote model.
+## Storage layout
 
-## Core CLI commands
-
-```bash
-mergelearn-tutor init --repo .
-mergelearn-tutor ingest --repo . --since 30d --limit 80
-mergelearn-tutor today --repo .
-mergelearn-tutor review --repo . --count 5
-mergelearn-tutor cards generate --repo . --count 5 --mode more
-mergelearn-tutor cards generate --repo . --count 5 --mode regenerate
-mergelearn-tutor answer --repo . --item <id> --answer "..." --correct
-mergelearn-tutor feedback --repo . --item <id> --event revealed --confidence 4
-mergelearn-tutor delayed list --repo .
-mergelearn-tutor delayed complete --repo . --probe <probe-id> --answer "..." --correct
-mergelearn-tutor study assign --repo . --seed local-pilot --count 6
-mergelearn-tutor study list --repo .
-mergelearn-tutor study passive-complete --repo . --assignment <assignment-id> --duration-ms 120000
-mergelearn-tutor feedback --repo . --item <id> --event marked_bad_card --note "wrong evidence"
-mergelearn-tutor correct --repo . --concept <concept-id> --type better_label --label "session authorization"
-mergelearn-tutor course create --repo . --id <id> --title "..." --goal "..." --materials "src/**" --docs "docs/**"
-mergelearn-tutor questions draft --repo . --course <id> --provider fake --count 5
-mergelearn-tutor questions accept --repo . --id <question-id>
-mergelearn-tutor timeline --repo .
-mergelearn-tutor progress --repo .
-mergelearn-tutor dashboard --repo .
-mergelearn-tutor session --repo .
 ```
+~/.mergelearn/
+  library/
+    tags.json                     the taxonomy = the learning graph
+    folders.json
+    sets/<setId>/
+      set.json
+      order.json                  agent-authored teaching order
+      imports.json                provenance of each applied patch
+      cards/<cardId>.json         one file per card
+  repos/registry.json             stable repoId -> path (optional)
+  profile/sessions/<date>/        one file per review sitting
+```
+
+## Privacy
+
+MergeLearn is local-first and model-free by design.
+
+- No telemetry, no required network calls, no bundled model.
+- Your coding agent does the authoring; MergeLearn never sends code anywhere.
+- Cited code is read from your local disk and frozen at a pinned commit.
 
 ## Verification
 
-Run the standard local checks before pushing:
-
 ```bash
-npm run check
-npm test
-npm run build
-npm run eval
-npm run smoke
-npm run smoke:package
-```
-
-For a full fixture evaluation:
-
-```bash
-npm run eval:repos -- --fixtures --with-enrichment fake --out /tmp/mergelearn-tutor-fixtures
+npm run check          # tsc --noEmit
+npm test               # vitest
+npm run build          # emit dist/
+npm run smoke          # build + CLI --help
+npm run smoke:package  # pack the tarball and run the packaged binary
 ```
 
 ## Documentation
 
-- `docs/USER_MANUAL.md` — page-by-page browser and CLI manual.
-- `docs/REVIEW_SESSION.md` — local browser session and API details.
-- `docs/CUSTOMIZATION.md` — preferences, API surface, and question settings.
-- `docs/PRIVACY.md` — local-first privacy model and outbound preview.
-- `docs/LEXICON.md` — repo-specific concept packs, aliases, and ignores.
-- `docs/ANALYZERS.md` — deterministic extraction and TypeScript AST analyzer.
-- `docs/CARD_QUALITY.md` — card quality rules and dogfood notes.
-- `docs/EVALUATION.md` — evaluation harness and quality rubric.
-- `docs/ROADMAP.md` — current roadmap.
+- `docs/design/redesign-2026-07/` — the v2 north-star design (object model,
+  storage, pipeline, UI, deletion inventory).
+- `docs/PRIVACY.md` — local-first privacy model.
 
 ## Release status
 
-This repository is ready for a local GitHub push after verification, but it is not ready for public npm publishing yet.
-
-Current release blockers:
-
-- The package is still `private: true`.
-- Product name and distribution channel still need explicit human approval before public npm publishing.
-
-See `docs/GITHUB_PUSH_READY.md` for the final push checklist.
+The package is still `private: true`. Product name and distribution channel
+need explicit human approval before any public publish.
 
 ## License
 
-MergeLearn Tutor is licensed under the PolyForm Noncommercial License 1.0.0. See [LICENSE](./LICENSE).
-
-Noncommercial use is allowed under the public license. Commercial use requires separate permission from the copyright holder, Odra Labs. Odra Labs may also grant separate commercial, internal, or company-specific licenses outside the public license.
-
-This is a source-available license, not an OSI-approved open-source license.
+Licensed under the PolyForm Noncommercial License 1.0.0. See [LICENSE](./LICENSE).
+Noncommercial use is allowed under the public license; commercial use requires
+separate permission from the copyright holder, Odra Labs. This is a
+source-available license, not an OSI-approved open-source license.
