@@ -7,9 +7,18 @@
  * ReviewRating (1-4) instead of a graded verdict — the learner self-grades.
  */
 
-import { createEmptyCard, type Card as FsrsCard } from 'ts-fsrs';
-import { dailyFsrs } from '../scheduler.js';
+import { fsrs, generatorParameters, createEmptyCard, type Card as FsrsCard, type FSRS } from 'ts-fsrs';
 import type { FsrsState, ReviewRating } from './types.js';
+
+/**
+ * Daily-cadence FSRS instance. Inlined (was scheduler.ts:dailyFsrs) so the
+ * library subsystem has no dependency on legacy core. Learning/relearning steps
+ * are DAILY, not the library's minute-scale defaults, because this is a
+ * once-a-day review tool; fuzz off for deterministic scheduling in tests.
+ */
+export function dailyFsrs(): FSRS {
+  return fsrs(generatorParameters({ learning_steps: ['1d'], relearning_steps: ['1d'], enable_fuzz: false }));
+}
 
 function toState(c: FsrsCard): FsrsState {
   return {

@@ -10,8 +10,7 @@
  * card stays reviewable on whatever text it has.
  */
 
-import { readRange } from '../tools.js';
-import { getLastCommitSha } from '../git.js';
+import { readRange, getLastCommitSha } from './repoRead.js';
 import { resolveRepoPath } from './repoRegistry.js';
 import type { SourceRef } from './types.js';
 
