@@ -12,15 +12,32 @@ import { loadCardsForSet } from '../cardStore.js';
 
 export type DueFilter = NonNullable<ReviewSession['filter']>;
 
+/**
+ * Faceted match. Within one dimension (several tags, several folders), values
+ * are always OR'd. Across dimensions (folders vs tags vs sets), the combinator
+ * decides: 'union' (default) = a card matches if it satisfies ANY populated
+ * dimension; 'intersection' = it must satisfy ALL of them. An absent or empty
+ * array is "no constraint" and does not participate.
+ */
 function matchesFilter(card: Card, setFolderPath: string | undefined, filter?: DueFilter): boolean {
   if (!filter) return true;
-  if (filter.setIds && !filter.setIds.includes(card.setId)) return false;
-  if (filter.tagIds && !filter.tagIds.some((t) => card.tagIds.includes(t))) return false;
-  if (filter.folderPaths) {
-    const path = card.folderPath ?? setFolderPath;
-    if (!path || !filter.folderPaths.some((f) => path === f || path.startsWith(`${f}/`))) return false;
+  const results: boolean[] = [];
+
+  if (filter.setIds && filter.setIds.length) {
+    results.push(filter.setIds.includes(card.setId));
   }
-  return true;
+  if (filter.tagIds && filter.tagIds.length) {
+    results.push(filter.tagIds.some((t) => card.tagIds.includes(t)));
+  }
+  if (filter.folderPaths && filter.folderPaths.length) {
+    const path = card.folderPath ?? setFolderPath;
+    results.push(!!path && filter.folderPaths.some((f) => path === f || path.startsWith(`${f}/`)));
+  }
+
+  if (results.length === 0) return true; // nothing selected → everything matches
+  return (filter.combinator ?? 'union') === 'intersection'
+    ? results.every(Boolean)
+    : results.some(Boolean);
 }
 
 /** All active cards due at or before `now`, matching the optional filter. */

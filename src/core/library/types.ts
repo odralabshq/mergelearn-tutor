@@ -158,7 +158,15 @@ export type ReviewSession = {
   startedAt: string;
   endedAt?: string;
   mode: 'recommended' | 'set' | 'folder' | 'tag_filter';
-  filter?: { setIds?: string[]; folderPaths?: string[]; tagIds?: string[] };
+  filter?: {
+    setIds?: string[];
+    folderPaths?: string[];
+    tagIds?: string[];
+    // How to combine populated dimensions (folders vs tags vs sets). Within a
+    // single dimension, values are always OR'd. Default 'union' = a card
+    // matches if it satisfies ANY dimension; 'intersection' = must satisfy all.
+    combinator?: 'union' | 'intersection';
+  };
   events: ReviewEvent[];
   summary: {
     reviewedCount: number;

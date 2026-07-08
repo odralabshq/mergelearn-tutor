@@ -67,29 +67,47 @@ describe('review GUI server (functional)', () => {
     expect(j.cards[0].explanation).toContain('either A or B');
   });
 
-  it('/api/grade advances FSRS and drops the card from the due queue', async () => {
+  it('/api/session lifecycle advances FSRS and drops the card from the due queue', async () => {
     running = await startReviewServer(await seed());
     const due = await (await fetch(`${running.url}/api/due`)).json();
     const card = due.cards[0];
 
-    const graded = await (await fetch(`${running.url}/api/grade`, {
+    // Start a session, grade through it, then end it.
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    expect(start.ok).toBe(true);
+
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cardId: card.id, setId: card.setId, rating: 3 }),
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3 }),
     })).json();
     expect(graded.ok).toBe(true);
     expect(new Date(graded.due).getTime()).toBeGreaterThan(Date.now());
 
     const after = await (await fetch(`${running.url}/api/due`)).json();
     expect(after.total).toBe(0);
+
+    // The session file should now contain the graded event + summary.
+    const ended = await (await fetch(`${running.url}/api/session/end`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    })).json();
+    expect(ended.ok).toBe(true);
+    expect(ended.summary.reviewedCount).toBe(1);
+    expect(ended.summary.good).toBe(1);
   });
 
   it('rejects a bad grade payload', async () => {
     running = await startReviewServer(await seed());
-    const r = await fetch(`${running.url}/api/grade`, {
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    const r = await fetch(`${running.url}/api/session/grade`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cardId: 'x', setId: 'y', rating: 9 }),
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: 'x', setId: 'y', rating: 9 }),
     });
     expect(r.status).toBe(400);
     const j = await r.json();
@@ -100,10 +118,13 @@ describe('review GUI server (functional)', () => {
     running = await startReviewServer(await seed());
     const due = await (await fetch(`${running.url}/api/due`)).json();
     const card = due.cards[0];
-    const graded = await (await fetch(`${running.url}/api/grade`, {
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cardId: card.id, setId: card.setId, rating: 3, confidence: 4 }),
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3, confidence: 4 }),
     })).json();
     expect(graded.ok).toBe(true); // confidence is optional; a valid grade still succeeds
   });
@@ -114,10 +135,13 @@ describe('review GUI server (functional)', () => {
     const card = due.cards[0];
 
     // Grade it so it leaves the due queue.
-    await fetch(`${running.url}/api/grade`, {
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    await fetch(`${running.url}/api/session/grade`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ cardId: card.id, setId: card.setId, rating: 3 }),
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3 }),
     });
     expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(0);
 
