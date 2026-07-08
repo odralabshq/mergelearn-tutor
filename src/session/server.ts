@@ -58,7 +58,8 @@ async function dueData(root: string, url: URL): Promise<unknown> {
   return { total: due.length, cards: due.map(cardView) };
 }
 
-/** Trim a card to what the Practice UI renders (front, back, frozen code). */
+/** Trim a card to what the Practice UI renders, with server-pre-rendered HTML
+ * for code (diff-snippet widget) and explanations (markdown → HTML). */
 function cardView(card: Card) {
   return {
     id: card.id,
@@ -67,11 +68,13 @@ function cardView(card: Card) {
     context: card.front.contextMarkdown ?? null,
     shortAnswer: card.back.shortAnswer,
     explanation: card.back.explanationMarkdown,
+    explanationHtml: renderMarkdownHtml(card.back.explanationMarkdown),
     examples: card.back.examples ?? [],
     commonMistakes: card.back.commonMistakes ?? [],
     sources: (card.sourceRefs ?? []).map((r) => ({
       path: r.path, startLine: r.startLine, endLine: r.endLine,
       commit: r.commit.slice(0, 8), status: r.status, text: r.frozenText ?? '',
+      snippetHtml: r.frozenText ? renderDiffSnippetHtml(r.frozenText) : '',
     })),
   };
 }
@@ -163,7 +166,7 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
       ? `<span class="badge due">due now</span>`
       : `<span class="badge next">next ${dueDate.getTime() > now ? dueDate.toLocaleDateString() : 'soon'}</span>`;
     const srcs = v.sources.map((s) =>
-      `<div class="src"><div class="meta">${escapeHtml(s.path)}:${s.startLine}-${s.endLine} @ ${escapeHtml(s.commit)} (${escapeHtml(s.status ?? 'unknown')})</div><pre>${escapeHtml(s.text)}</pre></div>`,
+      `<div class="src"><div class="meta">${escapeHtml(s.path)}:${s.startLine}-${s.endLine} @ ${escapeHtml(s.commit)} (${escapeHtml(s.status ?? 'unknown')})</div>${s.snippetHtml || `<pre>${escapeHtml(s.text)}</pre>`}</div>`,
     ).join('');
     const examples = v.examples.map((x) => {
       const head = `${x.label ?? ''}${x.language ? ` (${x.language})` : ''}`;
@@ -178,7 +181,7 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
     return `<details class="browse-card"><summary><span class="q">${inlineCode(v.prompt)}</span>${state}</summary>` +
       `<div class="browse-body">${ctx}${srcs}` +
       `<p class="label">Answer</p><p class="short">${inlineCode(v.shortAnswer)}</p>` +
-      `<p class="label">Explanation</p><div class="expl">${inlineCode(v.explanation)}</div>${examples}${mistakes}</div></details>`;
+      `<p class="label">Explanation</p><div class="expl markdown-body">${v.explanationHtml || inlineCode(v.explanation)}</div>${examples}${mistakes}</div></details>`;
   }).join('');
 
   const path = set.folderPath ? `<span class="path">${escapeHtml(set.folderPath)}</span>` : '';
@@ -191,6 +194,90 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
 /** Server-side inline-code formatter (mirrors the client `fmt`): `code` → <code>. */
 function inlineCode(value: string): string {
   return escapeHtml(value).replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+// ---- Code display: diff-snippet (ported from the old platform's diffView.ts) ----
+
+type DiffLine = { kind: 'add' | 'delete' | 'context' | 'meta'; marker: string; text: string };
+
+function parseDiffSnippet(code: string): DiffLine[] {
+  return code.split('\n').map((line) => {
+    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) return { kind: 'meta', marker: line.slice(0, 2), text: line };
+    if (line.startsWith('+')) return { kind: 'add', marker: '+', text: line.slice(1) };
+    if (line.startsWith('-')) return { kind: 'delete', marker: '-', text: line.slice(1) };
+    return { kind: 'context', marker: ' ', text: line.startsWith(' ') ? line.slice(1) : line };
+  });
+}
+
+function renderDiffSnippetHtml(code: string): string {
+  const lines = parseDiffSnippet(code);
+  return `<div class="diff-snippet" role="region" aria-label="Code snippet">${lines.map((line, i) => `<div class="diff-line ${line.kind}"><span class="line-no">${i + 1}</span><span class="marker">${escapeHtml(line.marker)}</span><code>${escapeHtml(line.text || ' ')}</code></div>`).join('')}</div>`;
+}
+
+// ---- Markdown rendering (ported from the old platform's markdownHtml.ts) ----
+
+function inlineMarkdown(text: string): string {
+  let html = escapeHtml(text);
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, href) => {
+    const safeHref = escapeHtml(String(href).trim());
+    if (!/^https?:\/\//i.test(safeHref) && !/^mailto:/i.test(safeHref)) return escapeHtml(String(label));
+    return `<a href="${safeHref}" rel="noopener noreferrer">${escapeHtml(String(label))}</a>`;
+  });
+  return html;
+}
+
+function renderMarkdownHtml(markdown: string): string {
+  const normalized = markdown.replace(/\r\n/g, '\n').trim();
+  if (!normalized) return '';
+  const blocks: string[] = [];
+  const lines = normalized.split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    // Code fence
+    if (line.startsWith('```')) {
+      const lang = line.slice(3).trim();
+      i++; const codeLines: string[] = [];
+      while (i < lines.length && !(lines[i] ?? '').startsWith('```')) { codeLines.push(lines[i] ?? ''); i++; }
+      if (i < lines.length) i++;
+      blocks.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+      continue;
+    }
+    // Heading
+    const headingMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = Math.min(headingMatch[1]!.length, 6);
+      blocks.push(`<h${level}>${inlineMarkdown(headingMatch[2] ?? '')}</h${level}>`);
+      i++; continue;
+    }
+    // Unordered list
+    if (/^[-*]\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i] ?? '')) { items.push(lines[i] ?? ''); i++; }
+      blocks.push(`<ul>${items.map((l) => `<li>${inlineMarkdown(l.replace(/^[-*]\s+/, ''))}</li>`).join('')}</ul>`);
+      continue;
+    }
+    // Ordered list
+    if (/^\d+\.\s+/.test(line)) {
+      const items: string[] = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i] ?? '')) { items.push(lines[i] ?? ''); i++; }
+      blocks.push(`<ol>${items.map((l) => `<li>${inlineMarkdown(l.replace(/^\d+\.\s+/, ''))}</li>`).join('')}</ol>`);
+      continue;
+    }
+    if (!line.trim()) { i++; continue; }
+    // Paragraph
+    const para: string[] = [];
+    while (i < lines.length) {
+      const cur = lines[i] ?? '';
+      if (!cur.trim() || cur.startsWith('```') || /^(#{1,6})\s+/.test(cur) || /^[-*]\s+/.test(cur) || /^\d+\.\s+/.test(cur)) break;
+      para.push(cur); i++;
+    }
+    blocks.push(`<p>${inlineMarkdown(para.join(' '))}</p>`);
+  }
+  return blocks.join('\n');
 }
 
 // ---- Practice tab ----
@@ -222,7 +309,7 @@ function render(){
   if(pos>=queue.length){mount.innerHTML=queue.length?'<div class="done-note">Session complete — '+reviewed+' reviewed. Nothing more due.</div>':'<div class="empty">Nothing due right now. Come back later, or author more cards.</div>';return;}
   var c=queue[pos];confidence=0;
   var fmt=function(s){return esc(s).replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>');};
-  var srcs=(c.sources||[]).map(function(s){return '<div class="src"><div class="meta">'+esc(s.path)+':'+s.startLine+'-'+s.endLine+' @ '+esc(s.commit)+' ('+esc(s.status)+')</div><pre>'+esc(s.text)+'</pre></div>';}).join('');
+  var srcs=(c.sources||[]).map(function(s){return '<div class="src"><div class="meta">'+esc(s.path)+':'+s.startLine+'-'+s.endLine+' @ '+esc(s.commit)+' ('+esc(s.status)+')</div>'+(s.snippetHtml||'<pre>'+esc(s.text)+'</pre>')+'</div>';}).join('');
   var examples=(c.examples||[]).map(function(x){var head=(x.label||'')+(x.language?' ('+x.language+')':'');var code=x.code?'<pre><code>'+esc(x.code)+'</code></pre>':'';var note=x.note?'<div class="ex-note">'+fmt(x.note)+'</div>':'';return '<div class="ex">'+(head?'<div class="ex-label">'+esc(head)+'</div>':'')+code+note+'</div>';}).join('');
   var ctx=c.context?'<p class="ctx">'+fmt(c.context)+'</p>':'';
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
@@ -231,17 +318,15 @@ function render(){
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
     '<p class="prompt">'+fmt(c.prompt)+'</p>'+ctx+srcs+
     '<div class="confidence" id="confidence"><p class="label">Before you reveal — how well do you know this?</p><div class="conf-opts">'+confBtns+'</div></div>'+
-    '<div class="actions"><button class="primary" id="reveal">Reveal answer <kbd>space</kbd></button></div>'+
     '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
-    '<p class="label">Explanation</p><div class="expl">'+fmt(c.explanation)+'</div>'+examples+mistakes+
+    '<p class="label">Explanation</p><div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
     '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
-  document.getElementById('reveal').addEventListener('click',reveal);
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
 }
-function setConfidence(n){confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});var r=document.getElementById('reveal');if(r)r.classList.add('ready');}
-function reveal(){if(!confidence){statusMsg('First rate how well you know it (1-5).');return;}document.getElementById('reveal-panel').classList.add('show');var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');document.getElementById('reveal').disabled=true;}
+function setConfidence(n){confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});reveal();}
+function reveal(){if(!confidence){statusMsg('Rate confidence (1-5) first.');return;}document.getElementById('reveal-panel').classList.add('show');var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');}
 function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.classList.contains('show');}
 async function grade(r){
   var c=queue[pos];if(!c)return;
@@ -362,7 +447,7 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .reveal.show{display:block}
 .label{text-transform:uppercase;letter-spacing:0.08em;font-size:11px;color:var(--muted);margin:0 0 4px}
 .short{font-weight:600;margin:0 0 14px}
-.expl{white-space:pre-wrap}
+.expl{overflow-wrap:break-word}
 .expl code,.src pre{font-family:var(--mono);font-size:13px}
 .src{margin-top:14px;background:var(--overlay);border-radius:var(--radius-sm);padding:10px 12px}
 .src .meta{color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:6px}
@@ -385,12 +470,33 @@ button.primary:hover{background:var(--accent-hover)}
 .done-note{text-align:center;padding:40px;color:var(--success);font-weight:600}
 .confidence{margin-top:18px;padding-top:16px;border-top:1px solid var(--border-soft)}
 .conf-opts{display:flex;gap:6px;flex-wrap:wrap}
-.conf-opts button{flex:1;min-width:88px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 6px}
-.conf-opts button kbd{font-family:var(--mono);font-size:10px;opacity:0.6}
+.conf-opts button kbd{font-family:var(--mono);font-size:11px;opacity:0.7;margin-left:4px}
 .conf-opts button.sel{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
 .confidence.locked{opacity:0.55;pointer-events:none}
-#reveal.ready{box-shadow:0 0 0 2px var(--accent-hover)}
 .grade-label{margin-top:6px}
+.c1{border-color:var(--danger)}.c2{border-color:var(--warning)}.c3{border-color:var(--accent)}.c4{border-color:var(--accent)}.c5{border-color:var(--success)}
+.diff-snippet{font-family:var(--mono);background:#08111f;border:1px solid rgba(35,52,79,.7);border-radius:var(--radius-sm);overflow:hidden;margin:10px 0}
+.diff-line{display:grid;grid-template-columns:44px 22px 1fr;gap:0;min-height:24px;align-items:center;font-size:13px;line-height:1.55}
+.diff-line code{white-space:pre-wrap;color:#dbeafe}
+.line-no{color:#64748b;text-align:right;padding-right:10px;user-select:none}
+.marker{text-align:center;color:#94a3b8;font-size:12px}
+.diff-line.add{background:linear-gradient(90deg,rgba(22,101,52,.45),rgba(22,101,52,.12))}
+.diff-line.add .marker{color:#86efac}
+.diff-line.delete{background:linear-gradient(90deg,rgba(127,29,29,.48),rgba(127,29,29,.13))}
+.diff-line.delete .marker{color:#fca5a5}
+.diff-line.meta{background:#172033}.diff-line.meta code{color:#93c5fd}
+.diff-line.context{background:#0b1220}
+.markdown-body{line-height:1.65;max-width:100%}
+.markdown-body p{margin:0 0 12px}
+.markdown-body p:last-child{margin-bottom:0}
+.markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{margin:18px 0 8px;line-height:1.35;font-weight:600}
+.markdown-body h1:first-child,.markdown-body h2:first-child,.markdown-body h3:first-child,.markdown-body h4:first-child,.markdown-body h5:first-child,.markdown-body h6:first-child{margin-top:0}
+.markdown-body pre{margin:12px 0;background:var(--overlay);border-radius:var(--radius-sm);padding:10px 12px;overflow-x:auto}
+.markdown-body pre code{font-family:var(--mono);font-size:13px;white-space:pre-wrap;background:none;padding:0;color:var(--text)}
+.markdown-body ul,.markdown-body ol{margin:8px 0 12px;padding-left:20px}
+.markdown-body li{margin:0 0 4px}
+.markdown-body code{font-family:var(--mono);font-size:0.9em;background:var(--overlay);padding:1px 5px;border-radius:4px}
+.markdown-body strong{font-weight:700;color:var(--text)}
 .set-link{display:flex;align-items:center;gap:14px;width:100%;color:inherit}
 .set-link:hover{text-decoration:none}
 .set-row{padding:0}.set-row:hover{border-color:var(--accent)}
