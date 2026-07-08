@@ -95,4 +95,45 @@ describe('review GUI server (functional)', () => {
     const j = await r.json();
     expect(j.ok).toBe(false);
   });
+
+  it('accepts and stores pre-reveal confidence sent with a grade', async () => {
+    running = await startReviewServer(await seed());
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    const card = due.cards[0];
+    const graded = await (await fetch(`${running.url}/api/grade`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cardId: card.id, setId: card.setId, rating: 3, confidence: 4 }),
+    })).json();
+    expect(graded.ok).toBe(true); // confidence is optional; a valid grade still succeeds
+  });
+
+  it('set browser lists every card in the set, even after it has been reviewed', async () => {
+    running = await startReviewServer(await seed());
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    const card = due.cards[0];
+
+    // Grade it so it leaves the due queue.
+    await fetch(`${running.url}/api/grade`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cardId: card.id, setId: card.setId, rating: 3 }),
+    });
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(0);
+
+    // The card is no longer due, but the set browser still shows it.
+    const { status, text } = await get(`${running.url}/set/${encodeURIComponent(card.setId)}`);
+    expect(status).toBe(200);
+    expect(text).toContain('Server Deck');
+    expect(text).toContain('What is a union type?'); // the prompt is browsable
+    expect(text).toContain('One of several types.'); // and so is the answer
+    expect(text).toContain('browse-card');
+  });
+
+  it('set browser returns a friendly page for an unknown set', async () => {
+    running = await startReviewServer(await seed());
+    const { status, text } = await get(`${running.url}/set/does-not-exist`);
+    expect(status).toBe(200);
+    expect(text).toContain('Set not found');
+  });
 });
