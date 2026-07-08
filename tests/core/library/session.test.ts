@@ -29,6 +29,19 @@ function twoCardPatch(): AgentSetPatch {
   };
 }
 
+// A single-card set with its own folderPath + tag, for cross-dimension tests.
+function oneCardPatch(folderPath: string, tagLabel: string, suffix: string): AgentSetPatch {
+  return {
+    version: 1,
+    set: { title: `Deck ${suffix}`, folderPath, tagIds: [] },
+    tagPatch: { reuse: [], add: [{ localId: 't', label: tagLabel, kind: 'topic' }] },
+    order: [`c${suffix}`],
+    cards: [
+      { localId: `c${suffix}`, tagRefs: ['t'], front: { prompt: 'Q?' }, back: { shortAnswer: 'A', explanationMarkdown: 'E' } },
+    ],
+  };
+}
+
 describe('fsrs adapter', () => {
   it('a new card is due at/near creation and Good pushes the due date out', () => {
     const now = new Date('2026-07-07T12:00:00.000Z');
@@ -82,6 +95,37 @@ describe('due queue + review session', () => {
     const none = await getDueCards(root, now, { tagIds: ['tag_nope'] });
     expect(none).toHaveLength(0);
     expect(res.ok).toBe(true);
+  });
+
+  it('combines dimensions by union (default) or intersection', async () => {
+    const root = await freshRoot();
+    const now = new Date('2026-07-07T12:00:00.000Z');
+    const resA = await importAgentSet(root, oneCardPatch('python/basics', 'python', 'A'), { now });
+    const resB = await importAgentSet(root, oneCardPatch('rust/basics', 'rust', 'B'), { now });
+    const setA = resA.setId!;
+    const setB = resB.setId!;
+
+    const all = await getDueCards(root, now);
+    expect(all).toHaveLength(2);
+    // tagB belongs to the card in setB — a different card than setA's.
+    const cardB = all.find((c) => c.setId === setB)!;
+    const tagB = cardB.tagIds[0];
+
+    // union: (in setA) OR (has tagB) → both distinct cards match.
+    const union = await getDueCards(root, now, { setIds: [setA], tagIds: [tagB], combinator: 'union' });
+    expect(union).toHaveLength(2);
+
+    // intersection: (in setA) AND (has tagB) → no single card satisfies both.
+    const inter = await getDueCards(root, now, { setIds: [setA], tagIds: [tagB], combinator: 'intersection' });
+    expect(inter).toHaveLength(0);
+
+    // default (no combinator) behaves as union.
+    const dflt = await getDueCards(root, now, { setIds: [setA], tagIds: [tagB] });
+    expect(dflt).toHaveLength(2);
+
+    // multi-select within one dimension is always OR, regardless of combinator.
+    const bothSets = await getDueCards(root, now, { setIds: [setA, setB], combinator: 'intersection' });
+    expect(bothSets).toHaveLength(2);
   });
 
   it('records pre-reveal confidence on the review event when provided', async () => {

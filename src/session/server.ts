@@ -9,11 +9,15 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import { getDueCards } from '../core/library/review/dueQueue.js';
+import { getDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
 import { startSession, gradeCard, endSession } from '../core/library/review/session.js';
-import { listSetSummaries, loadSet } from '../core/library/setStore.js';
+import { listSetSummaries, loadSet, listSetIds } from '../core/library/setStore.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
-import type { Card, Confidence, ReviewRating } from '../core/library/types.js';
+import { loadTags } from '../core/library/tagStore.js';
+import type { Card, Confidence, ReviewRating, ReviewSession } from '../core/library/types.js';
+import { libraryPaths } from '../core/library/libraryStore.js';
+import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
+import { join } from 'node:path';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
@@ -41,21 +45,177 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
     const setId = decodeURIComponent(url.pathname.slice('/set/'.length));
     return sendHtml(res, 200, await renderSetBrowser(root, setId));
   }
-  if (method === 'GET' && url.pathname === '/api/due') return sendJson(res, 200, await dueData(root, url));
-  if (method === 'POST' && url.pathname === '/api/grade') return gradeApi(root, req, res);
+  // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
+  // Empty body / empty object both mean "everything due."
+  if (url.pathname === '/api/due') return dueData(root, req, res, url);
+  // Per-sitting session lifecycle (doc 06 addendum A2): start -> grade* -> end.
+  if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res);
+  // Manage tab (doc 06): server-rendered; card membership is embedded in the
+  // page so match counts recompute client-side (no per-keystroke round-trip).
+  if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root));
   return sendText(res, 404, 'not found\n');
 }
 
 // ---- API ----
 
-async function dueData(root: string, url: URL): Promise<unknown> {
-  const filter = {
-    setIds: url.searchParams.get('set') ? [url.searchParams.get('set')!] : undefined,
-    tagIds: url.searchParams.get('tag') ? [url.searchParams.get('tag')!] : undefined,
-    folderPaths: url.searchParams.get('folder') ? [url.searchParams.get('folder')!] : undefined,
-  };
+/** In-memory map of active review sessions (id -> session). Persisted
+ * incrementally on each grade and explicitly on /api/session/end. See doc 06
+ * addendum A2. */
+const activeSessions = new Map<string, ReviewSession>();
+
+/** Validate that a value is a string[] (or undefined) — guard against the
+ * client sending arbitrary JSON in the DueFilter body. */
+function isStringArray(v: unknown): v is string[] | undefined {
+  return v === undefined || (Array.isArray(v) && v.every((x) => typeof x === 'string'));
+}
+
+/** Normalize a parsed JSON body into a DueFilter (or undefined for empty). */
+function asFilter(v: unknown): DueFilter | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  const f: DueFilter = {};
+  if (isStringArray(o.setIds)) f.setIds = o.setIds;
+  if (isStringArray(o.tagIds)) f.tagIds = o.tagIds;
+  if (isStringArray(o.folderPaths)) f.folderPaths = o.folderPaths;
+  if (o.combinator === 'union' || o.combinator === 'intersection') f.combinator = o.combinator;
+  // A combinator alone is not a constraint — require at least one dimension.
+  const hasDimension = !!(f.setIds?.length || f.tagIds?.length || f.folderPaths?.length);
+  return hasDimension ? f : undefined;
+}
+
+/** /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
+ * Empty body / empty object both mean "everything due." */
+async function dueData(root: string, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
+  let filter: DueFilter | undefined;
+  if ((req.method ?? 'GET') === 'POST') {
+    let body: unknown;
+    try { body = await readJson(req); }
+    catch { return sendJson(res, 400, { error: 'invalid JSON body' }); }
+    try { filter = asFilter(body); }
+    catch (e) { return sendJson(res, 400, { error: (e as Error).message }); }
+  } else {
+    // Legacy GET single-value params still supported for CLI/scripts.
+    filter = {
+      setIds: url.searchParams.get('set') ? [url.searchParams.get('set')!] : undefined,
+      tagIds: url.searchParams.get('tag') ? [url.searchParams.get('tag')!] : undefined,
+      folderPaths: url.searchParams.get('folder') ? [url.searchParams.get('folder')!] : undefined,
+    };
+    if (!filter.setIds && !filter.tagIds && !filter.folderPaths) filter = undefined;
+  }
   const due = await getDueCards(root, new Date(), filter);
-  return { total: due.length, cards: due.map(cardView) };
+  return sendJson(res, 200, { total: due.length, cards: due.map(cardView) });
+}
+
+/** Path to the per-day session file, mirroring the on-disk layout used by
+ * endSession in session.ts. */
+function sessionFilePath(root: string, session: ReviewSession): string {
+  const day = session.startedAt.slice(0, 10);
+  const stamp = session.startedAt.replace(/[:.]/g, '-');
+  return join(libraryPaths(root).sessionDayDir(day), `session_${stamp}.json`);
+}
+
+/** Re-persist a session incrementally (after each grade) so the file is
+ * crash-durable. Cheap at this scale — no DB. */
+async function persistSession(root: string, session: ReviewSession): Promise<void> {
+  await writeJson(sessionFilePath(root, session), session);
+}
+
+/** /api/session/start — body: DueFilter. Creates a session, returns its id. */
+async function sessionStartApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: unknown;
+  try { body = await readJson(req); }
+  catch { return sendJson(res, 400, { error: 'invalid JSON body' }); }
+  let filter: DueFilter | undefined;
+  try { filter = asFilter(body); }
+  catch (e) { return sendJson(res, 400, { error: (e as Error).message }); }
+  // Pick a mode that describes the filter so the session file is self-describing.
+  const mode: ReviewSession['mode'] = filter?.folderPaths?.length
+    ? 'folder'
+    : filter?.tagIds?.length
+      ? 'tag_filter'
+      : filter?.setIds?.length
+        ? 'set'
+        : 'recommended';
+  const session = startSession(mode, filter);
+  activeSessions.set(session.id, session);
+  await persistSession(root, session);
+  return sendJson(res, 200, { ok: true, sessionId: session.id, filter: filter ?? null });
+}
+
+/** /api/session/grade — body: { sessionId, cardId, setId, rating, confidence? }. */
+async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: { sessionId?: string; cardId?: string; setId?: string; rating?: number; confidence?: number };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  const sessionId = body.sessionId;
+  const rating = Number(body.rating) as ReviewRating;
+  if (!sessionId || !body.cardId || !body.setId || ![1, 2, 3, 4].includes(rating)) {
+    return sendJson(res, 400, { ok: false, error: 'need sessionId, cardId, setId, rating(1-4)' });
+  }
+  // Look up the session in memory; fall back to reading its on-disk file in case
+  // the server restarted mid-sitting.
+  let session = activeSessions.get(sessionId);
+  if (!session) {
+    try {
+      const matches = await listSessionFiles(root);
+      for (const path of matches) {
+        const s = await readJsonIO<ReviewSession>(path);
+        if (s?.id === sessionId) { session = s; activeSessions.set(sessionId, s); break; }
+      }
+    } catch { /* fall through to 404 below */ }
+  }
+  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+  const confidence = [1, 2, 3, 4, 5].includes(Number(body.confidence))
+    ? (Number(body.confidence) as Confidence)
+    : undefined;
+  const card = await loadCard(root, body.setId, body.cardId);
+  if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
+  const updated = await gradeCard(root, session, card, rating, new Date(), confidence);
+  await persistSession(root, session);
+  return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
+}
+
+/** /api/session/end — body: { sessionId }. Finalizes and removes from memory. */
+async function sessionEndApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: { sessionId?: string };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  const sessionId = body.sessionId;
+  if (!sessionId) return sendJson(res, 400, { ok: false, error: 'need sessionId' });
+  let session = activeSessions.get(sessionId);
+  if (!session) {
+    try {
+      const matches = await listSessionFiles(root);
+      for (const path of matches) {
+        const s = await readJsonIO<ReviewSession>(path);
+        if (s?.id === sessionId) { session = s; break; }
+      }
+    } catch { /* fall through */ }
+  }
+  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+  await endSession(root, session);
+  activeSessions.delete(sessionId);
+  return sendJson(res, 200, { ok: true, sessionId, summary: session.summary });
+}
+
+/** Find all session_*.json files under profile/sessions/ (best-effort, used to
+ * recover a session after a server restart). */
+async function listSessionFiles(root: string): Promise<string[]> {
+  const fs = await import('node:fs/promises');
+  const base = libraryPaths(root).profile;
+  const out: string[] = [];
+  try {
+    const days = await fs.readdir(join(base, 'sessions'));
+    for (const day of days) {
+      try {
+        const files = await fs.readdir(join(base, 'sessions', day));
+        for (const f of files) if (f.startsWith('session_') && f.endsWith('.json')) out.push(join(base, 'sessions', day, f));
+      } catch { /* day dir missing, skip */ }
+    }
+  } catch { /* profile/sessions missing, no sessions to recover */ }
+  return out;
 }
 
 /** Trim a card to what the Practice UI renders, with server-pre-rendered HTML
@@ -65,7 +225,11 @@ function cardView(card: Card) {
     id: card.id,
     setId: card.setId,
     prompt: card.front.prompt,
+    // Pre-rendered so a fenced code block / multi-line prompt shows as a real
+    // <pre><code> block (not mangled inline). Mirrors explanationHtml.
+    promptHtml: renderMarkdownHtml(card.front.prompt),
     context: card.front.contextMarkdown ?? null,
+    contextHtml: card.front.contextMarkdown ? renderMarkdownHtml(card.front.contextMarkdown) : null,
     shortAnswer: card.back.shortAnswer,
     explanation: card.back.explanationMarkdown,
     explanationHtml: renderMarkdownHtml(card.back.explanationMarkdown),
@@ -77,24 +241,6 @@ function cardView(card: Card) {
       snippetHtml: r.frozenText ? renderDiffSnippetHtml(r.frozenText) : '',
     })),
   };
-}
-
-async function gradeApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = (await readJson(req)) as { cardId?: string; setId?: string; rating?: number; confidence?: number };
-  const rating = Number(body.rating) as ReviewRating;
-  if (!body.cardId || !body.setId || ![1, 2, 3, 4].includes(rating)) {
-    return sendJson(res, 400, { ok: false, error: 'need cardId, setId, rating(1-4)' });
-  }
-  const confidence = [1, 2, 3, 4, 5].includes(Number(body.confidence))
-    ? (Number(body.confidence) as Confidence)
-    : undefined;
-  const card = await loadCard(root, body.setId, body.cardId);
-  if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
-  // One sitting per grade, matching the CLI. (Batched sittings are a future refinement.)
-  const session = startSession('recommended');
-  const updated = await gradeCard(root, session, card, rating, new Date(), confidence);
-  await endSession(root, session);
-  return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
 }
 
 // ---- Home tab ----
@@ -177,9 +323,13 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
     const mistakes = v.commonMistakes.length
       ? `<p class="label">Common mistakes</p><ul>${v.commonMistakes.map((m) => `<li>${inlineCode(m)}</li>`).join('')}</ul>`
       : '';
-    const ctx = v.context ? `<p class="ctx">${inlineCode(v.context)}</p>` : '';
-    return `<details class="browse-card"><summary><span class="q">${inlineCode(v.prompt)}</span>${state}</summary>` +
-      `<div class="browse-body">${ctx}${srcs}` +
+    const ctx = v.context ? `<div class="ctx markdown-body">${v.contextHtml || inlineCode(v.context)}</div>` : '';
+    // Summary holds a safe one-line preview (a <summary> can't contain block
+    // code); the full prompt — fenced code and all — renders in the body.
+    return `<details class="browse-card"><summary><span class="q">${promptPreview(v.prompt)}</span>${state}</summary>` +
+      `<div class="browse-body">` +
+      `<p class="label">Question</p><div class="prompt-full markdown-body">${v.promptHtml || inlineCode(v.prompt)}</div>` +
+      `${ctx}${srcs}` +
       `<p class="label">Answer</p><p class="short">${inlineCode(v.shortAnswer)}</p>` +
       `<p class="label">Explanation</p><div class="expl markdown-body">${v.explanationHtml || inlineCode(v.explanation)}</div>${examples}${mistakes}</div></details>`;
   }).join('');
@@ -191,9 +341,279 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
   return pageShell(`MergeLearn — ${set.title}`, 'set', body);
 }
 
+// ---- Manage tab (doc 06) ----
+
+/** Compute per-folder and per-tag mastery. Mastery = cards at FSRS state >= 2
+ * (Review/Relearning) divided by total cards. v1: set-level folderPath only
+ * (per addendum A5 — per-card sub-path granularity is deferred). */
+async function loadManageData(root: string): Promise<{
+  folders: { path: string; cardCount: number; mastery: number }[];
+  tags: { id: string; label: string; kind?: string; cardCount: number; mastery: number }[];
+  // Per-active-card membership, embedded in the page so the match count
+  // recomputes client-side (no /api round-trip → no "count unavailable").
+  cards: { folderPath: string; tagIds: string[] }[];
+}> {
+  // Read all cards once; cheap at this scale, cached per request.
+  const allCards: Card[] = [];
+  for (const setId of await listSetIds(root)) allCards.push(...(await loadCardsForSet(root, setId)));
+
+  // Folder stats keyed by set folderPath (v1 — per-card sub-paths deferred).
+  const sets = await listSetSummaries(root);
+  const setFolder = new Map(sets.map((s) => [s.id, s.folderPath ?? '']));
+  const folderTotals = new Map<string, number>();
+  const folderMastered = new Map<string, number>();
+  for (const c of allCards) {
+    const f = setFolder.get(c.setId) ?? '';
+    if (!f) continue;
+    folderTotals.set(f, (folderTotals.get(f) ?? 0) + 1);
+    if (c.fsrs.state >= 2) folderMastered.set(f, (folderMastered.get(f) ?? 0) + 1);
+  }
+  const folders = [...folderTotals.keys()].sort().map((path) => ({
+    path,
+    cardCount: folderTotals.get(path) ?? 0,
+    mastery: masteryPct(folderMastered.get(path) ?? 0, folderTotals.get(path) ?? 0),
+  }));
+
+  // Tag stats: count by tag id, count mastered per tag.
+  const tags = await loadTags(root);
+  const tagTotals = new Map<string, number>();
+  const tagMastered = new Map<string, number>();
+  for (const c of allCards) {
+    for (const t of c.tagIds) {
+      tagTotals.set(t, (tagTotals.get(t) ?? 0) + 1);
+      if (c.fsrs.state >= 2) tagMastered.set(t, (tagMastered.get(t) ?? 0) + 1);
+    }
+  }
+  const tagRows = tags
+    .map((t) => ({
+      id: t.id,
+      label: t.label,
+      kind: t.kind,
+      cardCount: tagTotals.get(t.id) ?? 0,
+      mastery: masteryPct(tagMastered.get(t.id) ?? 0, tagTotals.get(t.id) ?? 0),
+    }))
+    // Keep only tags that appear on at least one card; sorts the rest out.
+    .filter((t) => t.cardCount > 0)
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  // Membership per card (folder + tags) so the client can count matches locally.
+  // Counts the same cards as the folder/tag badges above, for consistency.
+  const cards = allCards.map((c) => ({
+    folderPath: setFolder.get(c.setId) ?? '',
+    tagIds: c.tagIds,
+  }));
+
+  return { folders, tags: tagRows, cards };
+}
+
+function masteryPct(mastered: number, total: number): number {
+  return total === 0 ? 0 : Math.round((mastered / total) * 100);
+}
+
+async function renderManage(root: string): Promise<string> {
+  const { folders, tags, cards } = await loadManageData(root);
+  // Embed card membership so match counts recompute client-side (no round-trip).
+  // Escape '<' so a folderPath/tagId can never break out of the script tag.
+  const cardsJson = JSON.stringify(cards).replace(/</g, '\\u003c');
+  // Render the folder tree as a flat list of nodes; the client expands/collapses
+  // via <details> in the inline script. v1: set-level paths only (addendum A5).
+  const tree = folders.length
+    ? folders.map((f) =>
+        `<li class="tree-node" data-folder="${escapeHtml(f.path)}">` +
+        `<div class="tree-row" role="button" tabindex="0" title="${f.mastery}% mastery — ${f.cardCount} card${f.cardCount === 1 ? '' : 's'} in this folder">` +
+        `<span class="tree-name">${escapeHtml(f.path)}</span>` +
+        `<span class="tree-count" title="${f.cardCount} card${f.cardCount === 1 ? '' : 's'}">${f.cardCount}</span>` +
+        `<span class="tree-bar" style="--pct:${f.mastery}%" aria-hidden="true"></span>` +
+        `<span class="tree-pct" aria-label="${f.mastery}% mastery">${f.mastery}%</span>` +
+        `</div></li>`,
+      ).join('')
+    : `<li class="empty">No folders yet — author a set with a <code>folderPath</code>.</li>`;
+
+  // Tag chips. Empty library → friendly empty state.
+  const tagChips = tags.length
+    ? tags.map((t) =>
+        `<div class="tag-chip" data-tag="${escapeHtml(t.id)}" role="button" tabindex="0" title="${t.mastery}% mastery — ${t.cardCount} card${t.cardCount === 1 ? '' : 's'} tagged">` +
+        `<span class="tag-top"><span class="tag-label">${escapeHtml(t.label)}</span>` +
+        `<span class="tag-count" title="${t.cardCount} card${t.cardCount === 1 ? '' : 's'}">${t.cardCount}</span></span>` +
+        `<span class="tag-bar" style="--pct:${t.mastery}%" aria-hidden="true"></span>` +
+        `<span class="tag-pct" aria-label="${t.mastery}% mastery">${t.mastery}%</span>` +
+        `</div>`,
+      ).join('')
+    : `<div class="empty">No tags yet — author cards with <code>tagRefs</code>.</div>`;
+
+  // Combinator tiles sit between Folders and Tags — the seam where the
+  // cross-dimension join is ambiguous. Labelled by meaning ("Match any" = OR =
+  // union, default; "Match all" = AND = intersection) with the operator as a
+  // hint. Within a dimension, multi-select is always OR.
+  const combinator =
+    `<div class="combinator" id="combinator" role="radiogroup" aria-label="How folders and tags combine">` +
+    `<button class="combo-tile sel" data-combinator="union" role="radio" aria-checked="true" type="button">` +
+    `<span class="combo-title">Match any</span><span class="combo-hint">folder OR tag</span></button>` +
+    `<button class="combo-tile" data-combinator="intersection" role="radio" aria-checked="false" type="button">` +
+    `<span class="combo-title">Match all</span><span class="combo-hint">folder AND tag</span></button>` +
+    `</div>`;
+
+  // Defines what the bar/percentage mean — answers "% of what?".
+  const masteryLegend =
+    `<span class="legend" title="A card counts as learned once it reaches the FSRS Review stage (state ≥ 2).">` +
+    `Bar shows <strong>mastery</strong>: share of cards learned</span>`;
+
+  const body = `<h1>Manage</h1>` +
+    `<p class="muted">Pick the concepts you want to drill. The active filter feeds the Practice tab.</p>` +
+    `<div class="active-filter" id="active-filter">` +
+    `<span class="muted" id="match-count">—</span>` +
+    `<button class="clear" id="clear-filter" type="button">Clear</button>` +
+    `<button class="primary" id="start-practice" type="button">Start Practice →</button>` +
+    `</div>` +
+    `<div class="section-head" style="margin-top:24px"><h2>Folders</h2>${masteryLegend}</div>` +
+    `<ul class="tree">${tree}</ul>` +
+    combinator +
+    `<div class="section-head" style="margin-top:24px"><h2>Tags</h2>${masteryLegend}</div>` +
+    `<div class="tag-grid">${tagChips}</div>` +
+    `<script type="application/json" id="ml-cards">${cardsJson}</script>`;
+  return pageShell('MergeLearn — Manage', 'manage', body) +
+    `<script>${manageScript()}</script>`;
+}
+
+function manageScript(): string {
+  return `
+var selected={folderPaths:[],tagIds:[],combinator:'union'};
+var CARDS=[];
+try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function statusMsg(t){var s=document.getElementById('match-count');s.textContent=t;}
+function selectedFilter(){var f={};if(selected.folderPaths.length)f.folderPaths=selected.folderPaths;if(selected.tagIds.length)f.tagIds=selected.tagIds;if(Object.keys(f).length)f.combinator=selected.combinator;return f;}
+function isSelectedFolder(p){return selected.folderPaths.indexOf(p)>=0;}
+function isSelectedTag(t){return selected.tagIds.indexOf(t)>=0;}
+// Mirror of server matchesFilter (dueQueue.ts): within-dim OR, cross-dim
+// union/intersection, empty = no constraint, folder prefix match.
+function cardMatches(card){
+  var results=[];
+  if(selected.folderPaths.length){
+    var p=card.folderPath||'';
+    results.push(!!p&&selected.folderPaths.some(function(f){return p===f||p.indexOf(f+'/')===0;}));
+  }
+  if(selected.tagIds.length){
+    results.push(selected.tagIds.some(function(t){return card.tagIds.indexOf(t)>=0;}));
+  }
+  if(results.length===0)return true;
+  return selected.combinator==='intersection'?results.every(Boolean):results.some(Boolean);
+}
+function refreshCount(){
+  var n=0;for(var i=0;i<CARDS.length;i++){if(cardMatches(CARDS[i]))n++;}
+  var anySel=selected.folderPaths.length||selected.tagIds.length;
+  if(!anySel){statusMsg(CARDS.length+' card'+(CARDS.length===1?'':'s')+' total');return;}
+  statusMsg(n===0?'No cards match this filter':(n+' card'+(n===1?'':'s')+' match'));
+}
+function renderChips(){
+  var bar=document.getElementById('active-filter');
+  // Remove any previously rendered chip; re-insert the persistent controls.
+  var mc=document.getElementById('match-count');
+  [].forEach.call(bar.querySelectorAll('.chip'),function(n){n.parentNode.removeChild(n);});
+  function addChip(text,kind,value){
+    var c=document.createElement('span');c.className='chip';c.setAttribute('data-kind',kind);c.setAttribute('data-value',value);
+    c.innerHTML=esc(text)+' <button class="chip-x" type="button" aria-label="Remove">×</button>';
+    bar.insertBefore(c,mc);
+    c.querySelector('.chip-x').addEventListener('click',function(){removeFromFilter(kind,value);});
+  }
+  selected.folderPaths.forEach(function(p){addChip(p,'folder',p);});
+  selected.tagIds.forEach(function(t){
+    var labels=[].slice.call(document.querySelectorAll('.tag-chip[data-tag]'));
+    var m=labels.filter(function(n){return n.getAttribute('data-tag')===t;})[0];
+    addChip(m?m.querySelector('.tag-label').textContent:t,'tag',t);
+  });
+}
+function removeFromFilter(kind,value){
+  if(kind==='folder'){selected.folderPaths=selected.folderPaths.filter(function(x){return x!==value;});}
+  else{selected.tagIds=selected.tagIds.filter(function(x){return x!==value;});}
+  updateAll();
+}
+function toggle(kind,value){
+  var arr=kind==='folder'?'folderPaths':'tagIds';
+  var i=selected[arr].indexOf(value);
+  if(i>=0)selected[arr].splice(i,1);else selected[arr].push(value);
+  updateAll();
+}
+function updateAll(){
+  [].forEach.call(document.querySelectorAll('.tree-node'),function(n){
+    var p=n.getAttribute('data-folder');
+    n.classList.toggle('sel',isSelectedFolder(p));
+  });
+  [].forEach.call(document.querySelectorAll('.tag-chip'),function(n){
+    var t=n.getAttribute('data-tag');
+    n.classList.toggle('sel',isSelectedTag(t));
+  });
+  renderChips();
+  // Count is a pure local computation now — no network, so recompute inline.
+  refreshCount();
+}
+function persistFilter(){try{localStorage.setItem('ml-practice-filter',JSON.stringify(selectedFilter()));}catch(e){}}
+[].forEach.call(document.querySelectorAll('.tree-node .tree-row'),function(n){
+  n.addEventListener('click',function(){toggle('folder',n.parentNode.getAttribute('data-folder'));});
+  n.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();toggle('folder',n.parentNode.getAttribute('data-folder'));}});
+});
+[].forEach.call(document.querySelectorAll('.tag-chip'),function(n){
+  n.addEventListener('click',function(){toggle('tag',n.getAttribute('data-tag'));});
+  n.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();toggle('tag',n.getAttribute('data-tag'));}});
+});
+function setCombinator(mode){
+  selected.combinator=(mode==='intersection')?'intersection':'union';
+  [].forEach.call(document.querySelectorAll('.combo-tile'),function(n){
+    var on=n.getAttribute('data-combinator')===selected.combinator;
+    n.classList.toggle('sel',on);
+    n.setAttribute('aria-checked',on?'true':'false');
+  });
+  refreshCount();
+}
+[].forEach.call(document.querySelectorAll('.combo-tile'),function(n){
+  n.addEventListener('click',function(){setCombinator(n.getAttribute('data-combinator'));});
+});
+document.getElementById('clear-filter').addEventListener('click',function(){
+  selected={folderPaths:[],tagIds:[],combinator:'union'};
+  setCombinator('union');updateAll();
+});
+document.getElementById('start-practice').addEventListener('click',function(){
+  persistFilter();location.href='/practice';
+});
+(function(){
+  // Restore a previously persisted filter, if any.
+  try{var raw=localStorage.getItem('ml-practice-filter');if(raw){var f=JSON.parse(raw);
+    if(Array.isArray(f.folderPaths))selected.folderPaths=f.folderPaths;
+    if(Array.isArray(f.tagIds))selected.tagIds=f.tagIds;
+    if(f.combinator==='intersection'||f.combinator==='union')selected.combinator=f.combinator;
+    setCombinator(selected.combinator);updateAll();return;}}catch(e){}
+  refreshCount();
+})();
+`;
+}
+
+
 /** Server-side inline-code formatter (mirrors the client `fmt`): `code` → <code>. */
 function inlineCode(value: string): string {
   return escapeHtml(value).replace(/`([^`]+)`/g, '<code>$1</code>');
+}
+
+/** One-line, block-safe preview of a prompt for a <summary> header. A <summary>
+ * can only hold phrasing content, so we strip fenced code blocks, collapse all
+ * whitespace, truncate, and flag that code exists so the header stays tidy even
+ * when the full question (rendered in the body) is long or code-heavy. */
+function promptPreview(value: string, max = 110): string {
+  const hadFence = /```/.test(value);
+  const text = value
+    .replace(/```[\s\S]*?```/g, ' ') // drop fenced blocks
+    .replace(/`{3,}/g, ' ') // stray/unclosed fence markers
+    .replace(/\s+/g, ' ')
+    .trim();
+  let preview = text;
+  let truncated = false;
+  if (preview.length > max) {
+    preview = preview.slice(0, max).replace(/\s+\S*$/, '');
+    truncated = true;
+  }
+  let html = escapeHtml(preview).replace(/`([^`]+)`/g, '<code>$1</code>');
+  if (truncated) html += '…';
+  if (hadFence) html += ' <span class="q-code">⟨code⟩</span>';
+  return html || '<span class="muted">(untitled)</span>';
 }
 
 // ---- Code display: diff-snippet (ported from the old platform's diffView.ts) ----
@@ -299,7 +719,7 @@ function renderPractice(): string {
 
 function practiceScript(): string {
   return `
-var queue=[];var pos=0;var reviewed=0;var confidence=0;
+var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}p.textContent='Card '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' reviewed';}
@@ -311,12 +731,12 @@ function render(){
   var fmt=function(s){return esc(s).replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>');};
   var srcs=(c.sources||[]).map(function(s){return '<div class="src"><div class="meta">'+esc(s.path)+':'+s.startLine+'-'+s.endLine+' @ '+esc(s.commit)+' ('+esc(s.status)+')</div>'+(s.snippetHtml||'<pre>'+esc(s.text)+'</pre>')+'</div>';}).join('');
   var examples=(c.examples||[]).map(function(x){var head=(x.label||'')+(x.language?' ('+x.language+')':'');var code=x.code?'<pre><code>'+esc(x.code)+'</code></pre>':'';var note=x.note?'<div class="ex-note">'+fmt(x.note)+'</div>':'';return '<div class="ex">'+(head?'<div class="ex-label">'+esc(head)+'</div>':'')+code+note+'</div>';}).join('');
-  var ctx=c.context?'<p class="ctx">'+fmt(c.context)+'</p>':'';
+  var ctx=c.context?'<div class="ctx markdown-body">'+(c.contextHtml||fmt(c.context))+'</div>':'';
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
   var confLabels=[['1','Guessing'],['2','Low'],['3','Medium'],['4','High'],['5','Certain']];
   var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'">'+p[1]+'<kbd>'+p[0]+'</kbd></button>';}).join('');
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
-    '<p class="prompt">'+fmt(c.prompt)+'</p>'+ctx+srcs+
+    '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+
     '<div class="confidence" id="confidence"><p class="label">Before you reveal — how well do you know this?</p><div class="conf-opts">'+confBtns+'</div></div>'+
     '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<p class="label">Explanation</p><div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+
@@ -330,21 +750,35 @@ function reveal(){if(!confidence){statusMsg('Rate confidence (1-5) first.');retu
 function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.classList.contains('show');}
 async function grade(r){
   var c=queue[pos];if(!c)return;
+  if(!sessionId){statusMsg('no active session');return;}
   try{
-    var res=await fetch('/api/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined})});
+    var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined})});
     var j=await res.json();
     if(!j.ok){statusMsg(j.error||'grade failed');return;}
     reviewed++;statusMsg('Graded · next due '+new Date(j.due).toLocaleDateString());
     pos++;render();
   }catch(e){statusMsg('grade failed');}
 }
+function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
 document.addEventListener('keydown',function(e){
   if(['INPUT','TEXTAREA','SELECT'].indexOf(e.target.tagName)>=0)return;
   if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!isRevealed())reveal();return;}
   if(/^[1-5]$/.test(e.key)&&!isRevealed()){setConfidence(Number(e.key));return;}
   if(/^[1-4]$/.test(e.key)&&isRevealed())grade(Number(e.key));
 });
-(async function(){try{var res=await fetch('/api/due');var j=await res.json();queue=j.cards||[];}catch(e){queue=[];}render();})();
+window.addEventListener('beforeunload',function(){endSession(true);});
+(async function(){
+  var filter=null;try{var raw=localStorage.getItem('ml-practice-filter');if(raw)filter=JSON.parse(raw);}catch(e){}
+  try{
+    var sr=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})});
+    var sj=await sr.json();if(sj.ok)sessionId=sj.sessionId;
+  }catch(e){statusMsg('session start failed');}
+  try{
+    var res=await fetch('/api/due',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})});
+    var j=await res.json();queue=j.cards||[];
+  }catch(e){queue=[];}
+  render();
+})();
 `;
 }
 
@@ -378,15 +812,18 @@ export function escapeHtml(value: string): string {
 
 // ---- HTML shell ----
 
-type Tab = 'home' | 'practice' | 'set';
+type Tab = 'home' | 'practice' | 'set' | 'manage';
 
 function pageShell(title: string, tab: Tab, body: string): string {
-  const nav = (['home', 'practice'] as Tab[])
+  const tabs: { id: Tab; href: string; label: string }[] = [
+    { id: 'home', href: '/', label: 'Home' },
+    { id: 'practice', href: '/practice', label: 'Practice' },
+    { id: 'manage', href: '/manage', label: 'Manage' },
+  ];
+  const nav = tabs
     .map((t) => {
-      const href = t === 'home' ? '/' : '/practice';
-      const label = t === 'home' ? 'Home' : 'Practice';
-      const current = t === tab ? ' aria-current="page"' : '';
-      return `<a href="${href}"${current}>${label}</a>`;
+      const current = t.id === tab ? ' aria-current="page"' : '';
+      return `<a href="${t.href}"${current}>${t.label}</a>`;
     })
     .join('');
   return `<!doctype html><html lang="en"><head><meta charset="utf-8" />` +
@@ -442,6 +879,8 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .pcard{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-top:16px}
 .pcard .topline{display:flex;gap:10px;color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:12px}
 .prompt{font-size:1.25rem;font-weight:600;margin:0 0 16px}
+.prompt.markdown-body pre,.prompt.markdown-body pre code,.prompt-full pre code{font-weight:400;font-size:13px}
+.prompt.markdown-body p{font-size:1.25rem;font-weight:600}
 .ctx{color:var(--muted);margin:0 0 16px}
 .reveal{margin-top:18px;padding-top:18px;border-top:1px solid var(--border);display:none}
 .reveal.show{display:block}
@@ -511,5 +950,45 @@ button.primary:hover{background:var(--accent-hover)}
 .browse-card[open] summary{border-bottom:1px solid var(--border)}
 .browse-body{padding:16px}
 .browse-body .label{margin-top:14px}
-.browse-body .label:first-child{margin-top:0}`;
+.browse-body .label:first-child{margin-top:0}
+.active-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);margin:18px 0}
+.active-filter #match-count{flex:1;min-width:120px}
+.active-filter .clear{background:transparent;border:1px solid var(--border)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--overlay);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px}
+.chip-x{background:transparent;border:0;color:var(--muted);font-size:14px;cursor:pointer;padding:0 2px}
+.chip-x:hover{color:var(--text)}
+.tree,.tag-grid{list-style:none;padding:0;margin:12px 0 0;display:grid;gap:8px}
+.tree-node{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.tree-row{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;outline:none}
+.tree-row:hover{background:var(--hover)}
+.tree-row:focus{box-shadow:inset 0 0 0 2px var(--accent)}
+.tree-name{flex:1;font-family:var(--mono);font-size:14px}
+.tree-count,.tree-pct{color:var(--muted);font-size:13px;min-width:42px;text-align:right}
+.tree-bar{position:relative;width:80px;height:6px;background:var(--overlay);border-radius:4px;overflow:hidden}
+.tree-bar::after{content:'';position:absolute;left:0;top:0;bottom:0;width:var(--pct,0%);background:linear-gradient(90deg,var(--danger),var(--warning) 40%,var(--accent-hover) 75%,var(--success));transition:width .2s}
+.tree-node.sel .tree-row{background:rgba(99,102,241,0.12);border-left:3px solid var(--accent);padding-left:11px}
+.tag-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+.tag-chip{display:flex;flex-direction:column;gap:6px;padding:10px 12px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;outline:none}
+.tag-chip:hover{background:var(--hover)}
+.tag-chip:focus{box-shadow:inset 0 0 0 2px var(--accent)}
+.tag-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.tag-label{font-weight:600;font-size:14px}
+.tag-count{color:var(--muted);font-size:12px}
+.tag-bar{position:relative;width:100%;height:4px;background:var(--overlay);border-radius:3px;overflow:hidden}
+.tag-bar::after{content:'';position:absolute;left:0;top:0;bottom:0;width:var(--pct,0%);background:linear-gradient(90deg,var(--danger),var(--warning) 40%,var(--accent-hover) 75%,var(--success));transition:width .2s}
+.tag-pct{color:var(--muted);font-size:12px;align-self:flex-end}
+.tag-chip.sel{background:rgba(99,102,241,0.12);border-color:var(--accent)}
+.section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.section-head h2{margin:0}
+.legend{color:var(--muted);font-size:12px;cursor:help;border-bottom:1px dotted var(--border)}
+.legend strong{color:var(--text);font-weight:600}
+.q-code{color:var(--muted);font-family:var(--mono);font-size:0.85em}
+.prompt-full{margin:0 0 8px}
+.combinator{display:flex;gap:10px;margin:18px 0 4px}
+.combo-tile{display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:10px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;flex:1;max-width:220px;outline:none}
+.combo-tile:hover{background:var(--hover)}
+.combo-tile:focus{box-shadow:inset 0 0 0 2px var(--accent)}
+.combo-tile.sel{background:rgba(99,102,241,0.12);border-color:var(--accent)}
+.combo-title{font-weight:600;font-size:14px}
+.combo-hint{color:var(--muted);font-size:12px;font-family:var(--mono)}`;
 }
