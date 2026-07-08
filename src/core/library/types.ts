@@ -136,9 +136,14 @@ export type ImportRecord = {
 
 export type ReviewRating = 1 | 2 | 3 | 4; // Again | Hard | Good | Easy
 
+/** Self-rated confidence BEFORE reveal (1 Guessing … 5 Certain). */
+export type Confidence = 1 | 2 | 3 | 4 | 5;
+
 export type ReviewEvent = {
   cardId: string;
   rating: ReviewRating;
+  /** Pre-reveal confidence, recorded for calibration; does not affect FSRS. */
+  confidenceBeforeReveal?: Confidence;
   stateBefore: 0 | 1 | 2 | 3;
   stabilityBefore: number;
   difficultyBefore: number;

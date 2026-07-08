@@ -84,6 +84,25 @@ describe('due queue + review session', () => {
     expect(res.ok).toBe(true);
   });
 
+  it('records pre-reveal confidence on the review event when provided', async () => {
+    const root = await freshRoot();
+    const now = new Date('2026-07-07T12:00:00.000Z');
+    await importAgentSet(root, twoCardPatch(), { now });
+    const due = await getDueCards(root, now);
+
+    const session = startSession('recommended', undefined, now);
+    await gradeCard(root, session, due[0], 3, now, 5); // Good, "Certain" before reveal
+    await gradeCard(root, session, due[1], 1, now); // no confidence supplied
+
+    expect(session.events[0].confidenceBeforeReveal).toBe(5);
+    expect(session.events[1].confidenceBeforeReveal).toBeUndefined();
+
+    const path = await endSession(root, session, now);
+    const saved = await readJson<ReviewSession>(path);
+    expect(saved?.events[0].confidenceBeforeReveal).toBe(5);
+    expect(saved?.events[1]).not.toHaveProperty('confidenceBeforeReveal');
+  });
+
   it('endSession writes a per-day session file with the correct summary', async () => {
     const root = await freshRoot();
     const now = new Date('2026-07-07T12:00:00.000Z');

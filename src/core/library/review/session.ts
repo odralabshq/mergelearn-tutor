@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 
-import type { Card, ReviewEvent, ReviewRating, ReviewSession } from '../types.js';
+import type { Card, Confidence, ReviewEvent, ReviewRating, ReviewSession } from '../types.js';
 import { gradeFsrs } from '../fsrs.js';
 import { saveCard } from '../cardStore.js';
 import { libraryPaths } from '../libraryStore.js';
@@ -48,6 +48,7 @@ export async function gradeCard(
   card: Card,
   rating: ReviewRating,
   now = new Date(),
+  confidenceBeforeReveal?: Confidence,
 ): Promise<Card> {
   const before = card.fsrs;
   const nextFsrs = gradeFsrs(before, rating, now);
@@ -57,6 +58,7 @@ export async function gradeCard(
   const event: ReviewEvent = {
     cardId: card.id,
     rating,
+    ...(confidenceBeforeReveal !== undefined ? { confidenceBeforeReveal } : {}),
     stateBefore: before.state,
     stabilityBefore: before.stability,
     difficultyBefore: before.difficulty,

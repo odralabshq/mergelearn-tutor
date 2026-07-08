@@ -11,9 +11,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { getDueCards } from '../core/library/review/dueQueue.js';
 import { startSession, gradeCard, endSession } from '../core/library/review/session.js';
-import { listSetSummaries } from '../core/library/setStore.js';
-import { loadCard } from '../core/library/cardStore.js';
-import type { Card, ReviewRating } from '../core/library/types.js';
+import { listSetSummaries, loadSet } from '../core/library/setStore.js';
+import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
+import type { Card, Confidence, ReviewRating } from '../core/library/types.js';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
@@ -37,6 +37,10 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root));
   if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice());
+  if (method === 'GET' && url.pathname.startsWith('/set/')) {
+    const setId = decodeURIComponent(url.pathname.slice('/set/'.length));
+    return sendHtml(res, 200, await renderSetBrowser(root, setId));
+  }
   if (method === 'GET' && url.pathname === '/api/due') return sendJson(res, 200, await dueData(root, url));
   if (method === 'POST' && url.pathname === '/api/grade') return gradeApi(root, req, res);
   return sendText(res, 404, 'not found\n');
@@ -73,16 +77,19 @@ function cardView(card: Card) {
 }
 
 async function gradeApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = (await readJson(req)) as { cardId?: string; setId?: string; rating?: number };
+  const body = (await readJson(req)) as { cardId?: string; setId?: string; rating?: number; confidence?: number };
   const rating = Number(body.rating) as ReviewRating;
   if (!body.cardId || !body.setId || ![1, 2, 3, 4].includes(rating)) {
     return sendJson(res, 400, { ok: false, error: 'need cardId, setId, rating(1-4)' });
   }
+  const confidence = [1, 2, 3, 4, 5].includes(Number(body.confidence))
+    ? (Number(body.confidence) as Confidence)
+    : undefined;
   const card = await loadCard(root, body.setId, body.cardId);
   if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
   // One sitting per grade, matching the CLI. (Batched sittings are a future refinement.)
   const session = startSession('recommended');
-  const updated = await gradeCard(root, session, card, rating);
+  const updated = await gradeCard(root, session, card, rating, new Date(), confidence);
   await endSession(root, session);
   return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
 }
@@ -116,13 +123,74 @@ async function renderHome(root: string): Promise<string> {
     const d = dueBySet.get(s.id) ?? 0;
     const dueBadge = d > 0 ? `<span class="badge due">${d} due</span>` : '';
     const path = s.folderPath ? `<span class="path">${escapeHtml(s.folderPath)}</span>` : '';
-    return `<li class="set-row"><span class="title">${escapeHtml(s.title)}</span>${path}` +
-      `${dueBadge}<span class="count">${s.cardCount} card${s.cardCount === 1 ? '' : 's'}</span></li>`;
+    return `<li class="set-row"><a class="set-link" href="/set/${encodeURIComponent(s.id)}">` +
+      `<span class="title">${escapeHtml(s.title)}</span>${path}` +
+      `${dueBadge}<span class="count">${s.cardCount} card${s.cardCount === 1 ? '' : 's'}</span></a></li>`;
   }).join('');
 
   const body = `<h1>Home</h1>${banner}<h2 style="margin-top:28px">Your sets</h2>` +
+    `<p class="muted" style="margin:-4px 0 0;font-size:13px">Open a set to browse and revisit every card, due or not.</p>` +
     `<ul class="set-list">${rows}</ul>`;
   return pageShell('MergeLearn — Home', 'home', body);
+}
+
+// ---- Set browser ----
+
+/**
+ * Server-rendered browser for one set: lists EVERY card (due or not) as an
+ * expandable panel. Lets you revisit a card's front, frozen snippets, answer,
+ * explanation and examples at any time — independent of the review schedule.
+ */
+async function renderSetBrowser(root: string, setId: string): Promise<string> {
+  const set = await loadSet(root, setId);
+  if (!set) {
+    const body = `<p><a href="/">← Home</a></p><h1>Set not found</h1>` +
+      `<div class="empty">No set with id <code>${escapeHtml(setId)}</code>.</div>`;
+    return pageShell('MergeLearn — Set', 'set', body);
+  }
+  const [cards, due] = await Promise.all([
+    loadCardsForSet(root, setId),
+    getDueCards(root, new Date(), { setIds: [setId] }),
+  ]);
+  const dueIds = new Set(due.map((c) => c.id));
+  const now = Date.now();
+
+  const items = cards.map((card) => {
+    const v = cardView(card);
+    const isDue = dueIds.has(card.id);
+    const dueDate = new Date(card.fsrs.due);
+    const state = isDue
+      ? `<span class="badge due">due now</span>`
+      : `<span class="badge next">next ${dueDate.getTime() > now ? dueDate.toLocaleDateString() : 'soon'}</span>`;
+    const srcs = v.sources.map((s) =>
+      `<div class="src"><div class="meta">${escapeHtml(s.path)}:${s.startLine}-${s.endLine} @ ${escapeHtml(s.commit)} (${escapeHtml(s.status ?? 'unknown')})</div><pre>${escapeHtml(s.text)}</pre></div>`,
+    ).join('');
+    const examples = v.examples.map((x) => {
+      const head = `${x.label ?? ''}${x.language ? ` (${x.language})` : ''}`;
+      const code = x.code ? `<pre><code>${escapeHtml(x.code)}</code></pre>` : '';
+      const note = x.note ? `<div class="ex-note">${inlineCode(x.note)}</div>` : '';
+      return `<div class="ex">${head ? `<div class="ex-label">${escapeHtml(head)}</div>` : ''}${code}${note}</div>`;
+    }).join('');
+    const mistakes = v.commonMistakes.length
+      ? `<p class="label">Common mistakes</p><ul>${v.commonMistakes.map((m) => `<li>${inlineCode(m)}</li>`).join('')}</ul>`
+      : '';
+    const ctx = v.context ? `<p class="ctx">${inlineCode(v.context)}</p>` : '';
+    return `<details class="browse-card"><summary><span class="q">${inlineCode(v.prompt)}</span>${state}</summary>` +
+      `<div class="browse-body">${ctx}${srcs}` +
+      `<p class="label">Answer</p><p class="short">${inlineCode(v.shortAnswer)}</p>` +
+      `<p class="label">Explanation</p><div class="expl">${inlineCode(v.explanation)}</div>${examples}${mistakes}</div></details>`;
+  }).join('');
+
+  const path = set.folderPath ? `<span class="path">${escapeHtml(set.folderPath)}</span>` : '';
+  const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
+    `<p class="muted">${path} ${cards.length} card${cards.length === 1 ? '' : 's'} · ${due.length} due</p>` +
+    (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`);
+  return pageShell(`MergeLearn — ${set.title}`, 'set', body);
+}
+
+/** Server-side inline-code formatter (mirrors the client `fmt`): `code` → <code>. */
+function inlineCode(value: string): string {
+  return escapeHtml(value).replace(/`([^`]+)`/g, '<code>$1</code>');
 }
 
 // ---- Practice tab ----
@@ -144,7 +212,7 @@ function renderPractice(): string {
 
 function practiceScript(): string {
   return `
-var queue=[];var pos=0;var reviewed=0;
+var queue=[];var pos=0;var reviewed=0;var confidence=0;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}p.textContent='Card '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' reviewed';}
@@ -152,27 +220,33 @@ function render(){
   progress();
   var mount=document.getElementById('mount');
   if(pos>=queue.length){mount.innerHTML=queue.length?'<div class="done-note">Session complete — '+reviewed+' reviewed. Nothing more due.</div>':'<div class="empty">Nothing due right now. Come back later, or author more cards.</div>';return;}
-  var c=queue[pos];
+  var c=queue[pos];confidence=0;
   var fmt=function(s){return esc(s).replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>');};
   var srcs=(c.sources||[]).map(function(s){return '<div class="src"><div class="meta">'+esc(s.path)+':'+s.startLine+'-'+s.endLine+' @ '+esc(s.commit)+' ('+esc(s.status)+')</div><pre>'+esc(s.text)+'</pre></div>';}).join('');
   var examples=(c.examples||[]).map(function(x){var head=(x.label||'')+(x.language?' ('+x.language+')':'');var code=x.code?'<pre><code>'+esc(x.code)+'</code></pre>':'';var note=x.note?'<div class="ex-note">'+fmt(x.note)+'</div>':'';return '<div class="ex">'+(head?'<div class="ex-label">'+esc(head)+'</div>':'')+code+note+'</div>';}).join('');
   var ctx=c.context?'<p class="ctx">'+fmt(c.context)+'</p>':'';
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
+  var confLabels=[['1','Guessing'],['2','Low'],['3','Medium'],['4','High'],['5','Certain']];
+  var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'">'+p[1]+'<kbd>'+p[0]+'</kbd></button>';}).join('');
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
-    '<p class="prompt">'+fmt(c.prompt)+'</p>'+ctx+
+    '<p class="prompt">'+fmt(c.prompt)+'</p>'+ctx+srcs+
+    '<div class="confidence" id="confidence"><p class="label">Before you reveal — how well do you know this?</p><div class="conf-opts">'+confBtns+'</div></div>'+
     '<div class="actions"><button class="primary" id="reveal">Reveal answer <kbd>space</kbd></button></div>'+
     '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
-    '<p class="label">Explanation</p><div class="expl">'+fmt(c.explanation)+'</div>'+examples+mistakes+srcs+
+    '<p class="label">Explanation</p><div class="expl">'+fmt(c.explanation)+'</div>'+examples+mistakes+
+    '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
     '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
+  [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
   document.getElementById('reveal').addEventListener('click',reveal);
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
 }
-function reveal(){document.getElementById('reveal-panel').classList.add('show');document.getElementById('reveal').disabled=true;}
+function setConfidence(n){confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});var r=document.getElementById('reveal');if(r)r.classList.add('ready');}
+function reveal(){if(!confidence){statusMsg('First rate how well you know it (1-5).');return;}document.getElementById('reveal-panel').classList.add('show');var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');document.getElementById('reveal').disabled=true;}
 function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.classList.contains('show');}
 async function grade(r){
   var c=queue[pos];if(!c)return;
   try{
-    var res=await fetch('/api/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cardId:c.id,setId:c.setId,rating:r})});
+    var res=await fetch('/api/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined})});
     var j=await res.json();
     if(!j.ok){statusMsg(j.error||'grade failed');return;}
     reviewed++;statusMsg('Graded · next due '+new Date(j.due).toLocaleDateString());
@@ -182,6 +256,7 @@ async function grade(r){
 document.addEventListener('keydown',function(e){
   if(['INPUT','TEXTAREA','SELECT'].indexOf(e.target.tagName)>=0)return;
   if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!isRevealed())reveal();return;}
+  if(/^[1-5]$/.test(e.key)&&!isRevealed()){setConfidence(Number(e.key));return;}
   if(/^[1-4]$/.test(e.key)&&isRevealed())grade(Number(e.key));
 });
 (async function(){try{var res=await fetch('/api/due');var j=await res.json();queue=j.cards||[];}catch(e){queue=[];}render();})();
@@ -218,7 +293,7 @@ export function escapeHtml(value: string): string {
 
 // ---- HTML shell ----
 
-type Tab = 'home' | 'practice';
+type Tab = 'home' | 'practice' | 'set';
 
 function pageShell(title: string, tab: Tab, body: string): string {
   const nav = (['home', 'practice'] as Tab[])
@@ -307,5 +382,28 @@ button.primary:hover{background:var(--accent-hover)}
 .g1{border-color:var(--danger)}.g2{border-color:var(--warning)}.g3{border-color:var(--accent)}.g4{border-color:var(--success)}
 .status{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--overlay);border:1px solid var(--border);padding:8px 16px;border-radius:var(--radius);font-size:13px;opacity:0;transition:opacity .2s}
 .status.show{opacity:1}
-.done-note{text-align:center;padding:40px;color:var(--success);font-weight:600}`;
+.done-note{text-align:center;padding:40px;color:var(--success);font-weight:600}
+.confidence{margin-top:18px;padding-top:16px;border-top:1px solid var(--border-soft)}
+.conf-opts{display:flex;gap:6px;flex-wrap:wrap}
+.conf-opts button{flex:1;min-width:88px;display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 6px}
+.conf-opts button kbd{font-family:var(--mono);font-size:10px;opacity:0.6}
+.conf-opts button.sel{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
+.confidence.locked{opacity:0.55;pointer-events:none}
+#reveal.ready{box-shadow:0 0 0 2px var(--accent-hover)}
+.grade-label{margin-top:6px}
+.set-link{display:flex;align-items:center;gap:14px;width:100%;color:inherit}
+.set-link:hover{text-decoration:none}
+.set-row{padding:0}.set-row:hover{border-color:var(--accent)}
+.set-link{padding:14px 16px}
+.badge.next{background:var(--overlay);color:var(--muted)}
+.browse-list{display:grid;gap:8px;margin-top:16px}
+.browse-card{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+.browse-card summary{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;list-style:none}
+.browse-card summary::-webkit-details-marker{display:none}
+.browse-card summary:hover{background:var(--hover)}
+.browse-card summary .q{font-weight:600;flex:1}
+.browse-card[open] summary{border-bottom:1px solid var(--border)}
+.browse-body{padding:16px}
+.browse-body .label{margin-top:14px}
+.browse-body .label:first-child{margin-top:0}`;
 }
