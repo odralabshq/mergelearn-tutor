@@ -663,7 +663,16 @@ function renderMarkdownHtml(markdown: string): string {
       i++; const codeLines: string[] = [];
       while (i < lines.length && !(lines[i] ?? '').startsWith('```')) { codeLines.push(lines[i] ?? ''); i++; }
       if (i < lines.length) i++;
-      blocks.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+      const code = codeLines.join('\n');
+      // Mermaid: emit a <pre class="mermaid"> the client turns into an SVG.
+      // Content is HTML-escaped for safe embedding; the browser decodes it back
+      // to real text in .textContent, which is what mermaid parses. If the
+      // diagram engine can't load, the raw source stays visible (graceful).
+      if (lang === 'mermaid') {
+        blocks.push(`<pre class="mermaid">${escapeHtml(code)}</pre>`);
+        continue;
+      }
+      blocks.push(`<pre><code${lang ? ` class="language-${escapeHtml(lang)}"` : ''}>${escapeHtml(code)}</code></pre>`);
       continue;
     }
     // Heading
@@ -728,6 +737,9 @@ function render(){
   var mount=document.getElementById('mount');
   if(pos>=queue.length){mount.innerHTML=queue.length?'<div class="done-note">Session complete — '+reviewed+' reviewed. Nothing more due.</div>':'<div class="empty">Nothing due right now. Come back later, or author more cards.</div>';return;}
   var c=queue[pos];confidence=0;
+  // Sticky progressive disclosure: default collapsed, but remember the choice
+  // so a learner who wants depth isn't re-collapsing it every card.
+  var deepOpen=false;try{deepOpen=localStorage.getItem('ml-deep-open')==='1';}catch(e){}
   var fmt=function(s){return esc(s).replace(/\x60([^\x60]+)\x60/g,'<code>$1</code>');};
   var srcs=(c.sources||[]).map(function(s){return '<div class="src"><div class="meta">'+esc(s.path)+':'+s.startLine+'-'+s.endLine+' @ '+esc(s.commit)+' ('+esc(s.status)+')</div>'+(s.snippetHtml||'<pre>'+esc(s.text)+'</pre>')+'</div>';}).join('');
   var examples=(c.examples||[]).map(function(x){var head=(x.label||'')+(x.language?' ('+x.language+')':'');var code=x.code?'<pre><code>'+esc(x.code)+'</code></pre>':'';var note=x.note?'<div class="ex-note">'+fmt(x.note)+'</div>':'';return '<div class="ex">'+(head?'<div class="ex-label">'+esc(head)+'</div>':'')+code+note+'</div>';}).join('');
@@ -739,11 +751,14 @@ function render(){
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+
     '<div class="confidence" id="confidence"><p class="label">Before you reveal — how well do you know this?</p><div class="conf-opts">'+confBtns+'</div></div>'+
     '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
-    '<p class="label">Explanation</p><div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+
+    '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
+    '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
     '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
+  var deep=document.getElementById('deep');
+  if(deep)deep.addEventListener('toggle',function(){try{localStorage.setItem('ml-deep-open',deep.open?'1':'0');}catch(e){}});
 }
 function setConfidence(n){confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});reveal();}
 function reveal(){if(!confidence){statusMsg('Rate confidence (1-5) first.');return;}document.getElementById('reveal-panel').classList.add('show');var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');}
@@ -832,7 +847,36 @@ function pageShell(title: string, tab: Tab, body: string): string {
     `<header class="topbar"><span class="brand">MergeLearn</span>` +
     `<nav class="tabs">${nav}</nav>` +
     `<span class="hint">local · model-free</span></header>` +
-    `<main>${body}</main></body></html>`;
+    `<main>${body}</main><script>${mermaidLoader()}</script></body></html>`;
+}
+
+/**
+ * Client mermaid loader. Lazy: fetches the diagram engine ONLY when a
+ * `.mermaid` element exists, so Home/Manage stay fully offline. Shared by the
+ * server-rendered set browser (present on load) and the client-rendered
+ * Practice tab (inserted after fetch, possibly inside a collapsed <details>).
+ * CDN failure is silent — the raw diagram source stays visible in the <pre>.
+ */
+function mermaidLoader(): string {
+  return `
+(function(){
+  var loading=null;
+  function present(){return document.querySelector('.mermaid:not([data-processed])');}
+  window.__mlMermaid=function(){
+    if(!present())return;
+    if(!loading){
+      loading=import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs')
+        .then(function(m){var lib=m.default;lib.initialize({startOnLoad:false,theme:'dark',securityLevel:'strict'});return lib;})
+        .catch(function(){loading=null;return null;});
+    }
+    loading.then(function(lib){if(!lib)return;try{lib.run({querySelector:'.mermaid:not([data-processed])'});}catch(e){}});
+  };
+  if(document.readyState!=='loading')window.__mlMermaid();
+  else document.addEventListener('DOMContentLoaded',window.__mlMermaid);
+  // toggle doesn't bubble — capture so diagrams inside a collapsed <details> render on open.
+  document.addEventListener('toggle',function(){window.__mlMermaid();},true);
+})();
+`;
 }
 
 function style(): string {
@@ -887,6 +931,16 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .label{text-transform:uppercase;letter-spacing:0.08em;font-size:11px;color:var(--muted);margin:0 0 4px}
 .short{font-weight:600;margin:0 0 14px}
 .expl{overflow-wrap:break-word}
+.deep{margin:6px 0 4px}
+.deep>summary{cursor:pointer;color:var(--link);font-size:13px;list-style:none;user-select:none;display:inline-flex;align-items:center;gap:6px;padding:4px 0}
+.deep>summary::-webkit-details-marker{display:none}
+.deep>summary::before{content:'▸';display:inline-block;transition:transform .15s}
+.deep[open]>summary::before{transform:rotate(90deg)}
+.deep .deep-less{display:none}
+.deep[open] .deep-more{display:none}
+.deep[open] .deep-less{display:inline}
+.mermaid{background:var(--overlay);border:1px solid var(--border);border-radius:var(--radius-sm);padding:14px;margin:12px 0;text-align:center;overflow-x:auto;font-family:var(--mono);font-size:12px}
+.mermaid[data-processed]{font-family:inherit}
 .expl code,.src pre{font-family:var(--mono);font-size:13px}
 .src{margin-top:14px;background:var(--overlay);border-radius:var(--radius-sm);padding:10px 12px}
 .src .meta{color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:6px}
