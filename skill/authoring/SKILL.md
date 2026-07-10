@@ -1,101 +1,142 @@
 ---
 name: mergelearn-authoring
 description: >-
-  Author MergeLearn Tutor flashcards with a capable coding agent instead of a
-  small local model. Use when the user wants to generate learning cards for a
-  repo using their own agent (Claude, GPT, etc.). The agent picks teachable code
-  ranges and writes card drafts; the tutor freezes the real snippet from disk,
-  verifies format, optionally answer-key-checks, and schedules survivors. This
-  replaces the local-model author the platform evaluation found to be the
-  quality bottleneck (semantic correctness failed ~44% of the time).
+  Author MergeLearn cards with a capable coding agent (Claude, GPT, etc.) for
+  the v2 model-free library. The agent writes an AgentSetPatch JSON; the tutor
+  freezes any cited repo snippet from disk, runs deterministic gates, and
+  schedules survivors. Use when the user wants to generate learning cards for a
+  repo or a concept using their own agent.
 ---
 
 # Authoring MergeLearn cards with a coding agent
 
-You (the coding agent) are the AUTHOR. The tutor still owns provenance and
-gating: it re-fetches every cited snippet from disk (your snippet text is never
-trusted), runs deterministic format checks, and stages only cards that pass. Your
-job is to pick strong targets and write correct drafts.
+You (the coding agent) are the AUTHOR. The tutor owns provenance and gating: it
+re-fetches every cited snippet from disk (your snippet text is never trusted),
+runs deterministic structure + tag-graph checks, and stages only cards that
+pass. Your job is to pick strong targets and write cards that genuinely teach.
 
-## The one rule that determines quality
+## The handshake (two commands)
 
-CITE LINE NUMBERS EXACTLY. The tutor freezes whatever `startLine`-`endLine` you
-cite and pins it to HEAD. If your line numbers are off, the card asks about code
-X while showing code Y, and with no oracle running that mismatch ships silently.
-Open the file, count the lines, verify the range contains the code your question
-is about. This is the single most common failure.
+1. `mergelearn context --goal "<what to author>" [--repo <path>] [--target-set <id>]`
+   Emits an AuthoringContext JSON: existing sets, existing tags (the learning
+   graph), and the folder tree. Read it first so you REUSE tags/folders instead
+   of inventing synonyms. Blind tagging fragments the graph.
 
-## Workflow
+2. `mergelearn import --file <patch.json> [--agent <name>]`
+   Applies your AgentSetPatch. Both gates (tag-graph + card structure) must pass
+   or NOTHING is written. Cards flagged `needs_review` are reported with reasons.
 
-1. Pick targets. Read the repo. Choose 5-15 code ranges worth learning.
-2. Write drafts to a JSON file (array of the schema below).
-3. Import: `mergelearn-tutor cards import --repo <path> --file drafts.json`
-   Add `--oracle` only if a usable LLM endpoint is configured (see below).
-4. Report the import summary. Cards in `needs_review` were rejected - fix and
-   re-import, or drop them.
+Verify the CLI is wired: `mergelearn --help` lists both commands. `mergelearn
+serve` opens the local review GUI (prints a URL, blocks until Ctrl+C; open the
+URL yourself, it does not auto-launch a browser).
 
-## Draft schema (each array element)
+## The single rule that determines provenance quality
+
+If a card cites repo code, CITE LINE NUMBERS EXACTLY. The tutor freezes whatever
+`startLine`-`endLine` you cite and pins it to the commit. Off-by-one ranges make
+the card ask about code X while showing code Y, and with no oracle that mismatch
+ships silently. Open the file, count the lines, verify the range. Conceptual
+Conceptual cards (no repo) simply omit `sourceRefs` — that is fully supported.
+
+## AgentSetPatch schema (what `--file` expects)
+
+One JSON object per import. `tagPatch.add` proposes NEW tags (referenced by
+`localId`); `tagPatch.reuse` lists existing tag ids you are reusing. `order`
+must cover exactly the cards in this patch (by `localId`).
 
 ```json
 {
-  "conceptLabel": "short human label, e.g. 'Queue.dequeue FIFO semantics'",
-  "plane": "local_behavior",
-  "path": "src/queue.ts",
-  "startLine": 6,
-  "endLine": 8,
-  "prompt": "A real question ending in '?' - must NOT contain its own answer.",
-  "expectedAnswer": "The correct answer, derivable from the cited snippet alone.",
-  "expectedFocus": ["key", "terms", "a", "good", "answer", "hits"],
-  "explanationMarkdown": "optional deeper explanation shown after reveal",
-  "planeConfidence": 0.8
+  "version": 1,
+  "set": { "title": "TypeScript narrowing", "folderPath": "typescript/types", "tagIds": [] },
+  "tagPatch": {
+    "reuse": ["tag_typescript"],
+    "add": [{ "localId": "narrowing", "label": "narrowing", "kind": "topic", "parentIds": ["tag_typescript"] }]
+  },
+  "order": ["c1"],
+  "cards": [
+    {
+      "localId": "c1",
+      "tagRefs": ["tag_typescript", "narrowing"],
+      "folderPath": "typescript/types",
+      "front": {
+        "prompt": "Why does `typeof x === 'string'` narrow x inside the block, and what breaks it?",
+        "contextMarkdown": "Optional setup shown WITH the question (markdown, code fences OK)."
+      },
+      "back": {
+        "shortAnswer": "One or two sentences: the direct answer, first thing shown on reveal.",
+        "explanationMarkdown": "The teaching payload — see depth rules below. Full markdown.",
+        "examples": [{ "label": "Widening pitfall", "language": "typescript", "code": "let x = cond ? 'a' : 1;", "note": "x: string | number" }],
+        "commonMistakes": ["Assuming a narrowed type survives across an await/callback boundary."]
+      },
+      "sourceRefs": [{ "repoId": "<from context>", "path": "src/x.ts", "startLine": 6, "endLine": 8 }]
+    }
+  ]
 }
 ```
 
-## Choosing the plane (biggest quality lever)
+Field notes: `front.prompt` must end in `?` and must NOT contain the
+`shortAnswer` verbatim (anti-trivia gate). `shortAnswer` and
+`explanationMarkdown` are both required and non-empty. `examples[].code` is
+illustrative only — it is NOT provenance and is never frozen. Only `sourceRefs`
+are re-read from disk.
 
-The evaluation showed target/plane choice moves quality ~1.7 points - roughly 5x
-the effect of model size. Prefer planes that sit on real logic:
+## Write explanations that TEACH (the biggest quality lever)
 
-- `architecture_flow` (best, ~4.4 avg): how a function fits the larger flow,
-  what calls it, what it enables. Cite a function body with real behavior.
-- `local_behavior` (~3.6): what this code does when run, edge cases, return
-  values. Cite the executable lines, not the signature.
-- `risk_and_tests`: what breaks this, what a test must cover.
-- `file_role` / `repo_domain`: what this file/module is responsible for.
-- `language_mechanics` (weakest, ~2.7): reserve for genuinely subtle syntax.
-  Do NOT point it at a bare getter or an import - that yields trivia.
+`shortAnswer` is the quick check. `explanationMarkdown` is where the learning
+happens — treat it as a mini-lesson, not a caption. A one-line explanation
+wastes the card. Aim for 4-10 sentences (more when the topic warrants it) and
+cover, in this rough order:
 
-Avoid citing comment blocks, import lists, closing braces, or bare type
-signatures. They score 1.6-2.4 because there is nothing to reason about.
+1. **The direct mechanism** — why the answer is what it is, step by step.
+2. **The mental model** — the underlying principle the learner should
+   internalize, phrased so it transfers to sibling problems.
+3. **Why it matters / when it bites** — the real consequence, edge cases, the
+   failure mode this knowledge prevents.
+4. **Connections** — related concepts, contrasts ("unlike X, this…"), and where
+   this fits the larger system. Link outward so the card seeds a web, not a fact.
 
-## What the tutor rejects (so don't do it)
+Use full markdown: headings, lists, **bold** for the key term, and fenced code
+blocks (```` ```ts ````) for any code — the renderer shows them as real code
+blocks. Put runnable illustrations in `examples[]` and gotchas in
+`commonMistakes[]` rather than cramming everything into one paragraph.
 
-- Prompt with no `?` -> `format:not_a_question`.
-- Prompt that contains the answer verbatim -> `format:trivia`.
-- Empty prompt / answer / focus / snippet -> `format:empty_*`.
-- Answer the snippet does not support -> caught by `--oracle` (if enabled) as
-  `answer_key:disagree`; without an oracle it is your responsibility.
-- A range that is mostly comments, imports, or lone braces -> `teachability:low_signal`.
-  This is a deterministic content gate (runs with or without an oracle): a cited
-  range must be at least ~1/3 substantive code lines. Cite executable logic, not
-  header comments or import blocks. This directly enforces the plane guidance above.
+### Diagrams: mermaid is supported
 
-## Answer-key oracle (optional, recommended when available)
+When a flow, hierarchy, state machine, or sequence would explain faster than
+prose, embed a mermaid diagram with a ```` ```mermaid ```` fence inside
+`explanationMarkdown`. The GUI renders it as an SVG (raw diagram text shows as a
+fallback if the diagram engine can't load). Example of the fence to emit:
 
-The oracle blind-derives an answer from the snippet in a SEPARATE context and
-checks it against yours. It needs a usable endpoint:
+````markdown
+```mermaid
+flowchart LR
+  A[typeof check] --> B{narrowed?}
+  B -->|yes| C[string methods safe]
+  B -->|no| D[union type persists]
+```
+````
 
-- Local: run an OpenAI-compatible server and leave defaults (127.0.0.1:11434).
-- Cloud: set `OPENAI_BASE_URL`, `OPENAI_MODEL`, `OPENAI_API_KEY`, and
-  `MERGELEARN_ALLOW_CLOUD=1` (consent: authoring sends snippets to the endpoint).
+Reach for a diagram for control flow, call graphs, data/state transitions, and
+type relationships. Keep them small and legible — 3-8 nodes usually beats a
+sprawling graph.
 
-With no oracle, `cards import` still runs and prints an honest NOTE that answer
-truth was not independently checked. It never fakes a verdict.
+## What the tutor rejects (deterministic gates — don't trip them)
+
+- Empty `set.title`, `prompt`, `shortAnswer`, or `explanationMarkdown`.
+- `prompt` that contains the `shortAnswer` verbatim → `answer_leak` (anti-trivia).
+- Duplicate card `localId`, an `order` that misses a card or lists an unknown/
+  duplicate one, or a `tagRef` that resolves to neither an existing tag id nor a
+  `tagPatch.add` localId.
+- A cited `sourceRef` whose file/range can't be resolved on disk → the card is
+  imported as `needs_review`, not silently trusted.
 
 ## Pitfalls
 
-- Off-by-one line ranges are the #1 defect. Re-read the file and count.
-- One concept per card. If a range needs two questions, cite it twice with
-  different planes.
-- Re-importing the same range is idempotent on concepts (no duplicates), but
-  makes a fresh card each run - regenerate deliberately, not by accident.
+- Off-by-one line ranges are the #1 provenance defect. Re-read and count.
+- One concept per card. If a range needs two questions, author two cards.
+- REUSE tags from the context handshake; don't invent `auth`/`authentication`
+  synonyms — it fragments the learning graph.
+- Don't stuff the answer into the prompt to "help" — the anti-trivia gate
+  rejects it, and it defeats retrieval practice.
+- A thin `explanationMarkdown` passes the (non-empty) gate but fails the learner.
+  Depth is on you; the gate won't catch shallowness.

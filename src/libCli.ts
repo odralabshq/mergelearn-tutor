@@ -16,6 +16,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
 
@@ -161,9 +163,20 @@ export function buildProgram(): Command {
   return program;
 }
 
-// Entry point (only when run directly, not when imported by tests).
-const invokedDirectly = process.argv[1]?.endsWith('libCli.js') || process.argv[1]?.endsWith('libCli.ts');
-if (invokedDirectly) {
+// Entry point: run only when this module is the process entry, not when a test
+// imports buildProgram(). We compare realpaths so the npm-linked `mergelearn`
+// bin (a symlink to dist/libCli.js) still matches — the old `endsWith('libCli.js')`
+// check silently no-op'd under the linked bin name, killing `serve` and `--help`.
+function isEntryPoint(): boolean {
+  const arg = process.argv[1];
+  if (!arg) return false;
+  try {
+    return realpathSync(arg) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+if (isEntryPoint()) {
   buildProgram().parseAsync(process.argv).catch((err) => {
     console.error(err instanceof Error ? err.message : String(err));
     process.exitCode = 1;
