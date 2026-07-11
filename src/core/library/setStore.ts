@@ -38,7 +38,15 @@ export async function listSetSummaries(root: string): Promise<SetSummary[]> {
   for (const id of ids) {
     const set = await loadSet(root, id);
     if (!set) continue;
-    out.push({ id: set.id, title: set.title, folderPath: set.folderPath, cardCount: await countCards(root, id) });
+    out.push({
+      id: set.id,
+      title: set.title,
+      folderPath: set.folderPath,
+      cardCount: await countCards(root, id),
+      objective: set.objective,
+      lessonKind: set.lessonKind,
+      tagIds: set.tagIds,
+    });
   }
   return out;
 }

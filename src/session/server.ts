@@ -11,10 +11,10 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 
 import { getDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
 import { startSession, gradeCard, endSession } from '../core/library/review/session.js';
-import { listSetSummaries, loadSet, listSetIds } from '../core/library/setStore.js';
+import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
 import { loadTags } from '../core/library/tagStore.js';
-import type { Card, Confidence, ReviewRating, ReviewSession } from '../core/library/types.js';
+import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, ReviewSession } from '../core/library/types.js';
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
 import { join } from 'node:path';
@@ -48,6 +48,8 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
   // Empty body / empty object both mean "everything due."
   if (url.pathname === '/api/due') return dueData(root, req, res, url);
+  // Learn mode: every active card in one set, in authored order, independent of FSRS due state.
+  if (method === 'GET' && url.pathname === '/api/lesson') return lessonData(root, res, url);
   // Per-sitting session lifecycle (doc 06 addendum A2): start -> grade* -> end.
   if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res);
@@ -85,6 +87,26 @@ function asFilter(v: unknown): DueFilter | undefined {
   return hasDimension ? f : undefined;
 }
 
+const INTERACTION_TYPES = new Set<Interaction['type']>(['flashcard', 'self_response', 'choice']);
+
+/** Normalize an untrusted grade-body `attempt` into a ReviewAttempt (or
+ * undefined). Evidence only — never affects FSRS — so we coerce leniently and
+ * drop anything malformed rather than rejecting the whole grade. */
+function asAttempt(v: unknown): ReviewAttempt | undefined {
+  if (!v || typeof v !== 'object') return undefined;
+  const o = v as Record<string, unknown>;
+  if (typeof o.interaction !== 'string' || !INTERACTION_TYPES.has(o.interaction as Interaction['type'])) return undefined;
+  const a: ReviewAttempt = { interaction: o.interaction as Interaction['type'] };
+  if (typeof o.responseText === 'string') a.responseText = o.responseText.slice(0, 4000);
+  if (Array.isArray(o.selectedOptionIds) && o.selectedOptionIds.every((x) => typeof x === 'string')) {
+    a.selectedOptionIds = o.selectedOptionIds as string[];
+  }
+  if (typeof o.correct === 'boolean') a.correct = o.correct;
+  if (typeof o.revealedFull === 'boolean') a.revealedFull = o.revealedFull;
+  if (typeof o.elapsedMs === 'number' && Number.isFinite(o.elapsedMs) && o.elapsedMs >= 0) a.elapsedMs = o.elapsedMs;
+  return a;
+}
+
 /** /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
  * Empty body / empty object both mean "everything due." */
 async function dueData(root: string, req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> {
@@ -106,6 +128,33 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
   }
   const due = await getDueCards(root, new Date(), filter);
   return sendJson(res, 200, { total: due.length, cards: due.map(cardView) });
+}
+
+/** GET /api/lesson?set=<id> returns all active cards in authored order.
+ * This is deliberately separate from /api/due: Learn sequencing and FSRS
+ * Review are different jobs and must not silently change each other's queues. */
+async function lessonData(root: string, res: ServerResponse, url: URL): Promise<void> {
+  const setId = url.searchParams.get('set');
+  if (!setId) return sendJson(res, 400, { ok: false, error: 'need set' });
+  const [set, cards, order] = await Promise.all([
+    loadSet(root, setId), loadCardsForSet(root, setId), loadOrder(root, setId),
+  ]);
+  if (!set) return sendJson(res, 404, { ok: false, error: 'set not found' });
+  const active = cards.filter((c) => c.status === 'active');
+  const byId = new Map(active.map((c) => [c.id, c]));
+  const ordered: Card[] = [];
+  for (const id of order?.cardIds ?? []) {
+    const card = byId.get(id);
+    if (card) { ordered.push(card); byId.delete(id); }
+  }
+  // Preserve accessibility for legacy/malformed sets whose order omits a card.
+  ordered.push(...byId.values());
+  return sendJson(res, 200, {
+    ok: true,
+    lesson: { id: set.id, title: set.title, objective: set.objective ?? null, lessonKind: set.lessonKind ?? null },
+    total: ordered.length,
+    cards: ordered.map(cardView),
+  });
 }
 
 /** Path to the per-day session file, mirroring the on-disk layout used by
@@ -130,8 +179,14 @@ async function sessionStartApi(root: string, req: IncomingMessage, res: ServerRe
   let filter: DueFilter | undefined;
   try { filter = asFilter(body); }
   catch (e) { return sendJson(res, 400, { error: (e as Error).message }); }
+  const lessonSetId = body && typeof body === 'object' && typeof (body as Record<string, unknown>).lessonSetId === 'string'
+    ? (body as Record<string, string>).lessonSetId
+    : undefined;
+  if (lessonSetId) filter = { setIds: [lessonSetId] };
   // Pick a mode that describes the filter so the session file is self-describing.
-  const mode: ReviewSession['mode'] = filter?.folderPaths?.length
+  const mode: ReviewSession['mode'] = lessonSetId
+    ? 'lesson'
+    : filter?.folderPaths?.length
     ? 'folder'
     : filter?.tagIds?.length
       ? 'tag_filter'
@@ -141,12 +196,12 @@ async function sessionStartApi(root: string, req: IncomingMessage, res: ServerRe
   const session = startSession(mode, filter);
   activeSessions.set(session.id, session);
   await persistSession(root, session);
-  return sendJson(res, 200, { ok: true, sessionId: session.id, filter: filter ?? null });
+  return sendJson(res, 200, { ok: true, sessionId: session.id, mode, filter: filter ?? null });
 }
 
 /** /api/session/grade — body: { sessionId, cardId, setId, rating, confidence? }. */
 async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let body: { sessionId?: string; cardId?: string; setId?: string; rating?: number; confidence?: number };
+  let body: { sessionId?: string; cardId?: string; setId?: string; rating?: number; confidence?: number; attempt?: unknown };
   try { body = (await readJson(req)) as typeof body; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
   const sessionId = body.sessionId;
@@ -172,7 +227,8 @@ async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerRe
     : undefined;
   const card = await loadCard(root, body.setId, body.cardId);
   if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
-  const updated = await gradeCard(root, session, card, rating, new Date(), confidence);
+  const attempt = asAttempt(body.attempt);
+  const updated = await gradeCard(root, session, card, rating, new Date(), confidence, attempt);
   await persistSession(root, session);
   return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
 }
@@ -233,6 +289,9 @@ function cardView(card: Card) {
     shortAnswer: card.back.shortAnswer,
     explanation: card.back.explanationMarkdown,
     explanationHtml: renderMarkdownHtml(card.back.explanationMarkdown),
+    // Interaction drives the pre-reveal input. Absent = legacy flashcard.
+    // Option feedback is authored, so grading is deterministic and model-free.
+    interaction: card.interaction ?? { type: 'flashcard' },
     examples: card.back.examples ?? [],
     commonMistakes: card.back.commonMistakes ?? [],
     sources: (card.sourceRefs ?? []).map((r) => ({
@@ -335,8 +394,19 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
   }).join('');
 
   const path = set.folderPath ? `<span class="path">${escapeHtml(set.folderPath)}</span>` : '';
+  const objective = set.objective
+    ? `<div class="lesson-objective"><span class="label">Objective</span><strong>${escapeHtml(set.objective)}</strong></div>`
+    : '';
+  const kind = set.lessonKind ? `<span class="badge next">${escapeHtml(set.lessonKind)}</span>` : '';
+  const learnHref = `/practice?mode=lesson&set=${encodeURIComponent(setId)}`;
+  const reviewHref = `/practice?set=${encodeURIComponent(setId)}`;
+  const actions = cards.length
+    ? `<div class="lesson-actions"><a class="cta" href="${learnHref}">Start lesson</a>` +
+      (due.length ? `<a class="secondary-action" href="${reviewHref}">Review ${due.length} due</a>` : '') + `</div>`
+    : '';
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
-    `<p class="muted">${path} ${cards.length} card${cards.length === 1 ? '' : 's'} · ${due.length} due</p>` +
+    `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'} · ${due.length} due</p>` +
+    `${objective}${actions}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`);
   return pageShell(`MergeLearn — ${set.title}`, 'set', body);
 }
@@ -729,14 +799,21 @@ function renderPractice(): string {
 function practiceScript(): string {
   return `
 var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;
+var attempt=null;var cardStartedAt=0;var practiceMode='review';
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}p.textContent='Card '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' reviewed';}
+function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}var noun=practiceMode==='lesson'?'Activity':'Card';p.textContent=noun+' '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';}
 function render(){
   progress();
   var mount=document.getElementById('mount');
-  if(pos>=queue.length){mount.innerHTML=queue.length?'<div class="done-note">Session complete — '+reviewed+' reviewed. Nothing more due.</div>':'<div class="empty">Nothing due right now. Come back later, or author more cards.</div>';return;}
-  var c=queue[pos];confidence=0;
+  if(pos>=queue.length){
+    var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewed+' reviewed. Nothing more due.';
+    var empty=practiceMode==='lesson'?'This lesson has no active activities.':'Nothing due right now. Come back later, or author more cards.';
+    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>':'<div class="empty">'+empty+'</div>';return;
+  }
+  var c=queue[pos];confidence=0;attempt=null;cardStartedAt=Date.now();
+  var interaction=c.interaction||{type:'flashcard'};
+  var interactive=interaction.type!=='flashcard';
   // Sticky progressive disclosure: default collapsed, but remember the choice
   // so a learner who wants depth isn't re-collapsing it every card.
   var deepOpen=false;try{deepOpen=localStorage.getItem('ml-deep-open')==='1';}catch(e){}
@@ -747,27 +824,71 @@ function render(){
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
   var confLabels=[['1','Guessing'],['2','Low'],['3','Medium'],['4','High'],['5','Certain']];
   var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'">'+p[1]+'<kbd>'+p[0]+'</kbd></button>';}).join('');
+  var attemptUi='';
+  if(interaction.type==='self_response'){
+    attemptUi='<div class="attempt"><label class="label" for="attempt-text">Your answer</label><textarea id="attempt-text" rows="3" placeholder="'+esc(interaction.placeholder||'Write a short answer before revealing...')+'"></textarea></div>';
+  }else if(interaction.type==='choice'){
+    var inputType=(interaction.correctOptionIds||[]).length>1?'checkbox':'radio';
+    attemptUi='<fieldset class="attempt choices"><legend class="label">Choose your answer</legend>'+interaction.options.map(function(o){return '<label class="choice"><input type="'+inputType+'" name="answer" value="'+esc(o.id)+'"><span>'+esc(o.text)+'</span></label>';}).join('')+'</fieldset>';
+  }
+  var check=interactive?'<button class="primary check-answer" id="check-answer">Check answer <kbd>Enter</kbd></button>':'';
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
-    '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+
-    '<div class="confidence" id="confidence"><p class="label">Before you reveal — how well do you know this?</p><div class="conf-opts">'+confBtns+'</div></div>'+
-    '<div class="reveal" id="reveal-panel"><p class="label">Answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
+    '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
+    '<div class="confidence" id="confidence"><p class="label">Before reveal — how confident are you?</p><div class="conf-opts">'+confBtns+'</div></div>'+check+
+    '<div class="reveal" id="reveal-panel"><div id="attempt-review"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
     '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
+  var checkBtn=document.getElementById('check-answer');if(checkBtn)checkBtn.addEventListener('click',reveal);
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
   var deep=document.getElementById('deep');
   if(deep)deep.addEventListener('toggle',function(){try{localStorage.setItem('ml-deep-open',deep.open?'1':'0');}catch(e){}});
 }
-function setConfidence(n){confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});reveal();}
-function reveal(){if(!confidence){statusMsg('Rate confidence (1-5) first.');return;}document.getElementById('reveal-panel').classList.add('show');var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');}
+function setConfidence(n){
+  confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});
+  var c=queue[pos];if(!c||!c.interaction||c.interaction.type==='flashcard')reveal();
+}
+function collectAttempt(){
+  var c=queue[pos],i=c.interaction||{type:'flashcard'};
+  if(i.type==='flashcard')return {interaction:'flashcard',elapsedMs:Date.now()-cardStartedAt};
+  if(i.type==='self_response'){
+    var text=(document.getElementById('attempt-text').value||'').trim();
+    if(!text){statusMsg('Write an answer first.');return null;}
+    return {interaction:'self_response',responseText:text,elapsedMs:Date.now()-cardStartedAt};
+  }
+  var ids=[].map.call(document.querySelectorAll('.choices input:checked'),function(x){return x.value;});
+  if(!ids.length){statusMsg('Choose an answer first.');return null;}
+  var expected=(i.correctOptionIds||[]).slice().sort();var actual=ids.slice().sort();
+  var correct=expected.length===actual.length&&expected.every(function(x,n){return x===actual[n];});
+  return {interaction:'choice',selectedOptionIds:ids,correct:correct,elapsedMs:Date.now()-cardStartedAt};
+}
+function attemptReviewHtml(c,a){
+  if(!a||a.interaction==='flashcard')return '';
+  if(a.interaction==='self_response')return '<p class="label">Your answer</p><p class="learner-answer">'+esc(a.responseText)+'</p>';
+  var i=c.interaction;var selected=new Set(a.selectedOptionIds||[]);
+  var feedback=i.options.filter(function(o){return selected.has(o.id);}).map(function(o){return '<li><strong>'+esc(o.text)+'</strong> — '+esc(o.feedback)+'</li>';}).join('');
+  return '<p class="result '+(a.correct?'correct':'incorrect')+'">'+(a.correct?'Correct':'Not quite')+'</p><p class="label">Feedback on your choice</p><ul class="choice-feedback">'+feedback+'</ul>';
+}
+function reveal(){
+  if(!confidence){statusMsg('Rate confidence (1-5) first.');return;}
+  if(isRevealed())return;
+  attempt=collectAttempt();if(!attempt)return;
+  var c=queue[pos];document.getElementById('attempt-review').innerHTML=attemptReviewHtml(c,attempt);
+  document.getElementById('reveal-panel').classList.add('show');
+  var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');
+  var area=document.querySelector('.attempt');if(area)area.classList.add('locked');
+  var check=document.getElementById('check-answer');if(check)check.disabled=true;
+  if(window.__mlMermaid)window.__mlMermaid();
+}
 function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.classList.contains('show');}
 async function grade(r){
   var c=queue[pos];if(!c)return;
   if(!sessionId){statusMsg('no active session');return;}
   try{
-    var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined})});
+    if(attempt){var deep=document.getElementById('deep');attempt.revealedFull=!!(deep&&deep.open);}
+    var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined})});
     var j=await res.json();
     if(!j.ok){statusMsg(j.error||'grade failed');return;}
     reviewed++;statusMsg('Graded · next due '+new Date(j.due).toLocaleDateString());
@@ -783,13 +904,20 @@ document.addEventListener('keydown',function(e){
 });
 window.addEventListener('beforeunload',function(){endSession(true);});
 (async function(){
+  var params=new URLSearchParams(location.search);var setParam=params.get('set');
+  var lessonMode=params.get('mode')==='lesson'&&!!setParam;practiceMode=lessonMode?'lesson':'review';
   var filter=null;try{var raw=localStorage.getItem('ml-practice-filter');if(raw)filter=JSON.parse(raw);}catch(e){}
+  if(setParam&&!lessonMode)filter={setIds:[setParam]};
+  if(lessonMode){var h=document.querySelector('main h1');if(h)h.textContent='Learn';}
+  var sessionBody=lessonMode?{lessonSetId:setParam}:(filter||{});
   try{
-    var sr=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})});
+    var sr=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sessionBody)});
     var sj=await sr.json();if(sj.ok)sessionId=sj.sessionId;
   }catch(e){statusMsg('session start failed');}
   try{
-    var res=await fetch('/api/due',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})});
+    var endpoint=lessonMode?'/api/lesson?set='+encodeURIComponent(setParam):'/api/due';
+    var options=lessonMode?undefined:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})};
+    var res=await fetch(endpoint,options);
     var j=await res.json();queue=j.cards||[];
   }catch(e){queue=[];}
   render();
@@ -966,6 +1094,19 @@ button.primary:hover{background:var(--accent-hover)}
 .conf-opts button kbd{font-family:var(--mono);font-size:11px;opacity:0.7;margin-left:4px}
 .conf-opts button.sel{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
 .confidence.locked{opacity:0.55;pointer-events:none}
+.attempt{margin:18px 0 0;padding-top:16px;border-top:1px solid var(--border-soft)}
+.attempt textarea{width:100%;resize:vertical;min-height:84px;margin-top:6px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay);color:var(--text);font:inherit;line-height:1.5}
+.attempt textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
+.attempt.locked{opacity:.65;pointer-events:none}
+.choices{display:grid;gap:8px;border-left:0;border-right:0;border-bottom:0}
+.choice{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay);cursor:pointer}
+.choice:hover{background:var(--hover)}
+.choice input{margin-top:4px;accent-color:var(--accent)}
+.check-answer{margin-top:14px}.check-answer kbd{font-family:var(--mono);font-size:11px;opacity:.75;margin-left:5px}
+.check-answer:disabled{opacity:.55;cursor:default}
+.learner-answer{padding:10px 12px;background:var(--overlay);border-left:3px solid var(--accent);border-radius:var(--radius-sm);white-space:pre-wrap}
+.result{font-weight:700;margin:0 0 12px}.result.correct{color:var(--success)}.result.incorrect{color:var(--warning)}
+.choice-feedback{margin:6px 0 16px;padding-left:20px}
 .grade-label{margin-top:6px}
 .c1{border-color:var(--danger)}.c2{border-color:var(--warning)}.c3{border-color:var(--accent)}.c4{border-color:var(--accent)}.c5{border-color:var(--success)}
 .diff-snippet{font-family:var(--mono);background:#08111f;border:1px solid rgba(35,52,79,.7);border-radius:var(--radius-sm);overflow:hidden;margin:10px 0}
@@ -995,6 +1136,10 @@ button.primary:hover{background:var(--accent-hover)}
 .set-row{padding:0}.set-row:hover{border-color:var(--accent)}
 .set-link{padding:14px 16px}
 .badge.next{background:var(--overlay);color:var(--muted)}
+.lesson-objective{display:flex;flex-direction:column;gap:4px;margin:16px 0;padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--radius)}
+.lesson-actions{display:flex;align-items:center;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
+.secondary-action{padding:9px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);color:var(--text);font-weight:500}
+.secondary-action:hover{background:var(--hover);text-decoration:none}
 .browse-list{display:grid;gap:8px;margin-top:16px}
 .browse-card{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .browse-card summary{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;list-style:none}

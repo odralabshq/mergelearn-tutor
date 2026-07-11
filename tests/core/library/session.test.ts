@@ -147,6 +147,31 @@ describe('due queue + review session', () => {
     expect(saved?.events[1]).not.toHaveProperty('confidenceBeforeReveal');
   });
 
+  it('records the pre-reveal attempt on the event and persists it', async () => {
+    const root = await freshRoot();
+    const now = new Date('2026-07-07T12:00:00.000Z');
+    await importAgentSet(root, twoCardPatch(), { now });
+    const due = await getDueCards(root, now);
+
+    const session = startSession('lesson', undefined, now);
+    // A deterministic choice attempt (correct) on card 1; nothing on card 2.
+    await gradeCard(root, session, due[0], 3, now, 4, {
+      interaction: 'choice', selectedOptionIds: ['b'], correct: true, revealedFull: false, elapsedMs: 4200,
+    });
+    await gradeCard(root, session, due[1], 1, now);
+
+    expect(session.mode).toBe('lesson');
+    expect(session.events[0].attempt?.interaction).toBe('choice');
+    expect(session.events[0].attempt?.correct).toBe(true);
+    expect(session.events[0].attempt?.selectedOptionIds).toEqual(['b']);
+    expect(session.events[1].attempt).toBeUndefined();
+
+    const path = await endSession(root, session, now);
+    const saved = await readJson<ReviewSession>(path);
+    expect(saved?.events[0].attempt?.elapsedMs).toBe(4200);
+    expect(saved?.events[1]).not.toHaveProperty('attempt');
+  });
+
   it('endSession writes a per-day session file with the correct summary', async () => {
     const root = await freshRoot();
     const now = new Date('2026-07-07T12:00:00.000Z');

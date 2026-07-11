@@ -47,7 +47,11 @@ must cover exactly the cards in this patch (by `localId`).
 ```json
 {
   "version": 1,
-  "set": { "title": "TypeScript narrowing", "folderPath": "typescript/types", "tagIds": [] },
+  "set": {
+    "title": "TypeScript narrowing", "folderPath": "typescript/types", "tagIds": [],
+    "objective": "Predict when a typeof guard narrows and what breaks it",
+    "lessonKind": "general", "estimatedMinutes": 8
+  },
   "tagPatch": {
     "reuse": ["tag_typescript"],
     "add": [{ "localId": "narrowing", "label": "narrowing", "kind": "topic", "parentIds": ["tag_typescript"] }]
@@ -68,6 +72,15 @@ must cover exactly the cards in this patch (by `localId`).
         "examples": [{ "label": "Widening pitfall", "language": "typescript", "code": "let x = cond ? 'a' : 1;", "note": "x: string | number" }],
         "commonMistakes": ["Assuming a narrowed type survives across an await/callback boundary."]
       },
+      "altitude": "function",
+      "interaction": {
+        "type": "choice",
+        "options": [
+          { "id": "a", "text": "The narrowing persists after the await", "feedback": "No — the await boundary discards the narrowed type; it widens back to the union." },
+          { "id": "b", "text": "The type widens back to the union", "feedback": "Correct — control left and re-entered, so the guard no longer holds." }
+        ],
+        "correctOptionIds": ["b"]
+      },
       "sourceRefs": [{ "repoId": "<from context>", "path": "src/x.ts", "startLine": 6, "endLine": 8 }]
     }
   ]
@@ -80,12 +93,58 @@ Field notes: `front.prompt` must end in `?` and must NOT contain the
 illustrative only — it is NOT provenance and is never frozen. Only `sourceRefs`
 are re-read from disk.
 
+## A set is a lesson: give it an objective and interactions
+
+A set is not a loose pile of facts — it is one lesson with one **objective** and
+6-10 ordered activities that build toward it. Author the whole lesson, not
+isolated cards. Set-level fields:
+
+- `objective` — one observable capability the learner earns ("predict when `?`
+  returns early", not "understand errors"). One objective per set.
+- `lessonKind` — `general` (evergreen language/tooling/engineering knowledge, no
+  repo), `repository` (this codebase's architecture, flows, conventions; anchor
+  with `sourceRefs`), or `bridge` (a general concept AS USED in this repo —
+  carry both the concept tag and repo `sourceRefs`). Reuse general lessons
+  across repos instead of re-teaching the same concept per codebase.
+- `estimatedMinutes`, optional `prerequisiteTagIds` (existing tag ids the learner
+  should know first).
+
+Every card carries an `interaction` that makes the learner ACT before the answer
+is revealed. The reveal is feedback on their attempt, never the first thing they
+read. Three types:
+
+- `{ "type": "self_response", "placeholder": "..." }` — learner types a short
+  answer, then self-grades against `shortAnswer`. Use for "explain/why" prompts.
+- `{ "type": "choice", "options": [{id,text,feedback}...], "correctOptionIds": [...] }`
+  — graded deterministically in the browser (no model at runtime). Use for
+  output prediction, command choice, bug classification, options/tradeoffs.
+  One correct id → single-select; several → multi-select.
+- `{ "type": "flashcard" }` (or omit `interaction`) — legacy reveal-then-self-
+  grade. Use ONLY for pure recall where no attempt is meaningful.
+
+A good lesson mixes at least one `self_response` and one `choice`, and ends with
+a harder transfer/application card. `altitude` (`line|function|module|service|
+system`) tags the abstraction level so the learner can climb a concept from
+syntax to architecture — set it per card when it varies.
+
+### Writing choices that teach
+
+Wrong options must be plausible misconceptions, not filler. EVERY option needs
+`feedback` — for the right one, confirm WHY; for wrong ones, name the specific
+mistake. That per-option feedback is the whole point: it turns a click into a
+correction. For an options/tradeoffs card, present the options and ask the
+learner to COMMIT to one under stated constraints, then let the feedback reveal
+the tradeoff — don't hand them the tradeoff before they choose.
+
 ## Write explanations that TEACH (the biggest quality lever)
 
-`shortAnswer` is the quick check. `explanationMarkdown` is where the learning
-happens — treat it as a mini-lesson, not a caption. A one-line explanation
-wastes the card. Aim for 4-10 sentences (more when the topic warrants it) and
-cover, in this rough order:
+`explanationMarkdown` is FEEDBACK the learner reads AFTER attempting — not a
+lecture they read first. Lead with the one thing that resolves their attempt,
+then let them opt into depth (the GUI hides the full explanation behind a
+"Show full explanation" fold). So: put the direct mechanism in the first
+sentence or two, and keep the rest tight. Prefer a short, layered answer over a
+wall of prose — if it needs a second concept, that is usually a second card.
+Cover, in this rough order (later points are the opt-in depth):
 
 1. **The direct mechanism** — why the answer is what it is, step by step.
 2. **The mental model** — the underlying principle the learner should
@@ -129,6 +188,14 @@ sprawling graph.
   `tagPatch.add` localId.
 - A cited `sourceRef` whose file/range can't be resolved on disk → the card is
   imported as `needs_review`, not silently trusted.
+- A malformed `interaction`: unknown `type`; a `choice` with fewer than 2
+  options, a duplicate option `id`, an empty `correctOptionIds`, a `correctOptionId`
+  matching no option, or any option missing `feedback`. A `set.lessonKind` that
+  is not `general|repository|bridge`.
+
+Note what is NOT gated: lesson size (6-10), the self_response/choice mix, and
+explanation length are authoring guidance, not hard rejects. The gate protects
+structure; teaching quality is on you.
 
 ## Pitfalls
 
@@ -139,4 +206,12 @@ sprawling graph.
 - Don't stuff the answer into the prompt to "help" — the anti-trivia gate
   rejects it, and it defeats retrieval practice.
 - A thin `explanationMarkdown` passes the (non-empty) gate but fails the learner.
-  Depth is on you; the gate won't catch shallowness.
+  Depth is on you; the gate won't catch shallowness. (But an over-long one buries
+  the mechanism — lead tight, defer depth to the fold.)
+- A lesson of only `choice` cards drills recognition, not recall. Mix in
+  `self_response` and end with a transfer card that applies the idea somewhere new.
+- Don't front-load the answer in the prompt or `contextMarkdown` — the learner
+  must attempt first for the reveal to teach. The explanation is the payoff, not
+  the setup.
+- Trivial distractors waste a `choice`. If the wrong options are obviously wrong,
+  the learner pattern-matches instead of reasoning. Make each a real misconception.

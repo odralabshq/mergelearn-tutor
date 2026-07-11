@@ -129,6 +129,108 @@ describe('review GUI server (functional)', () => {
     expect(graded.ok).toBe(true); // confidence is optional; a valid grade still succeeds
   });
 
+  it('stores a pre-reveal attempt sent with a grade, end-to-end to the session file', async () => {
+    const root = await seed();
+    running = await startReviewServer(root);
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    const card = due.cards[0];
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3,
+        attempt: { interaction: 'self_response', responseText: 'a union is one of several', revealedFull: true, elapsedMs: 3100 },
+      }),
+    })).json();
+    expect(graded.ok).toBe(true);
+
+    await (await fetch(`${running.url}/api/session/end`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    })).json();
+
+    // Read the persisted session file back and confirm the attempt survived.
+    const fs = await import('node:fs/promises');
+    const sessionsDir = join(root, 'profile', 'sessions');
+    const days = await fs.readdir(sessionsDir);
+    const files = await fs.readdir(join(sessionsDir, days[0]));
+    const saved = JSON.parse(await fs.readFile(join(sessionsDir, days[0], files[0]), 'utf8'));
+    expect(saved.events[0].attempt.interaction).toBe('self_response');
+    expect(saved.events[0].attempt.responseText).toContain('one of several');
+    expect(saved.events[0].attempt.revealedFull).toBe(true);
+  });
+
+  it('serves a lesson in authored order with objective and interaction, independent of due state', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-srv-'));
+    const patch: AgentSetPatch = {
+      version: 1,
+      set: { title: 'Union Lesson', folderPath: 'ts/unions', tagIds: [], objective: 'Narrow a union', lessonKind: 'general' },
+      tagPatch: { reuse: [], add: [{ localId: 'u', label: 'unions', kind: 'topic' }] },
+      order: ['b', 'a'], // authored order deliberately not alphabetical
+      cards: [
+        {
+          localId: 'a', tagRefs: ['u'], front: { prompt: 'What narrows a union?' },
+          back: { shortAnswer: 'A type guard.', explanationMarkdown: 'typeof/in/instanceof narrow.' },
+          interaction: {
+            type: 'choice',
+            options: [
+              { id: 'x', text: 'a cast', feedback: 'No — a cast asserts, it does not narrow.' },
+              { id: 'y', text: 'a type guard', feedback: 'Yes.' },
+            ],
+            correctOptionIds: ['y'],
+          },
+        },
+        {
+          localId: 'b', tagRefs: ['u'], front: { prompt: 'What is a union?' },
+          back: { shortAnswer: 'One of several types.', explanationMarkdown: 'A | B.' },
+          interaction: { type: 'self_response', placeholder: 'in your words' },
+        },
+      ],
+    };
+    const res = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+    expect(res.ok).toBe(true);
+    running = await startReviewServer(root);
+    const lesson = await (await fetch(`${running.url}/api/lesson?set=${res.setId}`)).json();
+    expect(lesson.ok).toBe(true);
+    expect(lesson.lesson.objective).toBe('Narrow a union');
+    expect(lesson.total).toBe(2);
+    // authored order preserved: 'b' (self_response) before 'a' (choice)
+    expect(lesson.cards[0].interaction.type).toBe('self_response');
+    expect(lesson.cards[1].interaction.type).toBe('choice');
+    expect(lesson.cards[1].interaction.options).toHaveLength(2);
+  });
+
+  it('starts a lesson-mode session when lessonSetId is provided', async () => {
+    running = await startReviewServer(await seed());
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lessonSetId: 'server-deck' }),
+    })).json();
+    expect(start.ok).toBe(true);
+    expect(start.mode).toBe('lesson');
+  });
+
+  it('ignores a malformed attempt but still records the grade', async () => {
+    running = await startReviewServer(await seed());
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    const card = due.cards[0];
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3,
+        attempt: { interaction: 'not_a_type', foo: 'bar' },
+      }),
+    })).json();
+    expect(graded.ok).toBe(true); // malformed attempt is dropped, grade still succeeds
+  });
+
   it('set browser lists every card in the set, even after it has been reviewed', async () => {
     running = await startReviewServer(await seed());
     const due = await (await fetch(`${running.url}/api/due`)).json();
