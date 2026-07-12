@@ -79,23 +79,54 @@ The library lives at `~/.mergelearn/` (override with `MERGELEARN_HOME` or
 ## CLI commands
 
 ```bash
-mergelearn context --goal "..." [--repo <path>] [--target-set <id>]
-mergelearn import  --file <patch.json> [--agent <name>]
+mergelearn context     --goal "..." [--repo <path>] [--target-set <id>]
+mergelearn import      --file <patch.json> [--agent <name>] [--dry-run]
 mergelearn sets
-mergelearn due     [--set <id>] [--tag <id>] [--folder <path>]
-mergelearn show    --set <id> --card <id>
-mergelearn grade   --card <id> --rating <1-4>
-mergelearn serve   [--port <n>]
+mergelearn due         [--set <id>] [--tag <id>] [--folder <path>]
+mergelearn show        --set <id> --card <id>
+mergelearn grade       --card <id> --rating <1-4>
+mergelearn serve       [--port <n>]
+mergelearn setup-agent [--agent <ids|all>] [--scope global|project] [--dry-run] [--uninstall]
 ```
+
+`import --dry-run` validates the patch and previews the outcome (set id, card
+statuses, tags) without writing anything — use it to check an agent's output
+before committing it to your library.
 
 ## Review GUI
 
 Prefer a browser? `mergelearn serve` starts a local, offline web UI on
-`127.0.0.1` — no network calls, no bundled model. Two tabs: **Home** (your
-sets + what's due) and **Practice** (one card at a time; reveal with
-space/Enter, grade with `1`-`4`). It reads the same on-disk library as the
-CLI, so you can mix the two. Authoring stays import-only — the GUI reviews
+`127.0.0.1` — no network calls, no bundled model. **Home** is lesson-first:
+each set is a lesson with its objective, estimated time, and a single
+Start/Continue/Practice-again action; progress (not started, in progress,
+completed) is derived from your past lesson sittings so Continue resumes at
+the first card you haven't attempted. Scheduled **Review** stays a separate
+FSRS queue shown in the banner. **Practice** runs one card at a time (reveal
+with space/Enter, grade with `1`-`4`). It reads the same on-disk library as
+the CLI, so you can mix the two. Authoring stays import-only — the GUI reviews
 cards, it does not create them.
+
+## Using with your coding agent
+
+MergeLearn ships one canonical authoring skill (`skills/mergelearn-authoring/`)
+that teaches an agent how to author a lesson: run `mergelearn context`, then
+return an `AgentSetPatch`. Different agents discover skills in different
+directories, so install it into yours with:
+
+```bash
+mergelearn setup-agent                 # auto-detect installed agents, global scope
+mergelearn setup-agent --agent all     # install into every supported agent
+mergelearn setup-agent --agent claude,codex --scope project   # this repo only
+mergelearn setup-agent --dry-run       # show what would change, write nothing
+mergelearn setup-agent --uninstall     # remove copies this tool installed
+```
+
+Supported agents: `claude` (Claude Code), `codex`, `cursor`, `opencode`,
+`gemini`. The command copies the skill (it does not symlink), records a
+checksum manifest so reruns are idempotent, and never overwrites a copy you
+edited by hand. Any agent that reads `SKILL.md` files will then pick it up; for
+an agent without a skills directory, point it at
+`skills/mergelearn-authoring/SKILL.md` directly and ask it to author a lesson.
 
 ## Storage layout
 
@@ -111,6 +142,7 @@ cards, it does not create them.
       cards/<cardId>.json         one file per card
   repos/registry.json             stable repoId -> path (optional)
   profile/sessions/<date>/        one file per review sitting
+agent-skills.json                 manifest of skills installed via setup-agent
 ```
 
 ## Privacy

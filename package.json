@@ -5,6 +5,7 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
+    "skills/",
     "docs/*.md",
     "docs/assets/screenshots/*.png",
     "LICENSE"

@@ -235,6 +235,7 @@ export type SetSummary = {
   objective?: string;
   lessonKind?: LessonKind;
   tagIds?: string[];
+  estimatedMinutes?: number;
 };
 
 /** Step 1: tutor -> agent. Existing state the agent must reuse/extend. */

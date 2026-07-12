@@ -84,4 +84,17 @@ describe('library CLI (functional, end-to-end)', () => {
     const setsOut = await run(root, 'sets');
     expect(setsOut).toContain('no sets yet');
   });
+
+  it('setup-agent --dry-run plans a copy for the named agent and writes nothing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
+    // Explicit --agent avoids machine-dependent detection; --dry-run is read-only.
+    const out = await run(root, 'setup-agent', '--agent', 'claude', '--scope', 'project', '--dry-run');
+    expect(out).toContain('dry run');
+    expect(out).toContain('claude/mergelearn-authoring');
+    expect(out).toMatch(/installed|current|updated|locally_modified/);
+    // Dry run must not write a manifest into the library root.
+    const { readdir } = await import('node:fs/promises');
+    const entries = await readdir(root);
+    expect(entries).not.toContain('agent-skills.json');
+  });
 });
