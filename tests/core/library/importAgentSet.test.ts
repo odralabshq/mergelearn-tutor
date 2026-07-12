@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { importAgentSet } from '../../../src/core/library/importAgentSet.js';
 import { registerRepo } from '../../../src/core/library/repoRegistry.js';
-import { loadSet, loadOrder } from '../../../src/core/library/setStore.js';
+import { loadSet, loadOrder, listSetIds } from '../../../src/core/library/setStore.js';
 import { loadCardsForSet } from '../../../src/core/library/cardStore.js';
 import { loadTags } from '../../../src/core/library/tagStore.js';
 import type { AgentSetPatch } from '../../../src/core/library/types.js';
@@ -215,5 +215,42 @@ describe('importAgentSet — lessons and interactions (first learning loop)', ()
     expect(res.ok).toBe(false);
     expect(res.errors.some((e) => e.code === 'interaction:no_feedback')).toBe(true);
     expect(res.errors.some((e) => e.code === 'set:bad_lesson_kind')).toBe(true);
+  });
+
+  it('dry-run previews the outcome (setId, card statuses, tags) but writes nothing', async () => {
+    const r = await freshRoot();
+    const res = await importAgentSet(r, conceptualPatch(), { dryRun: true });
+    // The preview reports what WOULD happen.
+    expect(res.ok).toBe(true);
+    expect(res.setId).toBe('typescript-basics');
+    expect(res.cards).toHaveLength(2);
+    expect(res.cards.every((c) => c.status === 'active')).toBe(true);
+    expect(res.tagIdsAdded).toHaveLength(1);
+    // But the library is untouched: no set, no tags, no order.
+    expect(await listSetIds(r)).toEqual([]);
+    expect(await loadTags(r)).toHaveLength(0);
+    expect(await loadSet(r, res.setId!)).toBeUndefined();
+    expect(await loadOrder(r, res.setId!)).toBeUndefined();
+  });
+
+  it('a real import after a dry-run still writes normally (dry-run leaves no residue)', async () => {
+    const r = await freshRoot();
+    await importAgentSet(r, conceptualPatch(), { dryRun: true });
+    const res = await importAgentSet(r, conceptualPatch());
+    expect(res.ok).toBe(true);
+    expect(await listSetIds(r)).toEqual([res.setId]);
+    expect(await loadCardsForSet(r, res.setId!)).toHaveLength(2);
+    expect(await loadTags(r)).toHaveLength(1);
+  });
+
+  it('dry-run on an invalid patch reports errors and still writes nothing', async () => {
+    const r = await freshRoot();
+    const bad = conceptualPatch();
+    bad.order = []; // order misses both cards
+    const res = await importAgentSet(r, bad, { dryRun: true });
+    expect(res.ok).toBe(false);
+    expect(res.errors.length).toBeGreaterThan(0);
+    expect(await listSetIds(r)).toEqual([]);
+    expect(await loadTags(r)).toHaveLength(0);
   });
 });

@@ -45,7 +45,7 @@ describe('review GUI server (functional)', () => {
     expect(status).toBe(200);
     expect(text).toContain('Server Deck');
     expect(text).toContain('1</strong>'); // due banner count
-    expect(text).toContain('Start practice');
+    expect(text).toContain('Review 1 due'); // Review is the separate FSRS entry
     expect(text).toContain('aria-current="page"'); // Home tab active
   });
 
@@ -211,6 +211,52 @@ describe('review GUI server (functional)', () => {
     })).json();
     expect(start.ok).toBe(true);
     expect(start.mode).toBe('lesson');
+  });
+
+  it('tracks lesson progress: grading one card yields in_progress, resume target, and a Continue action', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-srv-'));
+    const patch: AgentSetPatch = {
+      version: 1,
+      set: { title: 'Progress Lesson', folderPath: 'ts/prog', tagIds: [], objective: 'Track progress' },
+      tagPatch: { reuse: [], add: [{ localId: 'u', label: 'prog', kind: 'topic' }] },
+      order: ['first', 'second'], // authored order
+      cards: [
+        { localId: 'first', tagRefs: ['u'], front: { prompt: 'Q1?' }, back: { shortAnswer: 'A1', explanationMarkdown: 'E1' } },
+        { localId: 'second', tagRefs: ['u'], front: { prompt: 'Q2?' }, back: { shortAnswer: 'A2', explanationMarkdown: 'E2' } },
+      ],
+    };
+    const res = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+    expect(res.ok).toBe(true);
+    running = await startReviewServer(root);
+
+    // Before any attempt: not_started, resume at the first authored card.
+    const before = await (await fetch(`${running.url}/api/lesson?set=${res.setId}`)).json();
+    const firstId = before.cards[0].id;
+    const secondId = before.cards[1].id;
+    expect(before.progress.state).toBe('not_started');
+    expect(before.progress.resumeCardId).toBe(firstId);
+
+    // Grade the first authored card in a lesson-mode session.
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lessonSetId: res.setId }),
+    })).json();
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: firstId, setId: res.setId, rating: 3 }),
+    })).json();
+    expect(graded.ok).toBe(true);
+
+    // After: in_progress, one attempted, resume at the SECOND card (durable — a
+    // fresh /api/lesson call maps to a new session, so this proves the union rule).
+    const after = await (await fetch(`${running.url}/api/lesson?set=${res.setId}`)).json();
+    expect(after.progress.state).toBe('in_progress');
+    expect(after.progress.attemptedCount).toBe(1);
+    expect(after.progress.resumeCardId).toBe(secondId);
+
+    // Home surfaces a Continue action for the partially-done lesson.
+    const home = await get(`${running.url}/`);
+    expect(home.text).toContain('Continue lesson');
   });
 
   it('ignores a malformed attempt but still records the grade', async () => {

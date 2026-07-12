@@ -30,6 +30,10 @@ import { loadCard } from './core/library/cardStore.js';
 import { getDueCards } from './core/library/review/dueQueue.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
 import { startReviewServer } from './session/server.js';
+import {
+  AGENT_ADAPTERS, applyInstall, detectAgents, planInstall, uninstall,
+  type Scope,
+} from './core/agentSkills.js';
 import type { AgentSetPatch, ReviewRating } from './core/library/types.js';
 
 function rootFrom(opts: { home?: string }): string {
@@ -78,21 +82,25 @@ export function buildProgram(): Command {
     .description('apply an AgentSetPatch JSON file (the only card-creation path)')
     .requiredOption('--file <path>', 'path to the AgentSetPatch JSON')
     .option('--agent <name>', 'authoring agent name (provenance)')
-    .action(async (opts: { file: string; agent?: string }) => {
+    .option('--dry-run', 'validate and preview the outcome, write nothing')
+    .action(async (opts: { file: string; agent?: string; dryRun?: boolean }) => {
       const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
-      const res = await importAgentSet(rootFrom(homeOpt()), patch, { agentName: opts.agent });
+      const res = await importAgentSet(rootFrom(homeOpt()), patch, { agentName: opts.agent, dryRun: opts.dryRun });
       if (!res.ok) {
-        out(`import REJECTED (${res.errors.length} error(s)) — nothing written:`);
+        const lead = opts.dryRun ? 'preview: import WOULD BE REJECTED' : 'import REJECTED';
+        out(`${lead} (${res.errors.length} error(s)) — nothing written:`);
         for (const e of res.errors) out(`  - ${e.code}: ${e.message}`);
         process.exitCode = 1;
         return;
       }
       const active = res.cards.filter((c) => c.status === 'active').length;
       const flagged = res.cards.length - active;
-      out(`imported set "${res.setId}": ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${res.tagIdsAdded.length} tags`);
+      const verb = opts.dryRun ? 'would import' : 'imported';
+      out(`${verb} set "${res.setId}": ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${res.tagIdsAdded.length} tags`);
       for (const c of res.cards.filter((c) => c.status !== 'active')) {
         out(`  needs_review ${c.cardId}: ${c.reasons.join(', ')}`);
       }
+      if (opts.dryRun) out('(dry run: nothing written — omit --dry-run to apply)');
     });
 
   program
@@ -158,6 +166,52 @@ export function buildProgram(): Command {
       out(`MergeLearn review GUI running at ${url}`);
       out('Open it in your browser. Press Ctrl+C to stop.');
       // The listening socket keeps the process alive; nothing else to do.
+    });
+
+  // Install the canonical authoring skill into coding agents' discovery dirs.
+  program
+    .command('setup-agent')
+    .description('install the MergeLearn authoring skill into your coding agent(s)')
+    .option('--agent <csv>', 'comma-separated agent ids or "all" (default: detected)')
+    .option('--scope <scope>', 'global (default) or project', 'global')
+    .option('--dry-run', 'show what would change, write nothing')
+    .option('--uninstall', 'remove skills this tool installed (manifest-tracked only)')
+    .action(async (opts: { agent?: string; scope?: string; dryRun?: boolean; uninstall?: boolean }) => {
+      const root = rootFrom(homeOpt());
+      const scope: Scope = opts.scope === 'project' ? 'project' : 'global';
+      const known = Object.keys(AGENT_ADAPTERS);
+      let agents = opts.agent
+        ? opts.agent.split(',').map((s) => s.trim()).filter(Boolean)
+        : await detectAgents(scope);
+      if (!opts.agent && agents.length === 0) {
+        out(`No coding agents detected for ${scope} scope. Pass --agent <${known.join('|')}|all>.`);
+        process.exitCode = 1;
+        return;
+      }
+      if (!opts.agent) out(`Detected agent(s): ${agents.join(', ')}`);
+
+      if (opts.uninstall) {
+        const { removed, missing } = await uninstall(root, { agents, scope });
+        out(`uninstalled ${removed.length} skill copy(ies)${missing.length ? `, ${missing.length} already gone` : ''}`);
+        for (const r of removed) out(`  removed ${r.agent}/${r.skill}: ${r.destPath}`);
+        return;
+      }
+
+      if (opts.dryRun) {
+        const plan = await planInstall(root, { agents, scope });
+        out(`Plan (${scope} scope) — dry run, nothing written:`);
+        for (const a of plan) out(`  ${a.status.padEnd(16)} ${a.agent}/${a.skill} -> ${a.destDir}`);
+        return;
+      }
+
+      const { copied, skipped } = await applyInstall(root, { agents, scope });
+      out(`Installed ${copied.length} skill copy(ies) into ${agents.length} agent dir(s):`);
+      for (const a of copied) out(`  ${a.status.padEnd(10)} ${a.agent}/${a.skill} -> ${a.destDir} (${a.sourceChecksum.slice(0, 12)})`);
+      for (const s of skipped) {
+        const why = s.status === 'locally_modified' ? 'locally modified — left untouched' : 'already current';
+        out(`  skipped    ${s.agent}/${s.skill}: ${why}`);
+      }
+      out('\nTest it: ask your agent "author a MergeLearn lesson about <topic>" — it should run `mergelearn context` and return an AgentSetPatch.');
     });
 
   return program;

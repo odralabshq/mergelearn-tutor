@@ -14,7 +14,13 @@ import { startSession, gradeCard, endSession } from '../core/library/review/sess
 import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
 import { loadTags } from '../core/library/tagStore.js';
-import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, ReviewSession } from '../core/library/types.js';
+import {
+  attemptedByLessonSet,
+  attemptedCardIds,
+  computeLessonProgress,
+  type LessonProgress,
+} from '../core/library/review/sessionHistory.js';
+import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, ReviewSession, SetOrder, SetSummary } from '../core/library/types.js';
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
 import { join } from 'node:path';
@@ -133,13 +139,10 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
 /** GET /api/lesson?set=<id> returns all active cards in authored order.
  * This is deliberately separate from /api/due: Learn sequencing and FSRS
  * Review are different jobs and must not silently change each other's queues. */
-async function lessonData(root: string, res: ServerResponse, url: URL): Promise<void> {
-  const setId = url.searchParams.get('set');
-  if (!setId) return sendJson(res, 400, { ok: false, error: 'need set' });
-  const [set, cards, order] = await Promise.all([
-    loadSet(root, setId), loadCardsForSet(root, setId), loadOrder(root, setId),
-  ]);
-  if (!set) return sendJson(res, 404, { ok: false, error: 'set not found' });
+/** Active cards in authored order. Cards missing from order.json are appended
+ * so a legacy/malformed set stays fully accessible. Shared by lessonData and
+ * the Home/set progress derivation so ordering never diverges. */
+function orderActiveCards(cards: Card[], order: SetOrder | undefined): Card[] {
   const active = cards.filter((c) => c.status === 'active');
   const byId = new Map(active.map((c) => [c.id, c]));
   const ordered: Card[] = [];
@@ -147,12 +150,25 @@ async function lessonData(root: string, res: ServerResponse, url: URL): Promise<
     const card = byId.get(id);
     if (card) { ordered.push(card); byId.delete(id); }
   }
-  // Preserve accessibility for legacy/malformed sets whose order omits a card.
-  ordered.push(...byId.values());
+  for (const card of byId.values()) ordered.push(card);
+  return ordered;
+}
+
+async function lessonData(root: string, res: ServerResponse, url: URL): Promise<void> {
+  const setId = url.searchParams.get('set');
+  if (!setId) return sendJson(res, 400, { ok: false, error: 'need set' });
+  const [set, cards, order, attempted] = await Promise.all([
+    loadSet(root, setId), loadCardsForSet(root, setId), loadOrder(root, setId),
+    attemptedCardIds(root, setId),
+  ]);
+  if (!set) return sendJson(res, 404, { ok: false, error: 'set not found' });
+  const ordered = orderActiveCards(cards, order);
+  const progress = computeLessonProgress(ordered.map((c) => c.id), attempted);
   return sendJson(res, 200, {
     ok: true,
     lesson: { id: set.id, title: set.title, objective: set.objective ?? null, lessonKind: set.lessonKind ?? null },
     total: ordered.length,
+    progress,
     cards: ordered.map(cardView),
   });
 }
@@ -304,10 +320,49 @@ function cardView(card: Card) {
 
 // ---- Home tab ----
 
+/** Lesson progress for one set, given the pre-walked attempted-ids set (so the
+ * Home page doesn't re-scan the session tree per set). */
+async function lessonProgressFor(root: string, setId: string, attempted: Set<string>): Promise<LessonProgress> {
+  const [cards, order] = await Promise.all([loadCardsForSet(root, setId), loadOrder(root, setId)]);
+  const ordered = orderActiveCards(cards, order);
+  return computeLessonProgress(ordered.map((c) => c.id), attempted);
+}
+
+/** One Home lesson card: objective, meta, progress pill, and a single primary
+ * action (Start / Continue / Practice again) plus due-review as a secondary. */
+function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: number): string {
+  const href = `/practice?mode=lesson&set=${encodeURIComponent(s.id)}`;
+  const actionLabel = progress.state === 'not_started' ? 'Start lesson'
+    : progress.state === 'in_progress' ? 'Continue lesson'
+    : 'Practice again';
+  const pillLabel = progress.state === 'completed' ? 'Completed'
+    : progress.state === 'in_progress' ? `${progress.attemptedCount}/${progress.total} done`
+    : 'Not started';
+  const kind = s.lessonKind ? `<span class="badge next">${escapeHtml(s.lessonKind)}</span>` : '';
+  const objective = s.objective ? `<p class="lesson-obj">${escapeHtml(s.objective)}</p>` : '';
+  const path = s.folderPath ? `<span class="path">${escapeHtml(s.folderPath)}</span>` : '';
+  const est = s.estimatedMinutes ? `<span class="est">~${s.estimatedMinutes} min</span>` : '';
+  const count = `<span class="count">${progress.total} activit${progress.total === 1 ? 'y' : 'ies'}</span>`;
+  const pill = `<span class="progress-pill state-${progress.state}">${pillLabel}</span>`;
+  const review = dueCount > 0
+    ? `<a class="secondary-action" href="/practice?set=${encodeURIComponent(s.id)}">Review ${dueCount} due</a>`
+    : '';
+  const disabled = progress.total === 0;
+  const action = disabled
+    ? `<span class="cta is-disabled">No activities</span>`
+    : `<a class="cta" href="${href}">${actionLabel}</a>`;
+  return `<li class="lesson-card">` +
+    `<div class="lesson-head"><a class="lesson-title" href="/set/${encodeURIComponent(s.id)}">${escapeHtml(s.title)}</a>${kind}</div>` +
+    `${objective}` +
+    `<div class="lesson-meta">${path}${count}${est}${pill}</div>` +
+    `<div class="lesson-actions">${action}${review}</div></li>`;
+}
+
 async function renderHome(root: string): Promise<string> {
-  const [summaries, due] = await Promise.all([
+  const [summaries, due, attemptedMap] = await Promise.all([
     listSetSummaries(root),
     getDueCards(root, new Date()),
+    attemptedByLessonSet(root),
   ]);
   const dueBySet = new Map<string, number>();
   for (const c of due) dueBySet.set(c.setId, (dueBySet.get(c.setId) ?? 0) + 1);
@@ -321,24 +376,24 @@ async function renderHome(root: string): Promise<string> {
     return pageShell('MergeLearn — Home', 'home', body);
   }
 
+  // Review is the separate FSRS job: one banner linking to the global due queue.
   const cta = due.length > 0
-    ? `<a class="cta" href="/practice">Start practice</a>`
+    ? `<a class="cta" href="/practice">Review ${due.length} due</a>`
     : `<span class="cta is-disabled">Nothing due right now</span>`;
   const banner = `<div class="due-banner"><strong>${due.length}</strong>` +
-    `<span class="muted">card${due.length === 1 ? '' : 's'} due today</span></div>${cta}`;
+    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>${cta}`;
 
-  const rows = summaries.map((s) => {
-    const d = dueBySet.get(s.id) ?? 0;
-    const dueBadge = d > 0 ? `<span class="badge due">${d} due</span>` : '';
-    const path = s.folderPath ? `<span class="path">${escapeHtml(s.folderPath)}</span>` : '';
-    return `<li class="set-row"><a class="set-link" href="/set/${encodeURIComponent(s.id)}">` +
-      `<span class="title">${escapeHtml(s.title)}</span>${path}` +
-      `${dueBadge}<span class="count">${s.cardCount} card${s.cardCount === 1 ? '' : 's'}</span></a></li>`;
-  }).join('');
+  // Lessons are the primary object: each row shows objective, progress, and one
+  // Start/Continue action. Progress is derived from persisted lesson sessions.
+  const rows = (await Promise.all(summaries.map(async (s) => {
+    const progress = await lessonProgressFor(root, s.id, attemptedMap.get(s.id) ?? new Set<string>());
+    return renderLessonRow(s, progress, dueBySet.get(s.id) ?? 0);
+  }))).join('');
 
-  const body = `<h1>Home</h1>${banner}<h2 style="margin-top:28px">Your sets</h2>` +
-    `<p class="muted" style="margin:-4px 0 0;font-size:13px">Open a set to browse and revisit every card, due or not.</p>` +
-    `<ul class="set-list">${rows}</ul>`;
+  const body = `<h1>Home</h1>${banner}` +
+    `<h2 style="margin-top:28px">Lessons</h2>` +
+    `<p class="muted" style="margin:-4px 0 0;font-size:13px">Learn walks each lesson in authored order. Review is the separate due queue above.</p>` +
+    `<ul class="lesson-list">${rows}</ul>`;
   return pageShell('MergeLearn — Home', 'home', body);
 }
 
@@ -356,12 +411,15 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
       `<div class="empty">No set with id <code>${escapeHtml(setId)}</code>.</div>`;
     return pageShell('MergeLearn — Set', 'set', body);
   }
-  const [cards, due] = await Promise.all([
+  const [cards, due, order, attempted] = await Promise.all([
     loadCardsForSet(root, setId),
     getDueCards(root, new Date(), { setIds: [setId] }),
+    loadOrder(root, setId),
+    attemptedCardIds(root, setId),
   ]);
   const dueIds = new Set(due.map((c) => c.id));
   const now = Date.now();
+  const progress = computeLessonProgress(orderActiveCards(cards, order).map((c) => c.id), attempted);
 
   const items = cards.map((card) => {
     const v = cardView(card);
@@ -400,12 +458,20 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
   const kind = set.lessonKind ? `<span class="badge next">${escapeHtml(set.lessonKind)}</span>` : '';
   const learnHref = `/practice?mode=lesson&set=${encodeURIComponent(setId)}`;
   const reviewHref = `/practice?set=${encodeURIComponent(setId)}`;
-  const actions = cards.length
-    ? `<div class="lesson-actions"><a class="cta" href="${learnHref}">Start lesson</a>` +
+  const learnLabel = progress.state === 'not_started' ? 'Start lesson'
+    : progress.state === 'in_progress' ? 'Continue lesson'
+    : 'Practice again';
+  const actions = progress.total
+    ? `<div class="lesson-actions"><a class="cta" href="${learnHref}">${learnLabel}</a>` +
       (due.length ? `<a class="secondary-action" href="${reviewHref}">Review ${due.length} due</a>` : '') + `</div>`
     : '';
+  const pillLabel = progress.state === 'completed' ? 'Completed'
+    : progress.state === 'in_progress' ? `${progress.attemptedCount}/${progress.total} done`
+    : 'Not started';
+  const est = set.estimatedMinutes ? ` · ~${set.estimatedMinutes} min` : '';
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
-    `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'} · ${due.length} due</p>` +
+    `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'}${est} · ` +
+    `<span class="progress-pill state-${progress.state}">${pillLabel}</span> · ${due.length} due</p>` +
     `${objective}${actions}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`);
   return pageShell(`MergeLearn — ${set.title}`, 'set', body);
@@ -919,6 +985,11 @@ window.addEventListener('beforeunload',function(){endSession(true);});
     var options=lessonMode?undefined:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})};
     var res=await fetch(endpoint,options);
     var j=await res.json();queue=j.cards||[];
+    // Continue: resume a partially-done lesson at its first unattempted card.
+    if(lessonMode&&j.progress&&j.progress.resumeCardId){
+      var ri=queue.findIndex(function(c){return c.id===j.progress.resumeCardId;});
+      if(ri>0)pos=ri;
+    }
   }catch(e){queue=[];}
   render();
 })();
@@ -1140,6 +1211,20 @@ button.primary:hover{background:var(--accent-hover)}
 .lesson-actions{display:flex;align-items:center;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
 .secondary-action{padding:9px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);color:var(--text);font-weight:500}
 .secondary-action:hover{background:var(--hover);text-decoration:none}
+.lesson-list{display:grid;gap:12px;margin-top:16px;list-style:none;padding:0}
+.lesson-card{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
+.lesson-card:hover{border-color:var(--accent)}
+.lesson-head{display:flex;align-items:center;gap:10px}
+.lesson-title{font-weight:600;font-size:15px;color:inherit}
+.lesson-title:hover{text-decoration:underline}
+.lesson-obj{margin:6px 0 0;color:var(--muted);font-size:13px}
+.lesson-meta{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+.lesson-meta .est{font-variant-numeric:tabular-nums}
+.lesson-card .lesson-actions{margin:14px 0 0}
+.progress-pill{display:inline-flex;align-items:center;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--border)}
+.progress-pill.state-not_started{background:var(--overlay);color:var(--muted)}
+.progress-pill.state-in_progress{background:var(--raised);color:var(--accent);border-color:var(--accent)}
+.progress-pill.state-completed{background:var(--accent);color:var(--bg)}
 .browse-list{display:grid;gap:8px;margin-top:16px}
 .browse-card{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
 .browse-card summary{display:flex;align-items:center;gap:12px;padding:14px 16px;cursor:pointer;list-style:none}

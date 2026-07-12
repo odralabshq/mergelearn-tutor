@@ -30,7 +30,7 @@ export type ImportResult = {
   tagIdsAdded: string[];
 };
 
-export type ImportOptions = { agentName?: string; agentModel?: string; now?: Date };
+export type ImportOptions = { agentName?: string; agentModel?: string; now?: Date; dryRun?: boolean };
 
 function setIdFromTitle(title: string): string {
   // Linear split/filter/join — no anchored-quantifier regex (ReDoS-safe,
@@ -77,8 +77,9 @@ async function persist(
   iso: string,
   opts: ImportOptions,
 ): Promise<ImportResult> {
-  // Commit the taxonomy first (validated pure result).
-  await saveTags(root, tagResult.mergedTags);
+  // Commit the taxonomy first (validated pure result). Skipped on a dry run so
+  // a preview never mutates the tag graph.
+  if (!opts.dryRun) await saveTags(root, tagResult.mergedTags);
 
   const setId = patch.set.id ?? setIdFromTitle(patch.set.title);
   const resolveTagRef = (ref: string): string => tagResult.localIdToTagId.get(ref) ?? ref;
@@ -108,6 +109,12 @@ async function persist(
     }
     cards.push(buildCard(setId, cardId, c, sourceRefs, status, iso, opts, resolveTagRef));
     results.push({ localId: c.localId, cardId, status, reasons });
+  }
+
+  // Dry run: everything above is read-only (gates + freezeSourceRefs + status
+  // computation). Return the preview without any set/card/order/record write.
+  if (opts.dryRun) {
+    return { ok: true, errors: [], setId, cards: results, tagIdsAdded: tagResult.addedTagIds };
   }
 
   return finalize(root, patch, setId, cards, cardIdOf, results, tagResult.addedTagIds, iso, opts);

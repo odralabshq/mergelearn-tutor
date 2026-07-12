@@ -46,6 +46,7 @@ export async function listSetSummaries(root: string): Promise<SetSummary[]> {
       objective: set.objective,
       lessonKind: set.lessonKind,
       tagIds: set.tagIds,
+      estimatedMinutes: set.estimatedMinutes,
     });
   }
   return out;
