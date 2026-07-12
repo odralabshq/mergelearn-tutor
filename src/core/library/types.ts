@@ -9,8 +9,24 @@
 export type Difficulty = 'beginner' | 'intermediate' | 'advanced';
 export type CardStatus = 'active' | 'needs_review' | 'blocked' | 'archived';
 
-/** The user-facing organizing unit. A folder on disk. */
-export type CardSet = {
+/** A set doubles as a lesson: one objective, one kind, ordered activities.
+ * See docs/design/redesign-2026-07/08-FIRST-LEARNING-LOOP.md. */
+export type LessonKind = 'general' | 'repository' | 'bridge';
+
+/** Abstraction level a card teaches at (orthogonal to Difficulty). */
+export type Altitude = 'line' | 'function' | 'module' | 'service' | 'system';
+
+/** Optional lesson metadata shared by CardSet and the import patch's set. */
+export type LessonMeta = {
+  objective?: string;
+  lessonKind?: LessonKind;
+  prerequisiteTagIds?: string[];
+  estimatedMinutes?: number;
+  defaultAltitude?: Altitude;
+};
+
+/** The user-facing organizing unit. A folder on disk; also a lesson. */
+export type CardSet = LessonMeta & {
   id: string; // slug, also the folder name
   title: string;
   description?: string;
@@ -42,6 +58,18 @@ export type CardBack = {
   commonMistakes?: string[];
   sourceNotes?: string[];
 };
+
+/** One selectable option in a `choice` interaction. Feedback is authored per
+ * option so the reveal is deterministic and needs no live model. */
+export type ChoiceOption = { id: string; text: string; feedback: string };
+
+/** How the learner engages a card before the answer is revealed. Absent means
+ * the legacy `flashcard` behaviour (reveal + self-grade). A `choice` with one
+ * correct id renders single-select; more than one renders multi-select. */
+export type Interaction =
+  | { type: 'flashcard' }
+  | { type: 'self_response'; placeholder?: string }
+  | { type: 'choice'; options: ChoiceOption[]; correctOptionIds: string[] };
 
 export type SourceRefStatus = 'fresh' | 'drifted' | 'missing' | 'orphaned_commit';
 
@@ -81,6 +109,9 @@ export type Card = {
   back: CardBack;
   sourceRefs?: SourceRef[];
   difficulty?: Difficulty;
+  altitude?: Altitude;
+  /** How the card is presented before reveal. Absent = legacy flashcard. */
+  interaction?: Interaction;
   status: CardStatus;
   fsrs: FsrsState;
   createdBy: { agentName?: string; agentModel?: string; importedAt: string };
@@ -139,11 +170,25 @@ export type ReviewRating = 1 | 2 | 3 | 4; // Again | Hard | Good | Easy
 /** Self-rated confidence BEFORE reveal (1 Guessing … 5 Certain). */
 export type Confidence = 1 | 2 | 3 | 4 | 5;
 
+/** What the learner actually did before reveal. All fields optional so a
+ * legacy flashcard grade (no attempt) is unchanged. Deterministic correctness
+ * is recorded only for `choice`; self_response stays self-graded. */
+export type ReviewAttempt = {
+  interaction: Interaction['type'];
+  responseText?: string;
+  selectedOptionIds?: string[];
+  correct?: boolean;
+  revealedFull?: boolean;
+  elapsedMs?: number;
+};
+
 export type ReviewEvent = {
   cardId: string;
   rating: ReviewRating;
   /** Pre-reveal confidence, recorded for calibration; does not affect FSRS. */
   confidenceBeforeReveal?: Confidence;
+  /** The learner's pre-reveal action; evidence, not a scheduling input. */
+  attempt?: ReviewAttempt;
   stateBefore: 0 | 1 | 2 | 3;
   stabilityBefore: number;
   difficultyBefore: number;
@@ -157,7 +202,8 @@ export type ReviewSession = {
   id: string;
   startedAt: string;
   endedAt?: string;
-  mode: 'recommended' | 'set' | 'folder' | 'tag_filter';
+  // 'lesson' walks a set's authored order (Learn); the others are due Review.
+  mode: 'recommended' | 'set' | 'folder' | 'tag_filter' | 'lesson';
   filter?: {
     setIds?: string[];
     folderPaths?: string[];
@@ -184,6 +230,11 @@ export type SetSummary = {
   title: string;
   folderPath?: string;
   cardCount: number;
+  // Lesson context so the authoring agent can reuse/extend lessons instead of
+  // duplicating general knowledge per repo.
+  objective?: string;
+  lessonKind?: LessonKind;
+  tagIds?: string[];
 };
 
 /** Step 1: tutor -> agent. Existing state the agent must reuse/extend. */
@@ -215,6 +266,11 @@ export type AgentCardDraft = {
   tagRefs: string[]; // existing tag ids OR ProposedTag localIds
   front: CardFront;
   back: CardBack;
+  difficulty?: Difficulty;
+  altitude?: Altitude;
+  /** Presentation before reveal. Absent = legacy flashcard. Validated by
+   * validateSetPatchStructure (HARD rejects on unsatisfiable choice shapes). */
+  interaction?: Interaction;
   sourceRefs?: {
     repoId: string;
     path: string;
@@ -226,7 +282,7 @@ export type AgentCardDraft = {
 /** Step 2: agent -> tutor. The full submission. Replaces AgentCardDraft[]. */
 export type AgentSetPatch = {
   version: 1;
-  set: {
+  set: LessonMeta & {
     id?: string;
     title: string;
     description?: string;

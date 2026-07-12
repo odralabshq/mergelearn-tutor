@@ -10,11 +10,48 @@
  * that covers exactly the patch's cards.
  */
 
-import type { AgentSetPatch } from './types.js';
+import type { AgentSetPatch, Interaction, LessonKind } from './types.js';
 
 export type PatchValidationError = { code: string; message: string; cardLocalId?: string };
 
 const nonEmpty = (s: unknown): boolean => typeof s === 'string' && s.trim().length > 0;
+
+const LESSON_KINDS: ReadonlySet<LessonKind> = new Set(['general', 'repository', 'bridge']);
+const INTERACTION_TYPES: ReadonlySet<Interaction['type']> = new Set(['flashcard', 'self_response', 'choice']);
+
+/**
+ * HARD-reject only interaction shapes that make a card structurally
+ * unsatisfiable (a choice with no correct answer, unresolved correct id, an
+ * option missing feedback). Lesson size and self_response/choice mixing are
+ * advisory authoring guidance, NOT gated here — consistent with the project's
+ * settled soft-guidance stance on card content depth.
+ */
+function validateInteraction(localId: string, interaction: Interaction): PatchValidationError[] {
+  const errors: PatchValidationError[] = [];
+  if (!INTERACTION_TYPES.has(interaction.type)) {
+    errors.push({ code: 'interaction:bad_type', message: `unknown interaction type: ${String((interaction as { type: unknown }).type)}`, cardLocalId: localId });
+    return errors; // can't reason about an unknown shape
+  }
+  if (interaction.type !== 'choice') return errors; // flashcard/self_response have no extra structure
+  const options = interaction.options ?? [];
+  if (options.length < 2) {
+    errors.push({ code: 'interaction:no_options', message: 'choice needs at least 2 options', cardLocalId: localId });
+  }
+  const ids = new Set<string>();
+  for (const o of options) {
+    if (ids.has(o.id)) errors.push({ code: 'interaction:dup_option_id', message: `duplicate option id: ${o.id}`, cardLocalId: localId });
+    ids.add(o.id);
+    if (!nonEmpty(o.feedback)) errors.push({ code: 'interaction:no_feedback', message: `option ${o.id} has empty feedback`, cardLocalId: localId });
+  }
+  const correct = interaction.correctOptionIds ?? [];
+  if (correct.length === 0) {
+    errors.push({ code: 'interaction:no_correct', message: 'choice has no correctOptionIds', cardLocalId: localId });
+  }
+  for (const cid of correct) {
+    if (!ids.has(cid)) errors.push({ code: 'interaction:bad_correct', message: `correctOptionId matches no option: ${cid}`, cardLocalId: localId });
+  }
+  return errors;
+}
 
 /** Anti-trivia: the prompt must not embed the answer verbatim. */
 export function leaksAnswer(prompt: string, shortAnswer: string): boolean {
@@ -31,6 +68,9 @@ export function validateSetPatchStructure(
   const errors: PatchValidationError[] = [];
   if (patch.version !== 1) errors.push({ code: 'bad_version', message: `unsupported patch version: ${patch.version}` });
   if (!nonEmpty(patch.set?.title)) errors.push({ code: 'set_title_empty', message: 'set.title is required' });
+  if (patch.set?.lessonKind !== undefined && !LESSON_KINDS.has(patch.set.lessonKind)) {
+    errors.push({ code: 'set:bad_lesson_kind', message: `set.lessonKind must be general|repository|bridge, got: ${String(patch.set.lessonKind)}` });
+  }
   if (!Array.isArray(patch.cards) || patch.cards.length === 0) {
     errors.push({ code: 'no_cards', message: 'patch has no cards' });
     return { ok: false, errors };
@@ -73,6 +113,9 @@ function validateCards(
       if (!existingTagIds.has(ref) && !proposedLocalIds.has(ref)) {
         errors.push({ code: 'tagref_unresolved', message: `card tagRef does not resolve: ${ref}`, cardLocalId: c.localId });
       }
+    }
+    if (c.interaction !== undefined) {
+      errors.push(...validateInteraction(c.localId, c.interaction));
     }
   }
 

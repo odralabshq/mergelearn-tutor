@@ -152,3 +152,68 @@ describe('importAgentSet — the only card-creation path', () => {
     expect(res.errors.some((e) => e.code === 'order_missing')).toBe(true);
   });
 });
+
+describe('importAgentSet — lessons and interactions (first learning loop)', () => {
+  it('persists lesson metadata and card interactions round-trip', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.set.objective = 'Predict how a union narrows';
+    patch.set.lessonKind = 'general';
+    patch.set.estimatedMinutes = 8;
+    patch.cards[0].interaction = { type: 'self_response', placeholder: 'your take' };
+    patch.cards[1].interaction = {
+      type: 'choice',
+      options: [
+        { id: 'a', text: 'string only', feedback: 'No — the union survives.' },
+        { id: 'b', text: 'string | number', feedback: 'Yes — no guard was applied.' },
+      ],
+      correctOptionIds: ['b'],
+    };
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(true);
+    const set = await loadSet(r, res.setId!);
+    expect(set?.objective).toBe('Predict how a union narrows');
+    expect(set?.lessonKind).toBe('general');
+    const cards = await loadCardsForSet(r, res.setId!);
+    const byPrompt = Object.fromEntries(cards.map((c) => [c.front.prompt, c]));
+    expect(byPrompt['What is a union type?'].interaction?.type).toBe('self_response');
+    const choice = byPrompt['How do you narrow a union?'].interaction;
+    expect(choice?.type).toBe('choice');
+    if (choice?.type === 'choice') expect(choice.correctOptionIds).toEqual(['b']);
+  });
+
+  it('rejects a choice with no correct option and one with a dangling correct id', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.cards[0].interaction = {
+      type: 'choice',
+      options: [
+        { id: 'a', text: 'x', feedback: 'nope' },
+        { id: 'b', text: 'y', feedback: 'nope' },
+      ],
+      correctOptionIds: ['zzz'],
+    };
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(false);
+    expect(res.errors.some((e) => e.code === 'interaction:bad_correct')).toBe(true);
+    expect((await loadTags(r))).toHaveLength(0); // nothing persisted
+  });
+
+  it('rejects a choice option missing feedback and a bad lessonKind', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.set.lessonKind = 'nonsense' as never;
+    patch.cards[1].interaction = {
+      type: 'choice',
+      options: [
+        { id: 'a', text: 'x', feedback: 'ok' },
+        { id: 'b', text: 'y', feedback: '' },
+      ],
+      correctOptionIds: ['a'],
+    };
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(false);
+    expect(res.errors.some((e) => e.code === 'interaction:no_feedback')).toBe(true);
+    expect(res.errors.some((e) => e.code === 'set:bad_lesson_kind')).toBe(true);
+  });
+});
