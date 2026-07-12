@@ -10,14 +10,14 @@
  * that covers exactly the patch's cards.
  */
 
-import type { AgentSetPatch, Interaction, LessonKind } from './types.js';
+import type { AgentSetPatch, Interaction, LessonKind, ParsonsBlock } from './types.js';
 
 export type PatchValidationError = { code: string; message: string; cardLocalId?: string };
 
 const nonEmpty = (s: unknown): boolean => typeof s === 'string' && s.trim().length > 0;
 
 const LESSON_KINDS: ReadonlySet<LessonKind> = new Set(['general', 'repository', 'bridge']);
-const INTERACTION_TYPES: ReadonlySet<Interaction['type']> = new Set(['flashcard', 'self_response', 'choice']);
+const INTERACTION_TYPES: ReadonlySet<Interaction['type']> = new Set(['flashcard', 'self_response', 'choice', 'parsons']);
 
 /**
  * HARD-reject only interaction shapes that make a card structurally
@@ -32,6 +32,7 @@ function validateInteraction(localId: string, interaction: Interaction): PatchVa
     errors.push({ code: 'interaction:bad_type', message: `unknown interaction type: ${String((interaction as { type: unknown }).type)}`, cardLocalId: localId });
     return errors; // can't reason about an unknown shape
   }
+  if (interaction.type === 'parsons') return validateParsons(localId, interaction.blocks ?? [], interaction.correctOrder ?? []);
   if (interaction.type !== 'choice') return errors; // flashcard/self_response have no extra structure
   const options = interaction.options ?? [];
   if (options.length < 2) {
@@ -49,6 +50,36 @@ function validateInteraction(localId: string, interaction: Interaction): PatchVa
   }
   for (const cid of correct) {
     if (!ids.has(cid)) errors.push({ code: 'interaction:bad_correct', message: `correctOptionId matches no option: ${cid}`, cardLocalId: localId });
+  }
+  return errors;
+}
+
+/**
+ * HARD-reject parsons shapes that can't be graded: fewer than two blocks,
+ * empty/duplicate block ids, empty code, and a correctOrder that isn't an exact
+ * permutation of the block ids (dup, unknown, or missing). Block count and
+ * ambiguous-ordering quality are advisory authoring guidance, not gated here.
+ */
+function validateParsons(localId: string, blocks: ParsonsBlock[], correctOrder: string[]): PatchValidationError[] {
+  const errors: PatchValidationError[] = [];
+  if (blocks.length < 2) {
+    errors.push({ code: 'interaction:few_blocks', message: 'parsons needs at least 2 blocks', cardLocalId: localId });
+  }
+  const ids = new Set<string>();
+  for (const b of blocks) {
+    if (!nonEmpty(b.id)) errors.push({ code: 'interaction:block_id_empty', message: 'parsons block id is empty', cardLocalId: localId });
+    else if (ids.has(b.id)) errors.push({ code: 'interaction:dup_block_id', message: `duplicate block id: ${b.id}`, cardLocalId: localId });
+    else ids.add(b.id);
+    if (!nonEmpty(b.code)) errors.push({ code: 'interaction:block_code_empty', message: `block ${b.id || '(no id)'} has empty code`, cardLocalId: localId });
+  }
+  const orderSeen = new Set<string>();
+  for (const oid of correctOrder) {
+    if (!ids.has(oid)) errors.push({ code: 'interaction:order_unknown', message: `correctOrder references unknown block: ${oid}`, cardLocalId: localId });
+    if (orderSeen.has(oid)) errors.push({ code: 'interaction:order_dup', message: `correctOrder lists a block twice: ${oid}`, cardLocalId: localId });
+    orderSeen.add(oid);
+  }
+  for (const id of ids) {
+    if (!orderSeen.has(id)) errors.push({ code: 'interaction:order_missing', message: `block not in correctOrder: ${id}`, cardLocalId: localId });
   }
   return errors;
 }

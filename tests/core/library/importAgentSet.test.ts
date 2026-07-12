@@ -217,6 +217,50 @@ describe('importAgentSet — lessons and interactions (first learning loop)', ()
     expect(res.errors.some((e) => e.code === 'set:bad_lesson_kind')).toBe(true);
   });
 
+  it('persists a parsons interaction round-trip', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.cards[0].interaction = {
+      type: 'parsons',
+      language: 'typescript',
+      blocks: [
+        { id: 'guard', code: "if (typeof v === 'string') {", label: 'Narrow' },
+        { id: 'use', code: '  return v.toUpperCase();' },
+        { id: 'close', code: '}' },
+      ],
+      correctOrder: ['guard', 'use', 'close'],
+    };
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(true);
+    const cards = await loadCardsForSet(r, res.setId!);
+    const byPrompt = Object.fromEntries(cards.map((c) => [c.front.prompt, c]));
+    const parsons = byPrompt['What is a union type?'].interaction;
+    expect(parsons?.type).toBe('parsons');
+    if (parsons?.type === 'parsons') {
+      expect(parsons.correctOrder).toEqual(['guard', 'use', 'close']);
+      expect(parsons.blocks).toHaveLength(3);
+    }
+  });
+
+  it('rejects parsons shapes that cannot be graded (too few blocks, non-permutation order)', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    // correctOrder references an unknown id AND omits a real block.
+    patch.cards[0].interaction = {
+      type: 'parsons',
+      blocks: [
+        { id: 'a', code: 'const x = 1;' },
+        { id: 'b', code: 'return x;' },
+      ],
+      correctOrder: ['a', 'zzz'],
+    };
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(false);
+    expect(res.errors.some((e) => e.code === 'interaction:order_unknown')).toBe(true);
+    expect(res.errors.some((e) => e.code === 'interaction:order_missing')).toBe(true);
+    expect((await loadTags(r))).toHaveLength(0); // nothing persisted
+  });
+
   it('dry-run previews the outcome (setId, card statuses, tags) but writes nothing', async () => {
     const r = await freshRoot();
     const res = await importAgentSet(r, conceptualPatch(), { dryRun: true });
