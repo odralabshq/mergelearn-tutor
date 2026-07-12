@@ -868,7 +868,7 @@ function renderPractice(): string {
 function practiceScript(): string {
   return `
 var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;
-var attempt=null;var cardStartedAt=0;var practiceMode='review';
+var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}var noun=practiceMode==='lesson'?'Activity':'Card';p.textContent=noun+' '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';}
@@ -901,8 +901,8 @@ function render(){
     attemptUi='<fieldset class="attempt choices"><legend class="label">Choose your answer</legend>'+interaction.options.map(function(o){return '<label class="choice"><input type="'+inputType+'" name="answer" value="'+esc(o.id)+'"><span>'+esc(o.text)+'</span></label>';}).join('')+'</fieldset>';
   }else if(interaction.type==='parsons'){
     var pblocks=shuffleParsons(interaction.blocks||[],interaction.correctOrder||[]);
-    var pitems=pblocks.map(function(b){var lbl=b.label?'<span class="p-label">'+esc(b.label)+'</span>':'';return '<li class="p-block" data-bid="'+esc(b.id)+'"><span class="p-move"><button type="button" class="p-up" aria-label="Move block up">▲</button><button type="button" class="p-down" aria-label="Move block down">▼</button></span><span class="p-body">'+lbl+'<pre><code>'+esc(b.code)+'</code></pre></span></li>';}).join('');
-    attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><ol class="p-list" id="p-list">'+pitems+'</ol></div>';
+    var pitems=pblocks.map(function(b){var lbl=b.label?'<span class="p-label">'+esc(b.label)+'</span>':'';return '<li class="p-block" data-bid="'+esc(b.id)+'" tabindex="0" draggable="true" role="option" aria-selected="false"><span class="p-move"><button type="button" class="p-up" aria-label="Move block up" tabindex="-1">▲</button><button type="button" class="p-down" aria-label="Move block down" tabindex="-1">▼</button></span><span class="p-body">'+lbl+'<pre><code>'+esc(b.code)+'</code></pre></span></li>';}).join('');
+    attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><p class="p-hint">Click a block then use ↑/↓, drag it, or use the ▲▼ buttons.</p><ol class="p-list" id="p-list" role="listbox" aria-label="Order the code blocks">'+pitems+'</ol></div>';
   }
   var check=interactive?'<button class="primary check-answer" id="check-answer">Check answer <kbd>Enter</kbd></button>':'';
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
@@ -932,17 +932,46 @@ function shuffleParsons(blocks,correctOrder){
   if(a.length>1){var solved=a.every(function(b,n){return b.id===correctOrder[n];});if(solved)a.push(a.shift());}
   return a;
 }
-// Move-up/down reordering. Accessible and deterministic; drag-and-drop is a
-// later enhancement (see design doc 11).
+// Three input methods over one reorder primitive: (1) ▲▼ buttons, (2) click a
+// tile to select then ↑/↓ arrows, (3) drag and drop. All no-op after reveal.
+// Native HTML5 DnD (no touch) is progressive enhancement; buttons+select work
+// everywhere.
 function wireParsons(){
   var list=document.getElementById('p-list');if(!list)return;
-  function move(li,dir){
-    if(isRevealed())return;
-    if(dir<0&&li.previousElementSibling)list.insertBefore(li,li.previousElementSibling);
-    else if(dir>0&&li.nextElementSibling)list.insertBefore(li.nextElementSibling,li);
+  function select(li){
+    [].forEach.call(list.querySelectorAll('.p-block'),function(x){var on=x===li;x.classList.toggle('sel',on);x.setAttribute('aria-selected',on?'true':'false');});
   }
-  [].forEach.call(list.querySelectorAll('.p-up'),function(btn){btn.addEventListener('click',function(){move(btn.closest('.p-block'),-1);});});
-  [].forEach.call(list.querySelectorAll('.p-down'),function(btn){btn.addEventListener('click',function(){move(btn.closest('.p-block'),1);});});
+  // dir<0 up, dir>0 down. Returns true if it moved. Keeps li selected+focused.
+  function move(li,dir){
+    if(isRevealed()||!li)return false;
+    if(dir<0&&li.previousElementSibling){list.insertBefore(li,li.previousElementSibling);}
+    else if(dir>0&&li.nextElementSibling){list.insertBefore(li.nextElementSibling,li);}
+    else return false;
+    select(li);li.focus();return true;
+  }
+  [].forEach.call(list.querySelectorAll('.p-up'),function(btn){btn.addEventListener('click',function(e){e.stopPropagation();move(btn.closest('.p-block'),-1);});});
+  [].forEach.call(list.querySelectorAll('.p-down'),function(btn){btn.addEventListener('click',function(e){e.stopPropagation();move(btn.closest('.p-block'),1);});});
+  [].forEach.call(list.querySelectorAll('.p-block'),function(li){
+    li.addEventListener('click',function(){if(isRevealed())return;select(li);});
+    li.addEventListener('keydown',function(e){
+      if(isRevealed())return;
+      if(e.key==='ArrowUp'){e.preventDefault();move(li,-1);}
+      else if(e.key==='ArrowDown'){e.preventDefault();move(li,1);}
+    });
+    // Drag and drop (mouse/pointer). Reorders the DOM live; grading reads DOM order.
+    li.addEventListener('dragstart',function(e){if(isRevealed()){e.preventDefault();return;}dragEl=li;li.classList.add('dragging');select(li);if(e.dataTransfer){e.dataTransfer.effectAllowed='move';try{e.dataTransfer.setData('text/plain',li.getAttribute('data-bid'));}catch(_){}}});
+    li.addEventListener('dragend',function(){if(dragEl)dragEl.classList.remove('dragging');dragEl=null;});
+  });
+  // Insert the dragged tile before/after the tile under the cursor by midpoint.
+  list.addEventListener('dragover',function(e){
+    if(isRevealed()||!dragEl)return;
+    e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect='move';
+    var over=e.target&&e.target.closest?e.target.closest('.p-block'):null;
+    if(!over||over===dragEl)return;
+    var r=over.getBoundingClientRect();var after=e.clientY>r.top+r.height/2;
+    list.insertBefore(dragEl,after?over.nextElementSibling:over);
+  });
+  list.addEventListener('drop',function(e){if(dragEl){e.preventDefault();dragEl.focus();}});
 }
 function collectAttempt(){
   var c=queue[pos],i=c.interaction||{type:'flashcard'};
@@ -1218,8 +1247,13 @@ button.primary:hover{background:var(--accent-hover)}
 .learner-answer{padding:10px 12px;background:var(--overlay);border-left:3px solid var(--accent);border-radius:var(--radius-sm);white-space:pre-wrap}
 .result{font-weight:700;margin:0 0 12px}.result.correct{color:var(--success)}.result.incorrect{color:var(--warning)}
 .choice-feedback{margin:6px 0 16px;padding-left:20px}
+.p-hint{font-size:12px;color:var(--muted);margin:0 0 8px}
 .p-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px;counter-reset:p}
-.p-block{display:flex;align-items:stretch;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay)}
+.p-block{display:flex;align-items:stretch;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay);cursor:grab}
+.p-block:focus{outline:2px solid var(--accent);outline-offset:1px}
+.p-block:focus:not(:focus-visible){outline:none}
+.p-block.sel{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.p-block.dragging{opacity:.5;cursor:grabbing}
 .p-move{display:flex;flex-direction:column;gap:4px;justify-content:center}
 .p-move button{border:1px solid var(--border);background:var(--raised);color:var(--text);border-radius:4px;cursor:pointer;width:26px;height:20px;line-height:1;font-size:11px;padding:0}
 .p-move button:hover{background:var(--hover)}
