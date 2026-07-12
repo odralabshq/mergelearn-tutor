@@ -1,82 +1,88 @@
 # MergeLearn
 
-MergeLearn is a local-first, model-free learning library and spaced-repetition
-review shell. Your own coding agent authors the learning material; MergeLearn
-stores it, freezes any cited code, schedules reviews with FSRS, and gives you a
-simple loop to learn by reading and answering cards.
+MergeLearn is a local-first, model-free learning tool. Your own coding agent
+writes the lessons; MergeLearn stores them, schedules reviews with FSRS, and
+gives you a local website to learn from. It ships no model and makes no network
+calls.
 
-It ships no model and makes no network calls. All authoring intelligence lives
-in whatever coding agent you already use; MergeLearn is the deterministic
-library and review engine underneath it.
+## How you use it
 
-> **v2 redesign (2026-07).** This replaces the earlier repo-analysis tutor
-> (git ingestion, concept extraction, bundled card generation, browser UI).
-> The north-star design lives in `docs/design/redesign-2026-07/`.
+The main loop has three steps:
 
-## Model
+1. **Install the authoring skill into your coding agent** (once, see Install).
+2. **Ask your agent to author a lesson.** Point it at a topic or some repo code
+   and it writes a set of cards for you.
+3. **Run `mergelearn serve` and learn in your browser.** This is the primary way
+   to use MergeLearn day to day.
 
-- **CardSet** — the user-facing atom. A titled deck of cards in a folder.
-- **Card** — a self-contained front (`prompt`) and back (`shortAnswer` +
-  `explanationMarkdown`), so you learn by reading, not by opening the repo.
-- **Tags** — one taxonomy that *is* the learning graph (tags carry
-  `parentIds`/`relatedIds`). Cards belong to one set; tags cross-cut.
-- **SourceRef** — optional. When a card cites repo code, MergeLearn freezes the
-  exact lines from disk at a pinned commit — the agent never grades itself.
-- **FSRS** — per-card scheduling. Review history is grouped into session files.
+```bash
+mergelearn serve            # prints a local URL like http://127.0.0.1:52134
+mergelearn serve --port 4321  # or pin a fixed port
+```
 
-## The authoring handshake
+The site is offline and reads your local library. **Home** lists each lesson
+with its objective, estimated time, and a single Start / Continue / Practice
+again button; progress is remembered so Continue drops you at the first card you
+have not attempted yet. Cards due for spaced-repetition review show in a
+separate banner. You attempt each card first, then reveal the answer and grade
+how well you knew it (`1` Again, `2` Hard, `3` Good, `4` Easy).
 
-Card creation is import-only, in two steps:
+## Install
 
-1. `mergelearn context` emits an **AuthoringContext** (existing sets, the full
-   tag taxonomy, folders) for your agent to author against — so it reuses tags
-   instead of inventing synonyms.
-2. Your agent returns an **AgentSetPatch** JSON; `mergelearn import` validates
-   it (structure gate + tag-graph guard), freezes cited code, and writes it.
-
-Both gates must pass or nothing is written.
-
-## Requirements
-
-- Node.js 20 or newer.
-- Git on `PATH` (only needed for cards that cite repo code).
-
-## Install (local development)
+Requirements: Node.js 20 or newer, and Git on your `PATH` (only for lessons that
+cite repo code).
 
 ```bash
 npm install
 npm run build
-npm link            # optional: puts `mergelearn` on your PATH
+npm link                    # optional: puts `mergelearn` on your PATH
 ```
 
-Or run the built CLI directly:
+Then install the authoring skill into whichever agent you use:
 
 ```bash
-node dist/libCli.js --help
+mergelearn setup-agent                      # auto-detect installed agents
+mergelearn setup-agent --agent all          # every supported agent
+mergelearn setup-agent --agent claude,codex --scope project   # this repo only
+mergelearn setup-agent --dry-run            # show changes, write nothing
+mergelearn setup-agent --uninstall          # remove copies this tool installed
 ```
 
-## Quick start
+Supported agents: `claude` (Claude Code), `codex`, `cursor`, `opencode`,
+`gemini`. The command copies the skill (no symlinks), records a checksum so
+reruns are idempotent, and never overwrites a copy you edited by hand. Any agent
+that reads `SKILL.md` files then picks it up; for an agent without a skills
+directory, point it at `skills/mergelearn-authoring/SKILL.md` and ask it to
+author a lesson.
 
-```bash
-# 1. Ask your agent to author against the current library state.
-#    (repo is optional; omit --repo for purely conceptual sets.)
-mergelearn context --goal "TypeScript union types" --repo /path/to/repo > context.json
+## Question types
 
-# 2. Hand context.json to your coding agent; it returns an AgentSetPatch JSON.
+Cards are attempt-first: you act before the answer is revealed, and the reveal
+is feedback on your attempt.
 
-# 3. Import the patch (validates, freezes cited code, writes the set).
-mergelearn import --file patch.json --agent my-coding-agent
+- **Multiple choice.** Pick one or several options, graded in the browser.
+- **Text answer.** Write a short answer, then self-grade against the expected
+  one. Good for explain-why prompts.
+- **Code ordering.** Reorder shuffled code blocks into the correct sequence
+  (click a block and use the arrow keys, drag it, or use the move buttons),
+  graded by exact order.
+- **Flashcard.** A plain reveal-then-self-grade card for pure recall.
 
-# 4. Review.
-mergelearn due                                  # what's due now
-mergelearn show --set ts-union-types --card <id>  # learn by reading
-mergelearn grade --card <id> --rating 3         # 1 Again, 2 Hard, 3 Good, 4 Easy
-```
+## Ways to use it
 
-The library lives at `~/.mergelearn/` (override with `MERGELEARN_HOME` or
-`--home`).
+- **Learn a codebase.** Ask your agent to author lessons from real files; cited
+  code is frozen at a pinned commit so the lesson stays stable.
+- **Learn a concept.** Skip the repo and ask for a conceptual lesson on any
+  topic (a language feature, an algorithm, a protocol).
+- **Keep it fresh.** Review the due queue in the browser now and then; FSRS
+  spaces cards so you revisit them right before you would forget.
+- **Preview before you trust it.** Run `mergelearn import --dry-run` on an
+  agent's output to see what would be created before it touches your library.
 
 ## CLI commands
+
+The browser is the main interface, but every action is also available on the
+command line.
 
 ```bash
 mergelearn context     --goal "..." [--repo <path>] [--target-set <id>]
@@ -89,56 +95,24 @@ mergelearn serve       [--port <n>]
 mergelearn setup-agent [--agent <ids|all>] [--scope global|project] [--dry-run] [--uninstall]
 ```
 
-`import --dry-run` validates the patch and previews the outcome (set id, card
-statuses, tags) without writing anything — use it to check an agent's output
-before committing it to your library.
-
-## Review GUI
-
-Prefer a browser? `mergelearn serve` starts a local, offline web UI on
-`127.0.0.1` — no network calls, no bundled model. **Home** is lesson-first:
-each set is a lesson with its objective, estimated time, and a single
-Start/Continue/Practice-again action; progress (not started, in progress,
-completed) is derived from your past lesson sittings so Continue resumes at
-the first card you haven't attempted. Scheduled **Review** stays a separate
-FSRS queue shown in the banner. **Practice** runs one card at a time (reveal
-with space/Enter, grade with `1`-`4`). It reads the same on-disk library as
-the CLI, so you can mix the two. Authoring stays import-only — the GUI reviews
-cards, it does not create them.
-
-## Using with your coding agent
-
-MergeLearn ships one canonical authoring skill (`skills/mergelearn-authoring/`)
-that teaches an agent how to author a lesson: run `mergelearn context`, then
-return an `AgentSetPatch`. Different agents discover skills in different
-directories, so install it into yours with:
-
-```bash
-mergelearn setup-agent                 # auto-detect installed agents, global scope
-mergelearn setup-agent --agent all     # install into every supported agent
-mergelearn setup-agent --agent claude,codex --scope project   # this repo only
-mergelearn setup-agent --dry-run       # show what would change, write nothing
-mergelearn setup-agent --uninstall     # remove copies this tool installed
-```
-
-Supported agents: `claude` (Claude Code), `codex`, `cursor`, `opencode`,
-`gemini`. The command copies the skill (it does not symlink), records a
-checksum manifest so reruns are idempotent, and never overwrites a copy you
-edited by hand. Any agent that reads `SKILL.md` files will then pick it up; for
-an agent without a skills directory, point it at
-`skills/mergelearn-authoring/SKILL.md` directly and ask it to author a lesson.
+`context` emits the current library state (sets, tags, folders) for your agent
+to author against. `import` validates the returned patch, freezes any cited
+code, and writes the set. `import --dry-run` previews the outcome without
+writing.
 
 ## Storage layout
+
+The library lives at `~/.mergelearn/` (override with `MERGELEARN_HOME` or
+`--home`).
 
 ```
 ~/.mergelearn/
   library/
-    tags.json                     the taxonomy = the learning graph
+    tags.json                     the taxonomy that links topics together
     folders.json
     sets/<setId>/
       set.json
-      order.json                  agent-authored teaching order
-      imports.json                provenance of each applied patch
+      order.json                  the teaching order
       cards/<cardId>.json         one file per card
   repos/registry.json             stable repoId -> path (optional)
   profile/sessions/<date>/        one file per review sitting
@@ -147,11 +121,11 @@ agent-skills.json                 manifest of skills installed via setup-agent
 
 ## Privacy
 
-MergeLearn is local-first and model-free by design.
-
 - No telemetry, no required network calls, no bundled model.
 - Your coding agent does the authoring; MergeLearn never sends code anywhere.
 - Cited code is read from your local disk and frozen at a pinned commit.
+
+See `docs/PRIVACY.md` for details.
 
 ## Verification
 
@@ -162,17 +136,6 @@ npm run build          # emit dist/
 npm run smoke          # build + CLI --help
 npm run smoke:package  # pack the tarball and run the packaged binary
 ```
-
-## Documentation
-
-- `docs/design/redesign-2026-07/` — the v2 north-star design (object model,
-  storage, pipeline, UI, deletion inventory).
-- `docs/PRIVACY.md` — local-first privacy model.
-
-## Release status
-
-The package is still `private: true`. Product name and distribution channel
-need explicit human approval before any public publish.
 
 ## License
 
