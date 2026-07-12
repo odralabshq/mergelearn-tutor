@@ -63,13 +63,21 @@ export type CardBack = {
  * option so the reveal is deterministic and needs no live model. */
 export type ChoiceOption = { id: string; text: string; feedback: string };
 
+/** One code fragment in a `parsons` interaction. `label` is an optional subgoal
+ * cue shown with the block, never solution feedback. */
+export type ParsonsBlock = { id: string; code: string; label?: string };
+
 /** How the learner engages a card before the answer is revealed. Absent means
  * the legacy `flashcard` behaviour (reveal + self-grade). A `choice` with one
- * correct id renders single-select; more than one renders multi-select. */
+ * correct id renders single-select; more than one renders multi-select. A
+ * `parsons` card asks the learner to order shuffled code blocks. */
 export type Interaction =
   | { type: 'flashcard' }
   | { type: 'self_response'; placeholder?: string }
-  | { type: 'choice'; options: ChoiceOption[]; correctOptionIds: string[] };
+  | { type: 'choice'; options: ChoiceOption[]; correctOptionIds: string[] }
+  // Learner orders shuffled code blocks; `correctOrder` is an exact permutation
+  // of every block id. Graded deterministically client-side (v1: single order).
+  | { type: 'parsons'; blocks: ParsonsBlock[]; correctOrder: string[]; language?: string };
 
 export type SourceRefStatus = 'fresh' | 'drifted' | 'missing' | 'orphaned_commit';
 
@@ -177,6 +185,8 @@ export type ReviewAttempt = {
   interaction: Interaction['type'];
   responseText?: string;
   selectedOptionIds?: string[];
+  /** For `parsons`: the block ids in the learner's submitted order. */
+  orderedBlockIds?: string[];
   correct?: boolean;
   revealedFull?: boolean;
   elapsedMs?: number;

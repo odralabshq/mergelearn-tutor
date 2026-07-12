@@ -119,6 +119,10 @@ read. Three types:
   — graded deterministically in the browser (no model at runtime). Use for
   output prediction, command choice, bug classification, options/tradeoffs.
   One correct id → single-select; several → multi-select.
+- `{ "type": "parsons", "blocks": [{id,code,label?}...], "correctOrder": [ids...], "language?": "ts" }`
+  — learner reorders shuffled code blocks; graded by exact order in the browser.
+  Use for sequence-critical procedures: a function body, an algorithm, a setup
+  sequence, an async/await flow. `correctOrder` must list every block id once.
 - `{ "type": "flashcard" }` (or omit `interaction`) — legacy reveal-then-self-
   grade. Use ONLY for pure recall where no attempt is meaningful.
 
@@ -135,6 +139,31 @@ mistake. That per-option feedback is the whole point: it turns a click into a
 correction. For an options/tradeoffs card, present the options and ask the
 learner to COMMIT to one under stated constraints, then let the feedback reveal
 the tradeoff — don't hand them the tradeoff before they choose.
+
+### Writing a Parsons card that grades cleanly
+
+Grading is EXACT ORDER: the learner's sequence must equal `correctOrder`
+position-for-position. The one failure mode is **ambiguity** — blocks with no
+dependency between them have more than one valid order, so a learner who is
+right gets marked wrong. Author against it:
+
+- **Pick code where order is forced by dependency.** Each block should depend
+  on a previous one: a variable used after it's declared, a guard before the
+  code it protects, an `await` whose result the next line consumes, an
+  algorithm whose steps only work in sequence. If two blocks could swap with no
+  behavior change (two independent `const`s, two unrelated imports), merge them
+  into one block or pick different code.
+- **One logical unit per block, 3-8 blocks.** Split at meaningful boundaries
+  (a guard, a loop header, a return), not mid-expression. A closing `}` on its
+  own line is fine when indentation/scope makes its position unambiguous.
+- **Use `label` as a subgoal cue, not the answer.** "Guard the input", "Base
+  case", "Recurse" help the learner reason about structure. Never label a block
+  with its position ("Step 1").
+- **Keep `correctOrder` an exact permutation of the block ids** — every id once,
+  no extras, no omissions. The tutor hard-rejects anything else.
+- No distractor blocks in this version: every block belongs in the answer. The
+  explanation should say WHY the order matters (data/control flow), not just
+  restate the finished code.
 
 ## Write explanations that TEACH (the biggest quality lever)
 
@@ -192,6 +221,9 @@ sprawling graph.
   options, a duplicate option `id`, an empty `correctOptionIds`, a `correctOptionId`
   matching no option, or any option missing `feedback`. A `set.lessonKind` that
   is not `general|repository|bridge`.
+- A malformed `parsons`: fewer than 2 blocks, an empty or duplicate block `id`,
+  an empty block `code`, or a `correctOrder` that isn't an exact permutation of
+  the block ids (unknown id, duplicate, or a missing block).
 
 Note what is NOT gated: lesson size (6-10), the self_response/choice mix, and
 explanation length are authoring guidance, not hard rejects. The gate protects
@@ -210,6 +242,9 @@ structure; teaching quality is on you.
   the mechanism — lead tight, defer depth to the fold.)
 - A lesson of only `choice` cards drills recognition, not recall. Mix in
   `self_response` and end with a transfer card that applies the idea somewhere new.
+- A `parsons` card whose blocks have no dependency between them has multiple
+  valid orders but grades on ONE — a correct learner gets marked wrong. Only use
+  `parsons` when sequence is forced by data/control flow; otherwise use `choice`.
 - Don't front-load the answer in the prompt or `contextMarkdown` — the learner
   must attempt first for the reveal to teach. The explanation is the payoff, not
   the setup.

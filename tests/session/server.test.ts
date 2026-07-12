@@ -163,6 +163,39 @@ describe('review GUI server (functional)', () => {
     expect(saved.events[0].attempt.revealedFull).toBe(true);
   });
 
+  it('stores a parsons attempt (ordered block ids + correctness) to the session file', async () => {
+    const root = await seed();
+    running = await startReviewServer(root);
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    const card = due.cards[0];
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3,
+        attempt: { interaction: 'parsons', orderedBlockIds: ['guard', 'use', 'close'], correct: true, elapsedMs: 5200 },
+      }),
+    })).json();
+    expect(graded.ok).toBe(true);
+
+    await (await fetch(`${running.url}/api/session/end`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    })).json();
+
+    const fs = await import('node:fs/promises');
+    const sessionsDir = join(root, 'profile', 'sessions');
+    const days = await fs.readdir(sessionsDir);
+    const files = await fs.readdir(join(sessionsDir, days[0]));
+    const saved = JSON.parse(await fs.readFile(join(sessionsDir, days[0], files[0]), 'utf8'));
+    expect(saved.events[0].attempt.interaction).toBe('parsons');
+    expect(saved.events[0].attempt.orderedBlockIds).toEqual(['guard', 'use', 'close']);
+    expect(saved.events[0].attempt.correct).toBe(true);
+  });
+
   it('serves a lesson in authored order with objective and interaction, independent of due state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-srv-'));
     const patch: AgentSetPatch = {

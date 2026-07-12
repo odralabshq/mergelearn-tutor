@@ -93,7 +93,7 @@ function asFilter(v: unknown): DueFilter | undefined {
   return hasDimension ? f : undefined;
 }
 
-const INTERACTION_TYPES = new Set<Interaction['type']>(['flashcard', 'self_response', 'choice']);
+const INTERACTION_TYPES = new Set<Interaction['type']>(['flashcard', 'self_response', 'choice', 'parsons']);
 
 /** Normalize an untrusted grade-body `attempt` into a ReviewAttempt (or
  * undefined). Evidence only — never affects FSRS — so we coerce leniently and
@@ -106,6 +106,9 @@ function asAttempt(v: unknown): ReviewAttempt | undefined {
   if (typeof o.responseText === 'string') a.responseText = o.responseText.slice(0, 4000);
   if (Array.isArray(o.selectedOptionIds) && o.selectedOptionIds.every((x) => typeof x === 'string')) {
     a.selectedOptionIds = o.selectedOptionIds as string[];
+  }
+  if (Array.isArray(o.orderedBlockIds) && o.orderedBlockIds.every((x) => typeof x === 'string')) {
+    a.orderedBlockIds = o.orderedBlockIds as string[];
   }
   if (typeof o.correct === 'boolean') a.correct = o.correct;
   if (typeof o.revealedFull === 'boolean') a.revealedFull = o.revealedFull;
@@ -896,6 +899,10 @@ function render(){
   }else if(interaction.type==='choice'){
     var inputType=(interaction.correctOptionIds||[]).length>1?'checkbox':'radio';
     attemptUi='<fieldset class="attempt choices"><legend class="label">Choose your answer</legend>'+interaction.options.map(function(o){return '<label class="choice"><input type="'+inputType+'" name="answer" value="'+esc(o.id)+'"><span>'+esc(o.text)+'</span></label>';}).join('')+'</fieldset>';
+  }else if(interaction.type==='parsons'){
+    var pblocks=shuffleParsons(interaction.blocks||[],interaction.correctOrder||[]);
+    var pitems=pblocks.map(function(b){var lbl=b.label?'<span class="p-label">'+esc(b.label)+'</span>':'';return '<li class="p-block" data-bid="'+esc(b.id)+'"><span class="p-move"><button type="button" class="p-up" aria-label="Move block up">▲</button><button type="button" class="p-down" aria-label="Move block down">▼</button></span><span class="p-body">'+lbl+'<pre><code>'+esc(b.code)+'</code></pre></span></li>';}).join('');
+    attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><ol class="p-list" id="p-list">'+pitems+'</ol></div>';
   }
   var check=interactive?'<button class="primary check-answer" id="check-answer">Check answer <kbd>Enter</kbd></button>':'';
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
@@ -908,6 +915,7 @@ function render(){
     '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
   var checkBtn=document.getElementById('check-answer');if(checkBtn)checkBtn.addEventListener('click',reveal);
+  wireParsons();
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
   var deep=document.getElementById('deep');
   if(deep)deep.addEventListener('toggle',function(){try{localStorage.setItem('ml-deep-open',deep.open?'1':'0');}catch(e){}});
@@ -916,6 +924,26 @@ function setConfidence(n){
   confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});
   var c=queue[pos];if(!c||!c.interaction||c.interaction.type==='flashcard')reveal();
 }
+// Present blocks in a non-solved order. Fisher-Yates, then if it landed on the
+// exact solution (likely for tiny sets) rotate once so the task never starts done.
+function shuffleParsons(blocks,correctOrder){
+  var a=blocks.slice();
+  for(var k=a.length-1;k>0;k--){var j=Math.floor(Math.random()*(k+1));var t=a[k];a[k]=a[j];a[j]=t;}
+  if(a.length>1){var solved=a.every(function(b,n){return b.id===correctOrder[n];});if(solved)a.push(a.shift());}
+  return a;
+}
+// Move-up/down reordering. Accessible and deterministic; drag-and-drop is a
+// later enhancement (see design doc 11).
+function wireParsons(){
+  var list=document.getElementById('p-list');if(!list)return;
+  function move(li,dir){
+    if(isRevealed())return;
+    if(dir<0&&li.previousElementSibling)list.insertBefore(li,li.previousElementSibling);
+    else if(dir>0&&li.nextElementSibling)list.insertBefore(li.nextElementSibling,li);
+  }
+  [].forEach.call(list.querySelectorAll('.p-up'),function(btn){btn.addEventListener('click',function(){move(btn.closest('.p-block'),-1);});});
+  [].forEach.call(list.querySelectorAll('.p-down'),function(btn){btn.addEventListener('click',function(){move(btn.closest('.p-block'),1);});});
+}
 function collectAttempt(){
   var c=queue[pos],i=c.interaction||{type:'flashcard'};
   if(i.type==='flashcard')return {interaction:'flashcard',elapsedMs:Date.now()-cardStartedAt};
@@ -923,6 +951,12 @@ function collectAttempt(){
     var text=(document.getElementById('attempt-text').value||'').trim();
     if(!text){statusMsg('Write an answer first.');return null;}
     return {interaction:'self_response',responseText:text,elapsedMs:Date.now()-cardStartedAt};
+  }
+  if(i.type==='parsons'){
+    var order=[].map.call(document.querySelectorAll('#p-list .p-block'),function(x){return x.getAttribute('data-bid');});
+    var want=i.correctOrder||[];
+    var ok=order.length===want.length&&order.every(function(x,n){return x===want[n];});
+    return {interaction:'parsons',orderedBlockIds:order,correct:ok,elapsedMs:Date.now()-cardStartedAt};
   }
   var ids=[].map.call(document.querySelectorAll('.choices input:checked'),function(x){return x.value;});
   if(!ids.length){statusMsg('Choose an answer first.');return null;}
@@ -933,6 +967,12 @@ function collectAttempt(){
 function attemptReviewHtml(c,a){
   if(!a||a.interaction==='flashcard')return '';
   if(a.interaction==='self_response')return '<p class="label">Your answer</p><p class="learner-answer">'+esc(a.responseText)+'</p>';
+  if(a.interaction==='parsons'){
+    var pi=c.interaction;var byId={};(pi.blocks||[]).forEach(function(b){byId[b.id]=b;});
+    var correctHtml=(pi.correctOrder||[]).map(function(id){var b=byId[id]||{code:id};return '<li><pre><code>'+esc(b.code)+'</code></pre></li>';}).join('');
+    var head='<p class="result '+(a.correct?'correct':'incorrect')+'">'+(a.correct?'Correct order':'Not quite')+'</p>';
+    return head+(a.correct?'':'<p class="label">Correct order</p><ol class="p-solution">'+correctHtml+'</ol>');
+  }
   var i=c.interaction;var selected=new Set(a.selectedOptionIds||[]);
   var feedback=i.options.filter(function(o){return selected.has(o.id);}).map(function(o){return '<li><strong>'+esc(o.text)+'</strong> — '+esc(o.feedback)+'</li>';}).join('');
   return '<p class="result '+(a.correct?'correct':'incorrect')+'">'+(a.correct?'Correct':'Not quite')+'</p><p class="label">Feedback on your choice</p><ul class="choice-feedback">'+feedback+'</ul>';
@@ -1178,6 +1218,17 @@ button.primary:hover{background:var(--accent-hover)}
 .learner-answer{padding:10px 12px;background:var(--overlay);border-left:3px solid var(--accent);border-radius:var(--radius-sm);white-space:pre-wrap}
 .result{font-weight:700;margin:0 0 12px}.result.correct{color:var(--success)}.result.incorrect{color:var(--warning)}
 .choice-feedback{margin:6px 0 16px;padding-left:20px}
+.p-list{list-style:none;margin:8px 0 0;padding:0;display:grid;gap:8px;counter-reset:p}
+.p-block{display:flex;align-items:stretch;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay)}
+.p-move{display:flex;flex-direction:column;gap:4px;justify-content:center}
+.p-move button{border:1px solid var(--border);background:var(--raised);color:var(--text);border-radius:4px;cursor:pointer;width:26px;height:20px;line-height:1;font-size:11px;padding:0}
+.p-move button:hover{background:var(--hover)}
+.p-body{flex:1;min-width:0}
+.p-label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+.p-block pre{margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px}
+.attempt.parsons.locked{opacity:.65;pointer-events:none}
+.p-solution{margin:6px 0 16px;padding-left:20px}
+.p-solution pre{margin:0;white-space:pre-wrap;font-family:var(--mono);font-size:13px}
 .grade-label{margin-top:6px}
 .c1{border-color:var(--danger)}.c2{border-color:var(--warning)}.c3{border-color:var(--accent)}.c4{border-color:var(--accent)}.c5{border-color:var(--success)}
 .diff-snippet{font-family:var(--mono);background:#08111f;border:1px solid rgba(35,52,79,.7);border-radius:var(--radius-sm);overflow:hidden;margin:10px 0}
