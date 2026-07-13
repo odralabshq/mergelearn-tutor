@@ -26,9 +26,13 @@ pass. Your job is to pick strong targets and write cards that genuinely teach.
    Applies your AgentSetPatch. Both gates (tag-graph + card structure) must pass
    or NOTHING is written. Cards flagged `needs_review` are reported with reasons.
 
-Verify the CLI is wired: `mergelearn --help` lists both commands. `mergelearn
-serve` opens the local review GUI (prints a URL, blocks until Ctrl+C; open the
-URL yourself, it does not auto-launch a browser).
+After a successful import, CLOSE THE LOOP: tell the user their lesson is ready
+and to run `mergelearn serve`, then open the printed URL to learn it. This is the
+one command the user runs themselves, so always hand it to them by name.
+
+The `--goal` on `context` is optional but you should pass it: it records what the
+user asked for. Verify the CLI is wired with `mergelearn --help`. `mergelearn
+serve` prints a URL and blocks until Ctrl+C; it does not auto-launch a browser.
 
 ## The single rule that determines provenance quality
 

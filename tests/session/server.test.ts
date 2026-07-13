@@ -39,6 +39,21 @@ async function get(url: string): Promise<{ status: number; text: string }> {
 }
 
 describe('review GUI server (functional)', () => {
+  it('renders an onboarding empty state (bridge to the agent) when the library has no sets', async () => {
+    const emptyRoot = await mkdtemp(join(tmpdir(), 'mlt-empty-'));
+    running = await startReviewServer(emptyRoot);
+    const { status, text } = await get(`${running.url}/`);
+    expect(status).toBe(200);
+    expect(text).toContain('No lessons yet');
+    // Bridges back to the agent with a concrete, copyable prompt.
+    expect(text).toContain('Create a MergeLearn lesson from my last PR.');
+    expect(text).toContain('class="copyable"');
+    // Refresh control + a first-run setup hint + a manual fallback path.
+    expect(text).toContain('id="refresh-home"');
+    expect(text).toContain('mergelearn setup-agent');
+    expect(text).toContain('Prefer to do it yourself?');
+  });
+
   it('renders Home with the set and the due count', async () => {
     running = await startReviewServer(await seed());
     const { status, text } = await get(`${running.url}/`);

@@ -73,6 +73,16 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(dueAfter).toContain('0 card(s) due');
   });
 
+  it('context works without --goal (optional) and omits the goal field', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
+    const ctxOut = await run(root, 'context');
+    const ctx = JSON.parse(ctxOut); // must still be valid JSON on stdout
+    expect(ctx.goal).toBeUndefined();
+    expect(ctx.existingSets).toEqual([]);
+    expect(ctx.existingTags).toEqual([]);
+    expect(Array.isArray(ctx.folderTree)).toBe(true);
+  });
+
   it('rejects a bad patch at the CLI boundary and writes nothing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
     const bad: AgentSetPatch = { ...patch, order: [] }; // order misses the card

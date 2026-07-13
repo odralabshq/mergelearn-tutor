@@ -41,28 +41,43 @@ function rootFrom(opts: { home?: string }): string {
 }
 
 const out = (s: string) => console.log(s);
+const note = (s: string) => console.error(s); // non-blocking hints; keeps stdout clean for piping
 
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name('mergelearn')
-    .description('Model-free, agent-authored learning library (v2)')
+    .description('Model-free, agent-authored learning library')
     .option('--home <path>', 'library root (default: MERGELEARN_HOME or ~/.mergelearn)');
+
+  program.addHelpText('after', `
+Recommended: use MergeLearn through your coding agent.
+  1. mergelearn setup-agent          install the authoring skill into your agent
+  2. In your agent, ask:             "Create a MergeLearn lesson from my last PR."
+  3. mergelearn serve                open the browser and learn
+Your agent runs 'context' and 'import' for you; you rarely type them yourself.
+
+Manual/advanced: author a lesson yourself.
+  mergelearn context --goal "..."    print the library state to author against
+  mergelearn import --file patch.json   validate + apply an AgentSetPatch (use --dry-run to preview)
+  mergelearn serve                   open the browser and learn`);
 
   const homeOpt = () => program.opts<{ home?: string }>();
 
-  // handshake step 1: tutor -> agent
+  // Step 1 of the manual authoring path: print the library state an agent
+  // authors against. Your agent normally runs this for you.
   program
     .command('context')
-    .description('emit the AuthoringContext JSON the agent authors against')
-    .requiredOption('--goal <text>', 'what the agent should author')
+    .description('print the library state (sets, tags, folders) for an agent to author against')
+    .option('--goal <text>', 'optional: what to author, e.g. "Explain the auth changes in my last PR"')
     .option('--repo <path>', 'register + attach a repo for grounded cards')
     .option('--target-set <id>', 'author into an existing set')
-    .action(async (opts: { goal: string; repo?: string; targetSet?: string }) => {
+    .action(async (opts: { goal?: string; repo?: string; targetSet?: string }) => {
       const root = rootFrom(homeOpt());
       const repo = opts.repo ? await registerRepo(root, opts.repo) : undefined;
       const ctx = await buildAuthoringContext(root, { goal: opts.goal, repo, targetSetId: opts.targetSet });
       out(JSON.stringify(ctx, null, 2));
+      if (!opts.goal) note('note: no --goal given, so the agent has no steer on what to author. Add e.g. --goal "TypeScript unions" for a focused lesson.');
     });
 
   program
@@ -211,7 +226,8 @@ export function buildProgram(): Command {
         const why = s.status === 'locally_modified' ? 'locally modified — left untouched' : 'already current';
         out(`  skipped    ${s.agent}/${s.skill}: ${why}`);
       }
-      out('\nTest it: ask your agent "author a MergeLearn lesson about <topic>" — it should run `mergelearn context` and return an AgentSetPatch.');
+      out('\nNext: open your coding agent in a repo and ask, e.g. "Create a MergeLearn lesson from my last PR."');
+      out('Then run `mergelearn serve` to learn it in your browser. (The agent runs `context` and `import` for you.)');
     });
 
   return program;

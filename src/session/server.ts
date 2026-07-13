@@ -371,11 +371,29 @@ async function renderHome(root: string): Promise<string> {
   for (const c of due) dueBySet.set(c.setId, (dueBySet.get(c.setId) ?? 0) + 1);
 
   if (summaries.length === 0) {
-    const body = `<h1>Your library is empty</h1>` +
-      `<p class="muted">Card sets are authored by your coding agent, then imported.</p>` +
-      `<div class="empty">Author a set, then import it:<br><br>` +
+    const prompts = [
+      'Create a MergeLearn lesson from my last PR.',
+      'Create a MergeLearn lesson about TypeScript union types.',
+      'Create a MergeLearn lesson from the files I have open.',
+    ];
+    const promptList = prompts.map((p) =>
+      `<li><code class="copyable" tabindex="0" role="button" title="Click to copy">${escapeHtml(p)}</code></li>`).join('');
+    const body = `<h1>No lessons yet</h1>` +
+      `<p class="muted">Lessons are written by your coding agent, not typed in here.</p>` +
+      `<div class="onboard">` +
+      `<p class="onboard-step"><strong>1.</strong> Open your coding agent and ask it something like:</p>` +
+      `<ul class="prompt-list">${promptList}</ul>` +
+      `<p class="onboard-step"><strong>2.</strong> When it finishes, <button type="button" class="cta" id="refresh-home">Refresh</button> this page and your lesson appears here.</p>` +
+      `<p class="muted small">First time? Run <code>mergelearn setup-agent</code> once so your agent knows how to author.</p>` +
+      `<details class="manual"><summary>Prefer to do it yourself?</summary>` +
+      `<p class="muted small">Author a lesson from the command line, then reload:</p>` +
       `<code>mergelearn context --goal "..." &gt; context.json</code><br>` +
-      `<code>mergelearn import --file patch.json</code></div>`;
+      `<code>mergelearn import --file patch.json</code></details>` +
+      `</div>` +
+      `<script>` +
+      `document.getElementById('refresh-home').addEventListener('click',function(){location.reload();});` +
+      `[].forEach.call(document.querySelectorAll('.copyable'),function(el){function copy(){try{navigator.clipboard.writeText(el.textContent);el.classList.add('copied');setTimeout(function(){el.classList.remove('copied');},1200);}catch(e){}}el.addEventListener('click',copy);el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();copy();}});});` +
+      `</script>`;
     return pageShell('MergeLearn — Home', 'home', body);
   }
 
@@ -1179,6 +1197,21 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .due-banner{display:flex;align-items:baseline;gap:10px;margin:18px 0 24px}
 .due-banner strong{font-size:2rem;color:var(--accent-hover);letter-spacing:-0.03em}
 .cta{display:inline-block;margin-top:6px;padding:9px 18px;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-weight:600}
+button.cta{border:0;font:inherit;font-weight:600;cursor:pointer;vertical-align:baseline;margin-top:0}
+button.cta:hover{background:var(--accent-hover)}
+.onboard{border:1px dashed var(--border);border-radius:var(--radius);padding:24px 28px;margin-top:16px}
+.onboard-step{margin:14px 0 8px}
+.onboard-step:first-child{margin-top:0}
+.prompt-list{list-style:none;margin:0 0 4px;padding:0;display:grid;gap:8px}
+.prompt-list code.copyable{display:block;background:var(--overlay);padding:10px 12px;border-radius:var(--radius-sm);font-family:var(--mono);font-size:13px;color:var(--text);cursor:pointer;border:1px solid var(--border)}
+.prompt-list code.copyable:hover{background:var(--hover)}
+.prompt-list code.copyable:focus{outline:2px solid var(--accent);outline-offset:1px}
+.prompt-list code.copied{border-color:var(--success)}
+.prompt-list code.copied:after{content:" copied";color:var(--success);font-size:11px}
+.small{font-size:12px}
+.manual{margin-top:16px;border-top:1px solid var(--border-soft);padding-top:12px}
+.manual summary{cursor:pointer;color:var(--muted);font-size:13px}
+.manual code{display:inline-block;background:var(--overlay);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px;color:var(--text);margin-top:4px}
 .cta:hover{background:var(--accent-hover);text-decoration:none}
 .cta.is-disabled{background:var(--overlay);color:var(--muted);pointer-events:none}
 .set-list{list-style:none;padding:0;margin:20px 0 0;display:grid;gap:10px}

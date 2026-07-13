@@ -10,7 +10,10 @@ import { loadTags } from './tagStore.js';
 import { listSetSummaries, listFolderPaths } from './setStore.js';
 
 export type BuildContextOptions = {
-  goal: string;
+  /** Optional. A short description of what the agent should author. Omitting it
+   * still yields a valid context (existing sets/tags/folders); it just gives the
+   * agent no steer on WHAT to make. */
+  goal?: string;
   repo?: RepoRef;
   targetSetId?: string;
 };
@@ -23,7 +26,7 @@ export async function buildAuthoringContext(root: string, opts: BuildContextOpti
     listFolderPaths(root),
   ]);
   return {
-    goal: opts.goal,
+    ...(opts.goal ? { goal: opts.goal } : {}),
     repo: opts.repo,
     existingSets,
     existingTags,
