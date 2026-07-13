@@ -250,7 +250,7 @@ export type SetSummary = {
 
 /** Step 1: tutor -> agent. Existing state the agent must reuse/extend. */
 export type AuthoringContext = {
-  goal: string;
+  goal?: string;
   repo?: RepoRef;
   existingSets: SetSummary[];
   existingTags: CardTag[];
