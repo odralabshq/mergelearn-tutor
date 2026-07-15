@@ -107,4 +107,40 @@ describe('library CLI (functional, end-to-end)', () => {
     const entries = await readdir(root);
     expect(entries).not.toContain('agent-skills.json');
   });
+
+  it('sample previews without writing, installs once, and is idempotent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-sample-'));
+    const preview = await run(root, 'sample', '--dry-run');
+    expect(preview).toContain('would install sample lesson');
+    expect(await run(root, 'sets')).toContain('no sets yet');
+
+    const installed = await run(root, 'sample');
+    expect(installed).toContain('Installed sample lesson');
+    expect(installed).toContain('4 activities');
+    expect(installed).toContain('mergelearn serve');
+    expect(await run(root, 'sets')).toContain('mergelearn-sample');
+
+    const again = await run(root, 'sample');
+    expect(again).toContain('already installed');
+  });
+
+  it('doctor --json emits machine-readable setup checks', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-doctor-'));
+    const result = JSON.parse(await run(root, 'doctor', '--json'));
+    expect(Array.isArray(result.checks)).toBe(true);
+    expect(result.checks.some((c: { id: string }) => c.id === 'skill-source')).toBe(true);
+    expect(result.checks.some((c: { id: string }) => c.id === 'lessons')).toBe(true);
+  });
+
+  it('import --dry-run --json includes a lesson summary and writes nothing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-summary-'));
+    const patchFile = join(root, 'patch.json');
+    await writeFile(patchFile, JSON.stringify(patch), 'utf8');
+    const result = JSON.parse(await run(root, 'import', '--file', patchFile, '--dry-run', '--json'));
+    expect(result.ok).toBe(true);
+    expect(result.dryRun).toBe(true);
+    expect(result.summary.cardCount).toBe(1);
+    expect(result.summary.interactionCounts).toEqual({ flashcard: 1 });
+    expect(await run(root, 'sets')).toContain('no sets yet');
+  });
 });

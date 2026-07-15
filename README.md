@@ -7,53 +7,59 @@ calls.
 
 ## How you use it
 
-The main loop has three steps:
+```bash
+npm install -g mergelearn
+mergelearn setup-agent
+```
 
-1. **Install the authoring skill into your coding agent** (once, see Install).
-2. **Ask your agent to author a lesson.** Point it at a topic or some repo code
-   and it writes a set of cards for you.
-3. **Run `mergelearn serve` and learn in your browser.** This is the primary way
-   to use MergeLearn day to day.
+Then open your coding agent in a repository and ask:
+
+> Create a MergeLearn lesson from my last PR.
+
+The agent runs the authoring commands for you. When it says the lesson is ready:
 
 ```bash
 mergelearn serve            # prints a local URL like http://127.0.0.1:52134
 mergelearn serve --port 4321  # or pin a fixed port
 ```
 
-The site is offline and reads your local library. **Home** lists each lesson
-with its objective, estimated time, and a single Start / Continue / Practice
-again button; progress is remembered so Continue drops you at the first card you
-have not attempted yet. Cards due for spaced-repetition review show in a
-separate banner. You attempt each card first, then reveal the answer and grade
-how well you knew it (`1` Again, `2` Hard, `3` Good, `4` Easy).
+Open the printed URL and learn in your browser. This is the primary day-to-day
+interface. Home lists lessons with their objective, estimated time, progress,
+and one Start / Continue / Practice again action. Due spaced-repetition reviews
+stay in a separate banner.
 
-## Install
+### Try it before using an agent
 
-Requirements: Node.js 20 or newer, and Git on your `PATH` (only for lessons that
-cite repo code).
+From the empty Home page, click **Try a sample lesson**, or run:
 
 ```bash
-npm install
-npm run build
-npm link                    # optional: puts `mergelearn` on your PATH
+mergelearn sample
+mergelearn serve
 ```
 
-Then install the authoring skill into whichever agent you use:
+The sample is opt-in, offline, and demonstrates every question type. Running the
+command again does not create duplicates.
+
+## Install details
+
+Requirements: Node.js 20 or newer. Git is needed only for lessons that cite
+repository code.
+
+`setup-agent` auto-detects installed coding agents. Supported agents: `claude`
+(Claude Code), `codex`, `cursor`, `opencode`, and `gemini`.
 
 ```bash
-mergelearn setup-agent                      # auto-detect installed agents
-mergelearn setup-agent --agent all          # every supported agent
-mergelearn setup-agent --agent claude,codex --scope project   # this repo only
-mergelearn setup-agent --dry-run            # show changes, write nothing
-mergelearn setup-agent --uninstall          # remove copies this tool installed
+mergelearn setup-agent                                  # detected agents, global
+mergelearn setup-agent --agent all                      # every supported agent
+mergelearn setup-agent --agent claude,codex --scope project
+mergelearn setup-agent --dry-run                        # preview, write nothing
+mergelearn setup-agent --uninstall                      # remove managed copies
+mergelearn doctor                                       # read-only setup diagnosis
 ```
 
-Supported agents: `claude` (Claude Code), `codex`, `cursor`, `opencode`,
-`gemini`. The command copies the skill (no symlinks), records a checksum so
-reruns are idempotent, and never overwrites a copy you edited by hand. Any agent
-that reads `SKILL.md` files then picks it up; for an agent without a skills
-directory, point it at `skills/mergelearn-authoring/SKILL.md` and ask it to
-author a lesson.
+The installer copies the canonical skills (no symlinks), records checksums so
+reruns are idempotent, and never overwrites a copy edited by hand. Unsupported
+agents can read `skills/mergelearn-authoring/SKILL.md` directly.
 
 ## Question types
 
@@ -85,8 +91,10 @@ The browser is the main interface, but every action is also available on the
 command line.
 
 ```bash
-mergelearn context     --goal "..." [--repo <path>] [--target-set <id>]
-mergelearn import      --file <patch.json> [--agent <name>] [--dry-run]
+mergelearn context     [--goal "..."] [--repo <path>] [--target-set <id>]
+mergelearn import      --file <patch.json> [--agent <name>] [--dry-run] [--json]
+mergelearn sample      [--dry-run]
+mergelearn doctor      [--json]
 mergelearn sets
 mergelearn due         [--set <id>] [--tag <id>] [--folder <path>]
 mergelearn show        --set <id> --card <id>
@@ -95,10 +103,11 @@ mergelearn serve       [--port <n>]
 mergelearn setup-agent [--agent <ids|all>] [--scope global|project] [--dry-run] [--uninstall]
 ```
 
-`context` emits the current library state (sets, tags, folders) for your agent
-to author against. `import` validates the returned patch, freezes any cited
-code, and writes the set. `import --dry-run` previews the outcome without
-writing.
+`context` prints the current library state for an agent; `--goal` is optional but
+helps focus the lesson. `import` validates the patch, freezes cited code, and
+prints the lesson objective, duration, interaction mix, source coverage, and
+advisory warnings. `import --dry-run` writes nothing; `--json` is for agents and
+automation.
 
 ## Storage layout
 

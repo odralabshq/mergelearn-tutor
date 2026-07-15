@@ -1,11 +1,12 @@
 {
-  "name": "mergelearn-tutor",
-  "version": "1.0.0",
+  "name": "mergelearn",
+  "version": "0.1.0",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
     "skills/",
+    "examples/",
     "docs/*.md",
     "docs/assets/screenshots/*.png",
     "LICENSE"
@@ -26,9 +27,20 @@
     "git-history",
     "developer-tools"
   ],
-  "author": "",
+  "author": "Odra Labs",
   "license": "PolyForm-Noncommercial-1.0.0",
-  "description": "Local-first, model-free learning library and FSRS review shell for agent-authored card sets",
+  "description": "Local-first learning for agent-authored lessons. Source-available for noncommercial use; commercial use requires permission from Odra Labs.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/odralabshq/mergelearn-tutor.git"
+  },
+  "homepage": "https://github.com/odralabshq/mergelearn-tutor#readme",
+  "bugs": {
+    "url": "https://github.com/odralabshq/mergelearn-tutor/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "commander": "^12.1.0",
     "ts-fsrs": "5.4.1"
@@ -45,6 +57,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "private": true
+  }
 }
