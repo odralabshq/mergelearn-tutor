@@ -64,6 +64,9 @@ try {
   });
   assert(help.stdout.includes('mergelearn'), 'extracted CLI help did not run');
 
+  const version = run('node', ['package/dist/libCli.js', '--version'], { cwd: extractDir });
+  assert(version.stdout.trim() === manifest.version, 'extracted CLI version did not match package.json');
+
   const sampleHome = path.join(tmp, 'sample-home');
   const sample = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'sample', '--dry-run'], { cwd: extractDir });
   assert(sample.stdout.includes('would install sample lesson'), 'packed sample dry-run did not run');

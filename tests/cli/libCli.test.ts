@@ -33,6 +33,10 @@ const patch: AgentSetPatch = {
 };
 
 describe('library CLI (functional, end-to-end)', () => {
+  it('reports the package version', () => {
+    expect(buildProgram().version()).toBe('0.1.0');
+  });
+
   it('drives context -> import -> sets -> due -> show -> grade against a real library', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
 

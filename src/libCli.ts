@@ -16,7 +16,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
@@ -45,12 +45,17 @@ function rootFrom(opts: { home?: string }): string {
 
 const out = (s: string) => console.log(s);
 const note = (s: string) => console.error(s); // non-blocking hints; keeps stdout clean for piping
+const packageVersion = (): string => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  return pkg.version;
+};
 
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name('mergelearn')
     .description('Model-free, agent-authored learning library')
+    .version(packageVersion())
     .option('--home <path>', 'library root (default: MERGELEARN_HOME or ~/.mergelearn)');
 
   program.addHelpText('after', `
