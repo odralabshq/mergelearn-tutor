@@ -28,6 +28,12 @@ interface. Home lists lessons with their objective, estimated time, progress,
 and one Start / Continue / Practice again action. Due spaced-repetition reviews
 stay in a separate banner.
 
+<p align="center">
+  <img src="docs/assets/screenshots/lesson-home.png" alt="MergeLearn Home showing a sample lesson, its objective and duration, and four due reviews" width="100%">
+</p>
+
+*Home keeps authored lessons and spaced-repetition reviews separate.*
+
 ### Try it before using an agent
 
 From the empty Home page, click **Try a sample lesson**, or run:
@@ -73,6 +79,30 @@ is feedback on your attempt.
   (click a block and use the arrow keys, drag it, or use the move buttons),
   graded by exact order.
 - **Flashcard.** A plain reveal-then-self-grade card for pure recall.
+
+Code-ordering activities work with the mouse or keyboard. Select a tile, move it
+with the arrow keys or visible buttons, or drag it into place.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/assets/screenshots/code-ordering-selected.png" alt="A shuffled code-ordering activity with the function signature tile selected"></td>
+    <td width="50%"><img src="docs/assets/screenshots/code-ordering-reordered.png" alt="The same code-ordering activity after moving the selected signature tile to the first position"></td>
+  </tr>
+  <tr>
+    <td><em>Select a code tile.</em></td>
+    <td><em>Move it without losing selection.</em></td>
+  </tr>
+</table>
+
+After an attempt, MergeLearn reveals deterministic feedback and the authored
+explanation. Your confidence grade controls FSRS scheduling; answer correctness
+is stored as evidence but does not grade your confidence for you.
+
+<p align="center">
+  <img src="docs/assets/screenshots/answer-feedback.png" alt="A correct multiple-choice attempt with targeted feedback, full explanation, and Again, Hard, Good, and Easy confidence controls" width="75%">
+</p>
+
+*Feedback appears only after the attempt; the learner still chooses the review grade.*
 
 ## Ways to use it
 
