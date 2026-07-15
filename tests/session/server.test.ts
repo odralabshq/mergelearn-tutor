@@ -52,6 +52,24 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('id="refresh-home"');
     expect(text).toContain('mergelearn setup-agent');
     expect(text).toContain('Prefer to do it yourself?');
+    // Immediate first-value path: opt-in sample, never auto-installed.
+    expect(text).toContain('id="try-sample"');
+    expect(text).toContain("fetch('/api/sample'");
+  });
+
+  it('installs the sample via POST /api/sample and is idempotent', async () => {
+    const emptyRoot = await mkdtemp(join(tmpdir(), 'mlt-sample-api-'));
+    running = await startReviewServer(emptyRoot);
+    const first = await (await fetch(`${running.url}/api/sample`, { method: 'POST' })).json();
+    expect(first).toMatchObject({ ok: true, status: 'installed', setId: 'mergelearn-sample' });
+    const lesson = await (await fetch(`${running.url}/api/lesson?set=mergelearn-sample`)).json();
+    expect(lesson.ok).toBe(true);
+    expect(lesson.cards).toHaveLength(4);
+    expect(lesson.cards.map((c: { interaction: { type: string } }) => c.interaction.type))
+      .toEqual(['choice', 'self_response', 'parsons', 'flashcard']);
+
+    const second = await (await fetch(`${running.url}/api/sample`, { method: 'POST' })).json();
+    expect(second.status).toBe('current');
   });
 
   it('renders Home with the set and the due count', async () => {

@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "set": {
+    "id": "mergelearn-sample",
+    "title": "Sample: Safe async data loading",
+    "description": "A built-in sample lesson so you can try MergeLearn before authoring your own.",
+    "folderPath": "samples/async",
+    "objective": "Load remote data safely: await in order, handle failure, and avoid a common race.",
+    "lessonKind": "general",
+    "estimatedMinutes": 5,
+    "tagIds": []
+  },
+  "tagPatch": {
+    "reuse": [],
+    "add": [
+      { "localId": "async", "label": "async-await", "kind": "topic", "description": "Asynchronous control flow in JavaScript/TypeScript." }
+    ]
+  },
+  "order": ["predict", "why", "order", "recall"],
+  "cards": [
+    {
+      "localId": "predict",
+      "tagRefs": ["async"],
+      "front": { "prompt": "What does this log?\n\n```js\nasync function f() { return 1; }\nconsole.log(typeof f());\n```" },
+      "back": {
+        "shortAnswer": "\"object\" (a Promise).",
+        "explanationMarkdown": "An `async` function ALWAYS returns a Promise, even when its body returns a plain value. `f()` is therefore a `Promise`, and `typeof` a promise is `\"object\"`. To read the resolved value you must `await f()` or call `.then(...)`.\n\nThe mental model: `async` wraps the return value in `Promise.resolve(...)`."
+      },
+      "interaction": {
+        "type": "choice",
+        "options": [
+          { "id": "num", "text": "\"number\"", "feedback": "No. The value 1 is wrapped in a Promise before it leaves the function." },
+          { "id": "obj", "text": "\"object\"", "feedback": "Yes. An async function returns a Promise, and typeof a Promise is \"object\"." },
+          { "id": "undef", "text": "\"undefined\"", "feedback": "No. The function does return something: a Promise." }
+        ],
+        "correctOptionIds": ["obj"]
+      }
+    },
+    {
+      "localId": "why",
+      "tagRefs": ["async"],
+      "front": { "prompt": "Why can awaiting requests in a loop one-by-one be slower than awaiting them together, and when is the slow version still correct?" },
+      "back": {
+        "shortAnswer": "Serial awaits wait for each request before starting the next; Promise.all runs them concurrently. Serial is right when each call depends on the previous result.",
+        "explanationMarkdown": "`for (const x of xs) { await req(x); }` starts request N+1 only after N resolves, so total time is the SUM of latencies. `await Promise.all(xs.map(req))` starts them all at once, so total time is the MAX. Prefer `Promise.all` for independent calls.\n\nKeep the serial form only when each step needs the previous step's result (a true data dependency), or when you must limit concurrency."
+      },
+      "interaction": { "type": "self_response", "placeholder": "Explain the time difference, then the exception." }
+    },
+    {
+      "localId": "order",
+      "tagRefs": ["async"],
+      "front": { "prompt": "Order the lines of an async function that loads a user and returns its name safely." },
+      "back": {
+        "shortAnswer": "Signature, await the request, guard the response, await JSON, return the field, close.",
+        "explanationMarkdown": "Each line depends on the one above it. You cannot check `res.ok` before `await fetch(...)` gives you `res`, and you cannot read `user.name` before `await res.json()` produces `user`. The `res.ok` guard must sit BEFORE parsing, or a failed request parses an error body. The order is forced by data and control flow, not style."
+      },
+      "interaction": {
+        "type": "parsons",
+        "language": "javascript",
+        "blocks": [
+          { "id": "sig", "code": "async function loadUserName(id) {", "label": "Signature" },
+          { "id": "fetch", "code": "  const res = await fetch(`/api/users/${id}`);", "label": "Request" },
+          { "id": "guard", "code": "  if (!res.ok) throw new Error(`HTTP ${res.status}`);", "label": "Guard failure" },
+          { "id": "json", "code": "  const user = await res.json();", "label": "Parse body" },
+          { "id": "ret", "code": "  return user.name;", "label": "Return field" },
+          { "id": "close", "code": "}" }
+        ],
+        "correctOrder": ["sig", "fetch", "guard", "json", "ret", "close"]
+      }
+    },
+    {
+      "localId": "recall",
+      "tagRefs": ["async"],
+      "front": { "prompt": "What is the difference between Promise.all and Promise.allSettled?" },
+      "back": {
+        "shortAnswer": "Promise.all rejects as soon as any input rejects; Promise.allSettled always resolves with one result object per input.",
+        "explanationMarkdown": "`Promise.all` is fail-fast: the first rejection rejects the whole thing and the other results are lost. `Promise.allSettled` waits for every promise and resolves to an array of `{ status: \"fulfilled\", value }` or `{ status: \"rejected\", reason }`.\n\nUse `all` when any failure should abort the batch; use `allSettled` when you want every outcome, for example rendering a dashboard where one failed widget should not blank the others."
+      },
+      "interaction": { "type": "flashcard" }
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { getDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
 import { startSession, gradeCard, endSession } from '../core/library/review/session.js';
 import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
+import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
 import { loadTags } from '../core/library/tagStore.js';
 import {
@@ -60,6 +61,8 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res);
+  // Opt-in sample lesson: the empty-state button POSTs here, then redirects.
+  if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res);
   // Manage tab (doc 06): server-rendered; card membership is embedded in the
   // page so match counts recompute client-side (no per-keystroke round-trip).
   if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root));
@@ -275,6 +278,18 @@ async function sessionEndApi(root: string, req: IncomingMessage, res: ServerResp
   return sendJson(res, 200, { ok: true, sessionId, summary: session.summary });
 }
 
+/** POST /api/sample — install the opt-in sample lesson (idempotent). Returns the
+ * set id so the client can navigate to it. Never duplicates an existing sample. */
+async function sampleApi(root: string, res: ServerResponse): Promise<void> {
+  try {
+    const r = await installSampleLesson(root);
+    if (!r.ok) return sendJson(res, 500, { ok: false, error: 'sample import failed', errors: r.errors });
+    return sendJson(res, 200, { ok: true, status: r.status, setId: r.setId, title: r.title });
+  } catch (e) {
+    return sendJson(res, 500, { ok: false, error: (e as Error).message });
+  }
+}
+
 /** Find all session_*.json files under profile/sessions/ (best-effort, used to
  * recover a session after a server restart). */
 async function listSessionFiles(root: string): Promise<string[]> {
@@ -381,17 +396,21 @@ async function renderHome(root: string): Promise<string> {
     const body = `<h1>No lessons yet</h1>` +
       `<p class="muted">Lessons are written by your coding agent, not typed in here.</p>` +
       `<div class="onboard">` +
-      `<p class="onboard-step"><strong>1.</strong> Open your coding agent and ask it something like:</p>` +
+      `<p class="onboard-step"><strong>Just want to see it?</strong> Install a built-in sample lesson and start learning now.</p>` +
+      `<p><button type="button" class="cta" id="try-sample">Try a sample lesson</button> <span class="muted small" id="sample-status"></span></p>` +
+      `<hr class="onboard-rule">` +
+      `<p class="onboard-step"><strong>1.</strong> Or open your coding agent and ask it something like:</p>` +
       `<ul class="prompt-list">${promptList}</ul>` +
-      `<p class="onboard-step"><strong>2.</strong> When it finishes, <button type="button" class="cta" id="refresh-home">Refresh</button> this page and your lesson appears here.</p>` +
+      `<p class="onboard-step"><strong>2.</strong> When it finishes, <button type="button" class="cta secondary" id="refresh-home">Refresh</button> this page and your lesson appears here.</p>` +
       `<p class="muted small">First time? Run <code>mergelearn setup-agent</code> once so your agent knows how to author.</p>` +
       `<details class="manual"><summary>Prefer to do it yourself?</summary>` +
       `<p class="muted small">Author a lesson from the command line, then reload:</p>` +
-      `<code>mergelearn context --goal "..." &gt; context.json</code><br>` +
+      `<code>mergelearn context [--goal "..."] &gt; context.json</code><br>` +
       `<code>mergelearn import --file patch.json</code></details>` +
       `</div>` +
       `<script>` +
       `document.getElementById('refresh-home').addEventListener('click',function(){location.reload();});` +
+      `(function(){var btn=document.getElementById('try-sample'),st=document.getElementById('sample-status');if(!btn)return;btn.addEventListener('click',function(){btn.disabled=true;st.textContent='Installing…';fetch('/api/sample',{method:'POST'}).then(function(r){return r.json();}).then(function(j){if(j&&j.ok&&j.setId){location.href='/set/'+encodeURIComponent(j.setId);}else{st.textContent='Could not install the sample. Try: mergelearn sample';btn.disabled=false;}}).catch(function(){st.textContent='Could not install the sample. Try: mergelearn sample';btn.disabled=false;});});})();` +
       `[].forEach.call(document.querySelectorAll('.copyable'),function(el){function copy(){try{navigator.clipboard.writeText(el.textContent);el.classList.add('copied');setTimeout(function(){el.classList.remove('copied');},1200);}catch(e){}}el.addEventListener('click',copy);el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();copy();}});});` +
       `</script>`;
     return pageShell('MergeLearn — Home', 'home', body);
@@ -1199,6 +1218,10 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .cta{display:inline-block;margin-top:6px;padding:9px 18px;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-weight:600}
 button.cta{border:0;font:inherit;font-weight:600;cursor:pointer;vertical-align:baseline;margin-top:0}
 button.cta:hover{background:var(--accent-hover)}
+button.cta:disabled{opacity:.6;cursor:default}
+.cta.secondary{background:var(--overlay);color:var(--text)}
+.cta.secondary:hover{background:var(--hover)}
+.onboard-rule{border:0;border-top:1px solid var(--border-soft);margin:20px 0}
 .onboard{border:1px dashed var(--border);border-radius:var(--radius);padding:24px 28px;margin-top:16px}
 .onboard-step{margin:14px 0 8px}
 .onboard-step:first-child{margin-top:0}

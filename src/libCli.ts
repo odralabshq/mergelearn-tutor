@@ -16,7 +16,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { Command } from 'commander';
@@ -25,6 +25,9 @@ import { resolveLibraryRoot } from './core/library/libraryStore.js';
 import { buildAuthoringContext } from './core/library/authoringContext.js';
 import { registerRepo } from './core/library/repoRegistry.js';
 import { importAgentSet } from './core/library/importAgentSet.js';
+import { formatLessonSummary, summarizeLesson } from './core/library/lessonSummary.js';
+import { installSampleLesson } from './core/library/sampleLesson.js';
+import { runDoctor } from './core/library/doctor.js';
 import { listSetSummaries } from './core/library/setStore.js';
 import { loadCard } from './core/library/cardStore.js';
 import { getDueCards } from './core/library/review/dueQueue.js';
@@ -42,12 +45,17 @@ function rootFrom(opts: { home?: string }): string {
 
 const out = (s: string) => console.log(s);
 const note = (s: string) => console.error(s); // non-blocking hints; keeps stdout clean for piping
+const packageVersion = (): string => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  return pkg.version;
+};
 
 export function buildProgram(): Command {
   const program = new Command();
   program
     .name('mergelearn')
     .description('Model-free, agent-authored learning library')
+    .version(packageVersion())
     .option('--home <path>', 'library root (default: MERGELEARN_HOME or ~/.mergelearn)');
 
   program.addHelpText('after', `
@@ -91,6 +99,45 @@ Manual/advanced: author a lesson yourself.
       }
     });
 
+  // Opt-in sample lesson so a fresh install has something to learn immediately.
+  program
+    .command('sample')
+    .description('install the built-in sample lesson so you can try MergeLearn right away')
+    .option('--dry-run', 'show what would happen, write nothing')
+    .action(async (opts: { dryRun?: boolean }) => {
+      const res = await installSampleLesson(rootFrom(homeOpt()), { dryRun: opts.dryRun });
+      if (!res.ok) {
+        out(`sample install failed (${res.errors?.length ?? 0} error(s)):`);
+        for (const e of res.errors ?? []) out(`  - ${e.code}: ${e.message}`);
+        process.exitCode = 1;
+        return;
+      }
+      if (res.status === 'current') {
+        out(`Sample lesson already installed: "${res.title}" (${res.setId}).`);
+      } else if (opts.dryRun) {
+        out(`would install sample lesson "${res.title}" (${res.setId}): ${res.cardCount} activities`);
+        out('(dry run: nothing written — omit --dry-run to apply)');
+        return;
+      } else {
+        out(`Installed sample lesson "${res.title}" (${res.setId}): ${res.cardCount} activities.`);
+      }
+      out('Run `mergelearn serve` and open the printed URL to learn it.');
+    });
+
+  program
+    .command('doctor')
+    .description('diagnose local setup (read-only, offline)')
+    .option('--json', 'emit machine-readable JSON for agents and issue reports')
+    .action(async (opts: { json?: boolean }) => {
+      const result = await runDoctor(rootFrom(homeOpt()));
+      if (opts.json) out(JSON.stringify(result, null, 2));
+      else {
+        for (const c of result.checks) out(`${c.status.padEnd(4)} ${c.id.padEnd(12)} ${c.message}`);
+        out(result.ok ? '\nSetup is usable.' : '\nSetup has blocking failures. Fix FAIL items, then rerun doctor.');
+      }
+      if (!result.ok) process.exitCode = 1;
+    });
+
   // handshake step 2: agent -> tutor
   program
     .command('import')
@@ -98,24 +145,35 @@ Manual/advanced: author a lesson yourself.
     .requiredOption('--file <path>', 'path to the AgentSetPatch JSON')
     .option('--agent <name>', 'authoring agent name (provenance)')
     .option('--dry-run', 'validate and preview the outcome, write nothing')
-    .action(async (opts: { file: string; agent?: string; dryRun?: boolean }) => {
+    .option('--json', 'emit machine-readable import result + lesson summary')
+    .action(async (opts: { file: string; agent?: string; dryRun?: boolean; json?: boolean }) => {
       const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
       const res = await importAgentSet(rootFrom(homeOpt()), patch, { agentName: opts.agent, dryRun: opts.dryRun });
       if (!res.ok) {
-        const lead = opts.dryRun ? 'preview: import WOULD BE REJECTED' : 'import REJECTED';
-        out(`${lead} (${res.errors.length} error(s)) — nothing written:`);
-        for (const e of res.errors) out(`  - ${e.code}: ${e.message}`);
+        if (opts.json) out(JSON.stringify({ ...res, dryRun: !!opts.dryRun }, null, 2));
+        else {
+          const lead = opts.dryRun ? 'preview: import WOULD BE REJECTED' : 'import REJECTED';
+          out(`${lead} (${res.errors.length} error(s)) — nothing written:`);
+          for (const e of res.errors) out(`  - ${e.code}: ${e.message}`);
+        }
         process.exitCode = 1;
+        return;
+      }
+      const summary = summarizeLesson(patch, res.cards);
+      if (opts.json) {
+        out(JSON.stringify({ ...res, dryRun: !!opts.dryRun, summary }, null, 2));
         return;
       }
       const active = res.cards.filter((c) => c.status === 'active').length;
       const flagged = res.cards.length - active;
       const verb = opts.dryRun ? 'would import' : 'imported';
       out(`${verb} set "${res.setId}": ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${res.tagIdsAdded.length} tags`);
+      for (const line of formatLessonSummary(summary)) out(`  ${line}`);
       for (const c of res.cards.filter((c) => c.status !== 'active')) {
         out(`  needs_review ${c.cardId}: ${c.reasons.join(', ')}`);
       }
       if (opts.dryRun) out('(dry run: nothing written — omit --dry-run to apply)');
+      else out('Run `mergelearn serve` and open the printed URL to learn it.');
     });
 
   program

@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const root = path.resolve(new URL('..', import.meta.url).pathname);
-const tmp = await mkdtemp(path.join(os.tmpdir(), 'mergelearn-tutor-pack-'));
+const tmp = await mkdtemp(path.join(os.tmpdir(), 'mergelearn-pack-'));
 const failures = [];
 
 function run(command, args, options = {}) {
@@ -31,7 +31,11 @@ try {
   const [entry] = JSON.parse(packed.stdout);
   const fileNames = entry.files.map((file) => file.path);
 
-  for (const required of ['dist/libCli.js', 'dist/index.js', 'dist/index.d.ts', 'README.md', 'package.json']) {
+  for (const required of [
+    'dist/libCli.js', 'dist/index.js', 'dist/index.d.ts', 'README.md', 'package.json',
+    'examples/sample-lesson.json', 'skills/mergelearn-authoring/SKILL.md',
+    'skills/mergelearn-tutor/SKILL.md', 'LICENSE',
+  ]) {
     assert(fileNames.includes(required), `package is missing ${required}`);
   }
 
@@ -43,7 +47,9 @@ try {
   assert(fileNames.some((file) => file === 'docs/ENRICHMENT.md'), 'package should include public enrichment docs');
 
   const manifest = require(path.join(root, 'package.json'));
-  assert(manifest.private === true, 'package must stay private until release approval');
+  assert(manifest.name === 'mergelearn', 'package name must be mergelearn');
+  assert(manifest.version === '0.1.0', 'first public version must be 0.1.0');
+  assert(manifest.private !== true, 'prepared package must not be private');
   assert(manifest.license === 'PolyForm-Noncommercial-1.0.0', 'license must be PolyForm-Noncommercial-1.0.0');
   assert(manifest.bin?.['mergelearn'] === './dist/libCli.js', 'bin path must target built CLI');
 
@@ -57,6 +63,16 @@ try {
     cwd: extractDir,
   });
   assert(help.stdout.includes('mergelearn'), 'extracted CLI help did not run');
+
+  const version = run('node', ['package/dist/libCli.js', '--version'], { cwd: extractDir });
+  assert(version.stdout.trim() === manifest.version, 'extracted CLI version did not match package.json');
+
+  const sampleHome = path.join(tmp, 'sample-home');
+  const sample = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'sample', '--dry-run'], { cwd: extractDir });
+  assert(sample.stdout.includes('would install sample lesson'), 'packed sample dry-run did not run');
+
+  const setup = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'setup-agent', '--agent', 'claude', '--scope', 'project', '--dry-run'], { cwd: extractDir });
+  assert(setup.stdout.includes('dry run'), 'packed setup-agent dry-run did not run');
 
   if (failures.length) {
     throw new Error(`Packaged smoke failed:\n- ${failures.join('\n- ')}`);
