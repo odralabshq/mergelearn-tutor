@@ -154,14 +154,22 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
   }
   const now = new Date();
   const [due, prefs] = await Promise.all([getDueCards(root, now, filter), loadUserPreferences(root)]);
-  const selected = selectDueCards(due, prefs.reviewSessionCap);
-  const ordered = orderDueQueue(selected, { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) });
+  const queueOptions = { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) };
+  // Interleave before applying the cap so one set cannot fill the entire
+  // sitting before the mixer has a chance to see cards from other sets.
+  const prioritized = orderDueQueue(due, queueOptions);
+  const selected = selectDueCards(prioritized, prefs.reviewSessionCap);
+  const ordered = orderDueQueue(selected, queueOptions);
+  const setTitles = new Map<string, string>();
+  await Promise.all([...new Set(ordered.map((card) => card.setId))].map(async (setId) => {
+    setTitles.set(setId, (await loadSet(root, setId))?.title ?? setId);
+  }));
   return sendJson(res, 200, {
     total: ordered.length,
     totalDue: due.length,
     remaining: Math.max(0, due.length - ordered.length),
     strategy: prefs.queueStrategy,
-    cards: ordered.map(cardView),
+    cards: ordered.map((card) => cardView(card, setTitles.get(card.setId))),
   });
 }
 
@@ -232,7 +240,7 @@ async function lessonData(root: string, res: ServerResponse, url: URL): Promise<
     lesson: { id: set.id, title: set.title, objective: set.objective ?? null, lessonKind: set.lessonKind ?? null },
     total: ordered.length,
     progress,
-    cards: ordered.map(cardView),
+    cards: ordered.map((card) => cardView(card, set.title)),
   });
 }
 
@@ -392,10 +400,11 @@ async function listSessionFiles(root: string): Promise<string[]> {
 
 /** Trim a card to what the Practice UI renders, with server-pre-rendered HTML
  * for code (diff-snippet widget) and explanations (markdown → HTML). */
-function cardView(card: Card) {
+function cardView(card: Card, setTitle?: string) {
   return {
     id: card.id,
     setId: card.setId,
+    setTitle: setTitle ?? card.setId,
     prompt: card.front.prompt,
     // Pre-rendered so a fenced code block / multi-line prompt shows as a real
     // <pre><code> block (not mangled inline). Mirrors explanationHtml.
@@ -507,7 +516,8 @@ async function renderHome(root: string): Promise<string> {
     : `<span class="cta is-disabled">Nothing due right now</span>`;
   const backlog = waiting ? `<span class="muted small">${waiting} more waiting</span>` : '';
   const banner = `<div class="due-banner"><strong>${due.length}</strong>` +
-    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>${cta}${backlog}`;
+    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>` +
+    `<div class="review-entry">${cta}${backlog}</div>`;
 
   // Lessons are the primary object: each row shows objective, progress, and one
   // Start/Continue action. Progress is derived from persisted lesson sessions.
@@ -1026,7 +1036,7 @@ function practiceScript(): string {
   return `
 var REQUEUE_GAP=${REQUEUE_GAP},MAX_REQUEUE=${MAX_REQUEUE};
 ${planRequeue.toString()}
-var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;var mutationBusy=false;
+var queue=[];var pos=0;var reviewed=0;var reviewedCards={};var waitingBacklog=0;var confidence=0;var sessionId=null;var mutationBusy=false;
 var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
 var requeueCounts={};var requeueSeq=0;var lastGrade=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
@@ -1037,9 +1047,13 @@ function render(){
   progress();
   var mount=document.getElementById('mount');
   if(pos>=queue.length){
-    var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewed+' reviewed. Nothing more due.';
+    var distinct=Object.keys(reviewedCards).length;
+    var reviewSummary=distinct+' card'+(distinct===1?'':'s')+' reviewed'+(reviewed!==distinct?' in '+reviewed+' attempts':'');
+    var dueSummary=waitingBacklog?waitingBacklog+' more waiting.':'Nothing more due.';
+    var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewSummary+'. '+dueSummary;
     var empty=practiceMode==='lesson'?'This lesson has no active activities.':'Nothing due right now. Come back later, or author more cards.';
-    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>':'<div class="empty">'+empty+'</div>';return;
+    var next=practiceMode==='review'&&waitingBacklog?'<div class="done-actions"><a class="secondary-action" href="/practice">Review next sitting</a></div>':'';
+    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>'+next:'<div class="empty">'+empty+'</div>';return;
   }
   var c=queue[pos];confidence=0;attempt=null;cardStartedAt=Date.now();
   var interaction=c.interaction||{type:'flashcard'};
@@ -1053,7 +1067,7 @@ function render(){
   var ctx=c.context?'<div class="ctx markdown-body">'+(c.contextHtml||fmt(c.context))+'</div>':'';
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
   var confLabels=[['1','Guessing'],['2','Low'],['3','Medium'],['4','High'],['5','Certain']];
-  var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'">'+p[1]+'<kbd>'+p[0]+'</kbd></button>';}).join('');
+  var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'" aria-label="'+p[1]+', shortcut '+p[0]+'">'+p[1]+'<kbd aria-hidden="true">'+p[0]+'</kbd></button>';}).join('');
   var attemptUi='';
   if(interaction.type==='self_response'){
     attemptUi='<div class="attempt"><label class="label" for="attempt-text">Your answer</label><textarea id="attempt-text" rows="3" placeholder="'+esc(interaction.placeholder||'Write a short answer before revealing...')+'"></textarea></div>';
@@ -1065,15 +1079,15 @@ function render(){
     var pitems=pblocks.map(function(b){var lbl=b.label?'<span class="p-label">'+esc(b.label)+'</span>':'';return '<li class="p-block" data-bid="'+esc(b.id)+'" tabindex="0" draggable="true" role="option" aria-selected="false"><span class="p-move"><button type="button" class="p-up" aria-label="Move block up" tabindex="-1">▲</button><button type="button" class="p-down" aria-label="Move block down" tabindex="-1">▼</button></span><span class="p-body">'+lbl+'<pre><code>'+esc(b.code)+'</code></pre></span></li>';}).join('');
     attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><p class="p-hint">Click a block then use ↑/↓, drag it, or use the ▲▼ buttons.</p><ol class="p-list" id="p-list" role="listbox" aria-label="Order the code blocks">'+pitems+'</ol></div>';
   }
-  var check=interactive?'<button class="primary check-answer" id="check-answer">Check answer <kbd>Enter</kbd></button>':'';
-  mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
+  var check=interactive?'<button class="primary check-answer" id="check-answer" aria-label="Check answer, shortcut Enter">Check answer <kbd aria-hidden="true">Enter</kbd></button>':'';
+  mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
     '<div class="confidence" id="confidence"><p class="label">Before reveal — how confident are you?</p><div class="conf-opts">'+confBtns+'</div></div>'+check+
     '<div class="reveal" id="reveal-panel"><div id="attempt-review"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
-    '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
+    '<div class="actions grade"><button class="g1" data-r="1" aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
   var checkBtn=document.getElementById('check-answer');if(checkBtn)checkBtn.addEventListener('click',reveal);
   wireParsons();
@@ -1194,7 +1208,8 @@ async function grade(r){
       if(plan){var copy=Object.assign({},c,{__requeueSeq:++requeueSeq});queue.splice(plan.insertAt,0,copy);requeueCounts[c.id]=plan.nextCount;revisit=copy.__requeueSeq;}
     }
     lastGrade={index:pos,rating:r,cardId:c.id,requeueSeq:revisit};
-    reviewed++;statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
+    reviewed++;reviewedCards[c.id]=(reviewedCards[c.id]||0)+1;
+    statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
     pos++;render();syncUndo();
   }catch(e){statusMsg('grade failed');}finally{mutationBusy=false;}
 }
@@ -1205,7 +1220,10 @@ async function undoGrade(){
     var res=await fetch('/api/session/undo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});
     var j=await res.json();if(!j.ok){statusMsg(j.error||'undo failed');return;}
     if(lastGrade.requeueSeq){queue=queue.filter(function(c){return c.__requeueSeq!==lastGrade.requeueSeq;});requeueCounts[lastGrade.cardId]=Math.max(0,(requeueCounts[lastGrade.cardId]||1)-1);}
-    pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);lastGrade=null;render();syncUndo();statusMsg('Last grade undone');
+    pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);
+    reviewedCards[lastGrade.cardId]=Math.max(0,(reviewedCards[lastGrade.cardId]||1)-1);
+    if(!reviewedCards[lastGrade.cardId])delete reviewedCards[lastGrade.cardId];
+    lastGrade=null;render();syncUndo();statusMsg('Last grade undone');
   }catch(e){statusMsg('undo failed');}finally{mutationBusy=false;}
 }
 function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
@@ -1232,7 +1250,7 @@ window.addEventListener('beforeunload',function(){endSession(true);});
     var endpoint=lessonMode?'/api/lesson?set='+encodeURIComponent(setParam):'/api/due';
     var options=lessonMode?undefined:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})};
     var res=await fetch(endpoint,options);
-    var j=await res.json();queue=j.cards||[];
+    var j=await res.json();queue=j.cards||[];waitingBacklog=lessonMode?0:Number(j.remaining)||0;
     // Continue: resume a partially-done lesson at its first unattempted card.
     if(lessonMode&&j.progress&&j.progress.resumeCardId){
       var ri=queue.findIndex(function(c){return c.id===j.progress.resumeCardId;});
@@ -1366,6 +1384,7 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .empty code{background:var(--overlay);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px;color:var(--text)}
 .due-banner{display:flex;align-items:baseline;gap:10px;margin:18px 0 24px}
 .due-banner strong{font-size:2rem;color:var(--accent-hover);letter-spacing:-0.03em}
+.review-entry{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .cta{display:inline-block;margin-top:6px;padding:9px 18px;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-weight:600}
 button.cta{border:0;font:inherit;font-weight:600;cursor:pointer;vertical-align:baseline;margin-top:0}
 button.cta:hover{background:var(--accent-hover)}
@@ -1436,6 +1455,7 @@ button.primary:hover{background:var(--accent-hover)}
 .status{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--overlay);border:1px solid var(--border);padding:8px 16px;border-radius:var(--radius);font-size:13px;opacity:0;transition:opacity .2s}
 .status.show{opacity:1}
 .done-note{text-align:center;padding:40px;color:var(--success);font-weight:600}
+.done-actions{text-align:center;margin-top:-24px}
 .confidence{margin-top:18px;padding-top:16px;border-top:1px solid var(--border-soft)}
 .conf-opts{display:flex;gap:6px;flex-wrap:wrap}
 .conf-opts button kbd{font-family:var(--mono);font-size:11px;opacity:0.7;margin-left:4px}
@@ -1576,5 +1596,11 @@ button.primary:hover{background:var(--accent-hover)}
 .combo-tile:focus{box-shadow:inset 0 0 0 2px var(--accent)}
 .combo-tile.sel{background:rgba(99,102,241,0.12);border-color:var(--accent)}
 .combo-title{font-weight:600;font-size:14px}
-.combo-hint{color:var(--muted);font-size:12px;font-family:var(--mono)}`;
+.combo-hint{color:var(--muted);font-size:12px;font-family:var(--mono)}
+@media(max-width:600px){
+  .topbar{gap:8px;padding:12px}
+  .tabs a{padding:6px 9px}
+  .hint{display:none}
+  main{padding:24px 16px 56px}
+}`;
 }

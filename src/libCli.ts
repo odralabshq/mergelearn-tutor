@@ -326,7 +326,9 @@ Manual/advanced: author a lesson yourself.
         out('limit must be non-negative and strategy must be overdue or interleaved'); process.exitCode = 1; return;
       }
       const all = await getDueCards(root, new Date(), filter);
-      const due = orderDueQueue(selectDueCards(all, limit), { strategy, seed: new Date().toISOString().slice(0, 10) });
+      const queueOptions = { strategy, seed: new Date().toISOString().slice(0, 10) };
+      const prioritized = orderDueQueue(all, queueOptions);
+      const due = orderDueQueue(selectDueCards(prioritized, limit), queueOptions);
       out(`${due.length} of ${all.length} card(s) due (${strategy})`);
       for (const c of due) out(`  ${c.setId}/${c.id}  ${c.front.prompt}`);
     });

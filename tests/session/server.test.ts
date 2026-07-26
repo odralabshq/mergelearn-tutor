@@ -51,6 +51,26 @@ async function seedMany(count: number): Promise<string> {
   return root;
 }
 
+async function seedTwoSets(countPerSet: number): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'mlt-two-sets-'));
+  for (const setId of ['alpha', 'beta']) {
+    const localIds = Array.from({ length: countPerSet }, (_, i) => `c${i}`);
+    const patch: AgentSetPatch = {
+      version: 1,
+      set: { id: setId, title: `${setId} deck`, tagIds: [] },
+      tagPatch: { reuse: [], add: [] },
+      order: localIds,
+      cards: localIds.map((localId) => ({
+        localId, tagRefs: [], front: { prompt: localId },
+        back: { shortAnswer: localId, explanationMarkdown: localId },
+      })),
+    };
+    const result = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+    if (!result.ok) throw new Error(`seed import failed: ${setId}`);
+  }
+  return root;
+}
+
 async function get(url: string): Promise<{ status: number; text: string }> {
   const r = await fetch(url);
   return { status: r.status, text: await r.text() };
@@ -97,6 +117,7 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('Server Deck');
     expect(text).toContain('1</strong>'); // due banner count
     expect(text).toContain('Review 1 now'); // Review is the separate capped FSRS entry
+    expect(text).toContain('class="review-entry"');
     expect(text).toContain('aria-current="page"'); // Home tab active
   });
 
@@ -120,6 +141,13 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('/api/session/undo');
     expect(text).toContain("/^[1-4]$/.test(e.key)&&isRevealed()");
     expect(text).toContain('MAX_REQUEUE=2');
+    expect(text).toContain('waitingBacklog');
+    expect(text).toContain('Review next sitting');
+    expect(text).toContain("esc(c.setTitle||'Review')");
+    expect(text).not.toContain("esc(c.setId)+'</span><span>'+esc(c.id)");
+    expect(text).toContain('aria-label="Good, shortcut 3"');
+    expect(text).toContain('@media(max-width:600px)');
+    expect(text).toContain('.hint{display:none}');
   });
 
   it('/api/due returns the due card with its self-contained back', async () => {
@@ -128,6 +156,7 @@ describe('review GUI server (functional)', () => {
     const j = await r.json();
     expect(j.total).toBe(1);
     expect(j.cards[0].prompt).toBe('What is a union type?');
+    expect(j.cards[0].setTitle).toBe('Server Deck');
     expect(j.cards[0].shortAnswer).toBe('One of several types.');
     expect(j.cards[0].explanation).toContain('either A or B');
   });
@@ -142,6 +171,17 @@ describe('review GUI server (functional)', () => {
     const home = await (await fetch(`${running.url}/`)).text();
     expect(home).toContain('Review 3 now');
     expect(home).toContain('2 more waiting');
+  });
+
+  it('/api/due interleaves sets before applying the sitting cap', async () => {
+    const root = await seedTwoSets(4);
+    await saveUserPreferences(root, { reviewSessionCap: 4, queueStrategy: 'interleaved' });
+    running = await startReviewServer(root);
+    const j = await (await fetch(`${running.url}/api/due`)).json();
+    const setIds = j.cards.map((card: { setId: string }) => card.setId);
+    expect(j).toMatchObject({ total: 4, totalDue: 8, remaining: 4, strategy: 'interleaved' });
+    expect(new Set(setIds)).toEqual(new Set(['alpha', 'beta']));
+    expect(setIds.every((setId: string, index: number) => index === 0 || setId !== setIds[index - 1])).toBe(true);
   });
 
   it('archives a card through the API and finds it in archived search', async () => {

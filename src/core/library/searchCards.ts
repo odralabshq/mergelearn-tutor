@@ -1,6 +1,7 @@
 import type { CardStatus } from './types.js';
 import { loadCardsForSet } from './cardStore.js';
 import { listSetIds, loadSet } from './setStore.js';
+import { loadTags } from './tagStore.js';
 
 export type CardHit = {
   setId: string;
@@ -24,6 +25,7 @@ export type SearchOptions = {
 export async function searchCards(root: string, query: string, opts: SearchOptions = {}): Promise<CardHit[]> {
   const needle = query.trim().toLocaleLowerCase();
   const hits: CardHit[] = [];
+  const tagLabels = new Map((await loadTags(root)).map((tag) => [tag.id, tag.label]));
   for (const setId of await listSetIds(root)) {
     if (opts.setIds?.length && !opts.setIds.includes(setId)) continue;
     const set = await loadSet(root, setId);
@@ -31,7 +33,14 @@ export async function searchCards(root: string, query: string, opts: SearchOptio
     for (const card of await loadCardsForSet(root, setId)) {
       if (card.status === 'archived' && !opts.includeArchived) continue;
       if (opts.tagIds?.length && !opts.tagIds.some((id) => card.tagIds.includes(id))) continue;
-      const haystack = `${set.title}\n${card.front.prompt}\n${card.back.shortAnswer}`.toLocaleLowerCase();
+      const tagIds = [...new Set([...set.tagIds, ...card.tagIds])];
+      const tagText = tagIds.flatMap((id) => [id, tagLabels.get(id) ?? '']).join('\n');
+      const haystack = [
+        set.id, set.title, set.folderPath ?? '',
+        card.id, card.folderPath ?? '',
+        card.front.prompt, card.back.shortAnswer, card.back.explanationMarkdown,
+        tagText,
+      ].join('\n').toLocaleLowerCase();
       if (!haystack.includes(needle)) continue;
       hits.push({ setId, setTitle: set.title, cardId: card.id, prompt: card.front.prompt, shortAnswer: card.back.shortAnswer, explanation: card.back.explanationMarkdown, updatedAt: card.updatedAt, tagIds: card.tagIds, status: card.status });
     }
