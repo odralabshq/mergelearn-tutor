@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -48,5 +48,17 @@ describe('private profile backup', () => {
     const source = await fresh('mlt-backup-inside-');
     await installSampleLesson(source);
     await expect(exportProfileBackup(source, join(source, 'backup.zip'))).rejects.toThrow(/outside/);
+  });
+
+  it('refuses symlinks anywhere in the private backup allowlist', async () => {
+    if (process.platform === 'win32') return;
+    const source = await fresh('mlt-backup-symlink-');
+    await installSampleLesson(source);
+    const target = join(source, 'outside.txt');
+    await writeFile(target, 'private');
+    await mkdir(join(source, 'profile'), { recursive: true });
+    await symlink(target, join(source, 'profile', 'linked.txt'));
+    await expect(exportProfileBackup(source, join(await fresh('mlt-backup-symlink-out-'), 'backup.zip')))
+      .rejects.toThrow(/refuses symlink/);
   });
 });

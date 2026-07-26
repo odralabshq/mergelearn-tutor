@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
+import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
@@ -343,7 +344,11 @@ async function addBackupPath(root: string, relativePath: string, entries: Record
   }
   if (info.isSymbolicLink()) throw new BundleError(`backup refuses symlink: ${relativePath}`);
   if (info.isFile()) {
-    entries[relativePath] = new Uint8Array(await readFile(absolute));
+    const handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    try {
+      if (!(await handle.stat()).isFile()) throw new BundleError(`backup refuses non-regular path: ${relativePath}`);
+      entries[relativePath] = new Uint8Array(await handle.readFile());
+    } finally { await handle.close(); }
     return;
   }
   if (!info.isDirectory()) throw new BundleError(`backup refuses non-regular path: ${relativePath}`);
