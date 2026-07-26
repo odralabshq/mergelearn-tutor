@@ -143,6 +143,26 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(saved).toEqual({ dailyReviewCap: 12, queueStrategy: 'overdue' });
   });
 
+  it('lists, archives, and restores a card', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-curation-'));
+    const patchFile = join(root, 'patch.json');
+    await writeFile(patchFile, JSON.stringify(patch), 'utf8');
+    await run(root, 'import', '--file', patchFile);
+    const listed = JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'));
+    const cardId = listed[0].cardId;
+    await run(root, 'archive', '--set', 'cli-deck', '--card', cardId);
+    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))).toEqual([]);
+    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))[0].status).toBe('archived');
+    await run(root, 'unarchive', '--set', 'cli-deck', '--card', cardId);
+    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))[0].status).toBe('active');
+    expect(await run(root, 'delete', '--set', 'cli-deck', '--card', cardId)).toContain('refusing permanent deletion');
+    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))).toHaveLength(1);
+    await run(root, 'edit', '--set', 'cli-deck', '--card', cardId, '--prompt', 'Fixed CLI prompt');
+    expect(JSON.parse(await run(root, 'cards', '--query', 'fixed cli', '--json'))[0].prompt).toBe('Fixed CLI prompt');
+    await run(root, 'delete', '--set', 'cli-deck', '--card', cardId, '--yes');
+    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))).toEqual([]);
+  });
+
   it('import --dry-run --json includes a lesson summary and writes nothing', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-summary-'));
     const patchFile = join(root, 'patch.json');

@@ -100,6 +100,16 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('aria-current="page"'); // Home tab active
   });
 
+  it('renders card search, archive, and edit controls on Manage', async () => {
+    running = await startReviewServer(await seed());
+    const { status, text } = await get(`${running.url}/manage`);
+    expect(status).toBe(200);
+    expect(text).toContain('id="card-search"');
+    expect(text).toContain('/api/cards?q=');
+    expect(text).toContain('data-card-action');
+    expect(text).toContain('Edit teaching text');
+  });
+
   it('serves the Practice shell', async () => {
     running = await startReviewServer(await seed());
     const { status, text } = await get(`${running.url}/practice`);
@@ -132,6 +142,19 @@ describe('review GUI server (functional)', () => {
     const home = await (await fetch(`${running.url}/`)).text();
     expect(home).toContain('Review 3 now');
     expect(home).toContain('2 more waiting');
+  });
+
+  it('archives a card through the API and finds it in archived search', async () => {
+    running = await startReviewServer(await seed());
+    const card = (await (await fetch(`${running.url}/api/due`)).json()).cards[0];
+    const response = await fetch(`${running.url}/api/card/archive`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setId: card.setId, cardId: card.id }),
+    });
+    expect(response.status).toBe(200);
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(0);
+    const hits = await (await fetch(`${running.url}/api/cards?q=union&archived=1`)).json();
+    expect(hits.cards).toMatchObject([{ cardId: card.id, status: 'archived' }]);
   });
 
   it('/api/session lifecycle advances FSRS and drops the card from the due queue', async () => {

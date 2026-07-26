@@ -12,6 +12,8 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { getDueCards, selectDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
 import { orderDueQueue } from '../core/library/review/interleave.js';
 import { loadUserPreferences } from '../core/library/userPreferences.js';
+import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
+import { searchCards } from '../core/library/searchCards.js';
 import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
 import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
@@ -58,6 +60,10 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
   // Empty body / empty object both mean "everything due."
   if (url.pathname === '/api/due') return dueData(root, req, res, url);
+  if (method === 'GET' && url.pathname === '/api/cards') return cardsApi(root, res, url);
+  if (method === 'POST' && url.pathname.startsWith('/api/card/')) {
+    return cardActionApi(root, req, res, url.pathname.slice('/api/card/'.length));
+  }
   // Learn mode: every active card in one set, in authored order, independent of FSRS due state.
   if (method === 'GET' && url.pathname === '/api/lesson') return lessonData(root, res, url);
   // Per-sitting session lifecycle (doc 06 addendum A2): start -> grade* -> end.
@@ -153,6 +159,40 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
     strategy: prefs.queueStrategy,
     cards: ordered.map(cardView),
   });
+}
+
+async function cardsApi(root: string, res: ServerResponse, url: URL): Promise<void> {
+  const cards = await searchCards(root, url.searchParams.get('q') ?? '', {
+    setIds: url.searchParams.get('set') ? [url.searchParams.get('set')!] : undefined,
+    includeArchived: url.searchParams.get('archived') === '1',
+    limit: Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100)),
+  });
+  return sendJson(res, 200, { ok: true, cards });
+}
+
+async function cardActionApi(root: string, req: IncomingMessage, res: ServerResponse, action: string): Promise<void> {
+  let body: { setId?: string; cardId?: string; edit?: unknown; confirm?: boolean };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (!body.setId || !body.cardId) return sendJson(res, 400, { ok: false, error: 'need setId and cardId' });
+  try {
+    if (action === 'archive') return sendJson(res, 200, { ok: true, card: await archiveCard(root, body.setId, body.cardId) });
+    if (action === 'unarchive') return sendJson(res, 200, { ok: true, card: await unarchiveCard(root, body.setId, body.cardId) });
+    if (action === 'edit' && body.edit && typeof body.edit === 'object') {
+      return sendJson(res, 200, { ok: true, card: await editCard(root, body.setId, body.cardId, body.edit as CardEdit) });
+    }
+    if (action === 'delete') {
+      if (!body.confirm) return sendJson(res, 409, { ok: false, error: 'permanent deletion requires confirm=true' });
+      return sendJson(res, 200, { ok: true, result: await deleteCard(root, body.setId, body.cardId) });
+    }
+    return sendJson(res, 400, { ok: false, error: `unknown or incomplete card action: ${action}` });
+  } catch (error) {
+    if (error instanceof CardLifecycleError) {
+      const status = error.message.startsWith('card not found') ? 404 : 400;
+      return sendJson(res, status, { ok: false, error: error.message });
+    }
+    throw error;
+  }
 }
 
 /** GET /api/lesson?set=<id> returns all active cards in authored order.
@@ -676,6 +716,12 @@ async function renderManage(root: string): Promise<string> {
     `Bar shows <strong>mastery</strong>: share of cards learned</span>`;
 
   const body = `<h1>Manage</h1>` +
+    `<p class="muted">Search, fix, or archive cards. Folder and tag filters below feed the Practice tab.</p>` +
+    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status"></span></div>` +
+    `<div class="card-tools"><input id="card-search" type="search" placeholder="Search cards and lessons" aria-label="Search cards">` +
+    `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
+    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div></section>` +
+    `<h2 style="margin-top:32px">Practice filters</h2>` +
     `<p class="muted">Pick the concepts you want to drill. The active filter feeds the Practice tab.</p>` +
     `<div class="active-filter" id="active-filter">` +
     `<span class="muted" id="match-count">—</span>` +
@@ -698,6 +744,33 @@ var selected={folderPaths:[],tagIds:[],combinator:'union'};
 var CARDS=[];
 try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function cardStatus(t){var n=document.getElementById('card-status');if(n)n.textContent=t;}
+function cardHtml(c){
+  var action=c.status==='archived'?'unarchive':'archive';
+  return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'">'+
+    '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><span class="badge next">'+esc(c.status)+'</span></div>'+
+    '<div class="muted small">'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</div><p>'+esc(c.shortAnswer)+'</p>'+
+    '<div class="curation-actions"><button type="button" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button>'+
+    '<details><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
+    '<label>Short answer<textarea data-edit="shortAnswer" rows="2">'+esc(c.shortAnswer)+'</textarea></label>'+
+    '<label>Explanation<textarea data-edit="explanation" rows="4">'+esc(c.explanation)+'</textarea></label>'+
+    '<button type="button" class="primary" data-card-action="edit">Save changes</button></details></div></article>';
+}
+async function loadCardResults(){
+  var q=document.getElementById('card-search').value||'';var archived=document.getElementById('show-archived').checked;
+  try{var r=await fetch('/api/cards?q='+encodeURIComponent(q)+(archived?'&archived=1':''));var j=await r.json();var box=document.getElementById('card-results');box.innerHTML=(j.cards||[]).map(cardHtml).join('')||'<div class="empty">No cards match.</div>';cardStatus((j.cards||[]).length+' shown');}
+  catch(e){cardStatus('Could not load cards');}
+}
+async function cardAction(button){
+  var row=button.closest('.curation-card'),action=button.getAttribute('data-card-action');if(!row||!action)return;
+  var body={setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card')};
+  if(action==='edit')body.edit={front:{prompt:row.querySelector('[data-edit="prompt"]').value},back:{shortAnswer:row.querySelector('[data-edit="shortAnswer"]').value,explanationMarkdown:row.querySelector('[data-edit="explanation"]').value}};
+  button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');button.disabled=false;return;}cardStatus(action==='edit'?'Saved':'Card updated');await loadCardResults();}catch(e){cardStatus('Update failed');button.disabled=false;}
+}
+var searchTimer=null;document.getElementById('card-search').addEventListener('input',function(){clearTimeout(searchTimer);searchTimer=setTimeout(loadCardResults,180);});
+document.getElementById('show-archived').addEventListener('change',loadCardResults);
+document.getElementById('card-results').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-card-action]');if(b)cardAction(b);});
+loadCardResults();
 function statusMsg(t){var s=document.getElementById('match-count');s.textContent=t;}
 function selectedFilter(){var f={};if(selected.folderPaths.length)f.folderPaths=selected.folderPaths;if(selected.tagIds.length)f.tagIds=selected.tagIds;if(Object.keys(f).length)f.combinator=selected.combinator;return f;}
 function isSelectedFolder(p){return selected.folderPaths.indexOf(p)>=0;}
@@ -1439,6 +1512,16 @@ button.primary:hover{background:var(--accent-hover)}
 .browse-body .label{margin-top:14px}
 .browse-body .label:first-child{margin-top:0}
 .active-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);margin:18px 0}
+.card-curation{margin-top:24px}
+.card-tools{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:12px 0}
+.card-tools input[type="search"]{flex:1;min-width:240px;padding:9px 11px;background:var(--raised);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.curation-list{display:grid;gap:10px}
+.curation-card{padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
+.curation-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.curation-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.curation-actions details{flex:1;min-width:260px}
+.curation-actions label{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--muted)}
+.curation-actions textarea{width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit}
 .active-filter #match-count{flex:1;min-width:120px}
 .active-filter .clear{background:transparent;border:1px solid var(--border)}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--overlay);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px}

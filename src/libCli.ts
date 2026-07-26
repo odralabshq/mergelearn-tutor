@@ -33,6 +33,8 @@ import { loadCard } from './core/library/cardStore.js';
 import { getDueCards, selectDueCards } from './core/library/review/dueQueue.js';
 import { orderDueQueue } from './core/library/review/interleave.js';
 import { loadUserPreferences, saveUserPreferences, type QueueStrategy } from './core/library/userPreferences.js';
+import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from './core/library/cardLifecycle.js';
+import { searchCards } from './core/library/searchCards.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
 import { startReviewServer } from './session/server.js';
 import {
@@ -196,6 +198,64 @@ Manual/advanced: author a lesson yourself.
       if (opts.dailyReviewCap !== undefined || opts.queueStrategy !== undefined) await saveUserPreferences(root, next);
       if (opts.json) out(JSON.stringify(next, null, 2));
       else out(`dailyReviewCap=${next.dailyReviewCap}\nqueueStrategy=${next.queueStrategy}`);
+    });
+
+  program
+    .command('cards')
+    .description('list or search cards')
+    .option('--set <id>', 'only this set')
+    .option('--query <text>', 'search set title, prompt, and short answer', '')
+    .option('--archived', 'include archived cards')
+    .option('--json', 'emit machine-readable results')
+    .action(async (opts: { set?: string; query: string; archived?: boolean; json?: boolean }) => {
+      const hits = await searchCards(rootFrom(homeOpt()), opts.query, {
+        setIds: opts.set ? [opts.set] : undefined, includeArchived: opts.archived,
+      });
+      if (opts.json) out(JSON.stringify(hits, null, 2));
+      else for (const hit of hits) out(`${hit.status.padEnd(10)} ${hit.setId}/${hit.cardId}  ${hit.prompt}`);
+    });
+
+  for (const action of ['archive', 'unarchive'] as const) {
+    program.command(action)
+      .description(`${action} one card`)
+      .requiredOption('--set <id>', 'set id')
+      .requiredOption('--card <id>', 'card id')
+      .action(async (opts: { set: string; card: string }) => {
+        const card = action === 'archive'
+          ? await archiveCard(rootFrom(homeOpt()), opts.set, opts.card)
+          : await unarchiveCard(rootFrom(homeOpt()), opts.set, opts.card);
+        out(`${action}d ${card.setId}/${card.id}`);
+      });
+  }
+
+  program.command('edit')
+    .description('edit teaching text on one card without resetting its schedule')
+    .requiredOption('--set <id>', 'set id')
+    .requiredOption('--card <id>', 'card id')
+    .option('--prompt <text>', 'new prompt')
+    .option('--short-answer <text>', 'new short answer')
+    .option('--explanation <text>', 'new explanation markdown')
+    .action(async (opts: { set: string; card: string; prompt?: string; shortAnswer?: string; explanation?: string }) => {
+      const card = await editCard(rootFrom(homeOpt()), opts.set, opts.card, {
+        ...(opts.prompt !== undefined ? { front: { prompt: opts.prompt } } : {}),
+        ...(opts.shortAnswer !== undefined || opts.explanation !== undefined ? { back: {
+          ...(opts.shortAnswer !== undefined ? { shortAnswer: opts.shortAnswer } : {}),
+          ...(opts.explanation !== undefined ? { explanationMarkdown: opts.explanation } : {}),
+        } } : {}),
+      });
+      out(`edited ${card.setId}/${card.id}`);
+    });
+
+  program.command('delete')
+    .description('permanently delete one card or set (archive is safer)')
+    .requiredOption('--set <id>', 'set id')
+    .option('--card <id>', 'card id; omit to delete the set')
+    .option('--yes', 'confirm permanent deletion')
+    .option('--force', 'allow set deletion when review history exists')
+    .action(async (opts: { set: string; card?: string; yes?: boolean; force?: boolean }) => {
+      if (!opts.yes) { out('refusing permanent deletion without --yes; use archive for reversible removal'); process.exitCode = 1; return; }
+      if (opts.card) { await deleteCard(rootFrom(homeOpt()), opts.set, opts.card); out(`deleted ${opts.set}/${opts.card}`); }
+      else { await deleteSet(rootFrom(homeOpt()), opts.set, { force: opts.force }); out(`deleted set ${opts.set}`); }
     });
 
   program
