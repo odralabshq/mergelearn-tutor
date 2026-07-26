@@ -194,6 +194,11 @@ export type ReviewAttempt = {
 
 export type ReviewEvent = {
   cardId: string;
+  /** Set locator + exact pre-grade snapshot for one-level undo. Optional so
+   * sessions written before 0.2 remain readable (but are not undoable). */
+  setId?: string;
+  fsrsBefore?: FsrsState;
+  cardUpdatedAtBefore?: string;
   rating: ReviewRating;
   /** Pre-reveal confidence, recorded for calibration; does not affect FSRS. */
   confidenceBeforeReveal?: Confidence;
@@ -226,6 +231,8 @@ export type ReviewSession = {
   events: ReviewEvent[];
   summary: {
     reviewedCount: number;
+    /** Unique cards attempted; absent only on sessions written before 0.2. */
+    distinctCardCount?: number;
     again: number;
     hard: number;
     good: number;

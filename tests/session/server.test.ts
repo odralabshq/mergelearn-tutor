@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { startReviewServer, type ReviewServer } from '../../src/session/server.js';
 import { importAgentSet } from '../../src/core/library/importAgentSet.js';
+import { saveUserPreferences } from '../../src/core/library/userPreferences.js';
 import type { AgentSetPatch } from '../../src/core/library/types.js';
 
 let running: ReviewServer | undefined;
@@ -30,6 +31,23 @@ async function seed(): Promise<string> {
   };
   const res = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
   if (!res.ok) throw new Error('seed import failed');
+  return root;
+}
+
+async function seedMany(count: number): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'mlt-many-'));
+  const localIds = Array.from({ length: count }, (_, i) => `c${i}`);
+  const patch: AgentSetPatch = {
+    version: 1,
+    set: { title: 'Many', tagIds: [] },
+    tagPatch: { reuse: [], add: [] }, order: localIds,
+    cards: localIds.map((localId) => ({
+      localId, tagRefs: [], front: { prompt: localId },
+      back: { shortAnswer: localId, explanationMarkdown: localId },
+    })),
+  };
+  const result = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+  if (!result.ok) throw new Error('many-card seed failed');
   return root;
 }
 
@@ -78,7 +96,7 @@ describe('review GUI server (functional)', () => {
     expect(status).toBe(200);
     expect(text).toContain('Server Deck');
     expect(text).toContain('1</strong>'); // due banner count
-    expect(text).toContain('Review 1 due'); // Review is the separate FSRS entry
+    expect(text).toContain('Review 1 now'); // Review is the separate capped FSRS entry
     expect(text).toContain('aria-current="page"'); // Home tab active
   });
 
@@ -88,6 +106,10 @@ describe('review GUI server (functional)', () => {
     expect(status).toBe(200);
     expect(text).toContain('id="mount"');
     expect(text).toContain('/api/due'); // client fetches the queue
+    expect(text).toContain('function planRequeue');
+    expect(text).toContain('/api/session/undo');
+    expect(text).toContain("/^[1-4]$/.test(e.key)&&isRevealed()");
+    expect(text).toContain('MAX_REQUEUE=2');
   });
 
   it('/api/due returns the due card with its self-contained back', async () => {
@@ -98,6 +120,18 @@ describe('review GUI server (functional)', () => {
     expect(j.cards[0].prompt).toBe('What is a union type?');
     expect(j.cards[0].shortAnswer).toBe('One of several types.');
     expect(j.cards[0].explanation).toContain('either A or B');
+  });
+
+  it('/api/due applies the user cap and reports the waiting backlog', async () => {
+    const root = await seedMany(5);
+    await saveUserPreferences(root, { dailyReviewCap: 3, queueStrategy: 'interleaved' });
+    running = await startReviewServer(root);
+    const j = await (await fetch(`${running.url}/api/due`)).json();
+    expect(j).toMatchObject({ total: 3, totalDue: 5, remaining: 2, strategy: 'interleaved' });
+    expect(j.cards).toHaveLength(3);
+    const home = await (await fetch(`${running.url}/`)).text();
+    expect(home).toContain('Review 3 now');
+    expect(home).toContain('2 more waiting');
   });
 
   it('/api/session lifecycle advances FSRS and drops the card from the due queue', async () => {
@@ -130,6 +164,33 @@ describe('review GUI server (functional)', () => {
     expect(ended.ok).toBe(true);
     expect(ended.summary.reviewedCount).toBe(1);
     expect(ended.summary.good).toBe(1);
+  });
+
+  it('/api/session/undo restores the last grade exactly', async () => {
+    running = await startReviewServer(await seed());
+    const card = (await (await fetch(`${running.url}/api/due`)).json()).cards[0];
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3 }),
+    });
+
+    const undoResponse = await fetch(`${running.url}/api/session/undo`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    });
+    const undo = await undoResponse.json();
+    expect(undoResponse.status).toBe(200);
+    expect(undo).toMatchObject({ ok: true, cardId: card.id });
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(1);
+
+    const ended = await (await fetch(`${running.url}/api/session/end`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    })).json();
+    expect(ended.summary).toMatchObject({ reviewedCount: 0, distinctCardCount: 0, good: 0 });
   });
 
   it('rejects a bad grade payload', async () => {

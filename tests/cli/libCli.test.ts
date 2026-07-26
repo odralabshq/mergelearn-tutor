@@ -61,7 +61,7 @@ describe('library CLI (functional, end-to-end)', () => {
 
     // due: the fresh card is due
     const dueOut = await run(root, 'due');
-    expect(dueOut).toContain('1 card(s) due');
+    expect(dueOut).toContain('1 of 1 card(s) due');
     const cardId = dueOut.split('cli-deck/')[1].split(/\s/)[0];
 
     // show: front + back render (learn by reading)
@@ -74,7 +74,7 @@ describe('library CLI (functional, end-to-end)', () => {
     const gradeOut = await run(root, 'grade', '--card', cardId, '--rating', '3');
     expect(gradeOut).toContain(`graded ${cardId} (3)`);
     const dueAfter = await run(root, 'due');
-    expect(dueAfter).toContain('0 card(s) due');
+    expect(dueAfter).toContain('0 of 0 card(s) due');
   });
 
   it('context works without --goal (optional) and omits the goal field', async () => {
@@ -134,6 +134,13 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(Array.isArray(result.checks)).toBe(true);
     expect(result.checks.some((c: { id: string }) => c.id === 'skill-source')).toBe(true);
     expect(result.checks.some((c: { id: string }) => c.id === 'lessons')).toBe(true);
+  });
+
+  it('settings persists the review cap and queue strategy', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-settings-'));
+    await run(root, 'settings', '--daily-review-cap', '12', '--queue-strategy', 'overdue');
+    const saved = JSON.parse(await run(root, 'settings', '--json'));
+    expect(saved).toEqual({ dailyReviewCap: 12, queueStrategy: 'overdue' });
   });
 
   it('import --dry-run --json includes a lesson summary and writes nothing', async () => {

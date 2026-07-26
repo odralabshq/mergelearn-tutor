@@ -30,7 +30,9 @@ import { installSampleLesson } from './core/library/sampleLesson.js';
 import { runDoctor } from './core/library/doctor.js';
 import { listSetSummaries } from './core/library/setStore.js';
 import { loadCard } from './core/library/cardStore.js';
-import { getDueCards } from './core/library/review/dueQueue.js';
+import { getDueCards, selectDueCards } from './core/library/review/dueQueue.js';
+import { orderDueQueue } from './core/library/review/interleave.js';
+import { loadUserPreferences, saveUserPreferences, type QueueStrategy } from './core/library/userPreferences.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
 import { startReviewServer } from './session/server.js';
 import {
@@ -177,19 +179,49 @@ Manual/advanced: author a lesson yourself.
     });
 
   program
+    .command('settings')
+    .description('show or update review settings')
+    .option('--daily-review-cap <n>', 'maximum cards per review sitting; 0 means uncapped')
+    .option('--queue-strategy <name>', 'interleaved (default) or overdue')
+    .option('--json', 'emit machine-readable settings')
+    .action(async (opts: { dailyReviewCap?: string; queueStrategy?: string; json?: boolean }) => {
+      const root = rootFrom(homeOpt());
+      const current = await loadUserPreferences(root);
+      const cap = opts.dailyReviewCap === undefined ? current.dailyReviewCap : Number(opts.dailyReviewCap);
+      if (!Number.isInteger(cap) || cap < 0) { out('daily review cap must be a non-negative integer'); process.exitCode = 1; return; }
+      if (opts.queueStrategy && !['overdue', 'interleaved'].includes(opts.queueStrategy)) {
+        out('queue strategy must be overdue or interleaved'); process.exitCode = 1; return;
+      }
+      const next = { dailyReviewCap: cap, queueStrategy: (opts.queueStrategy ?? current.queueStrategy) as QueueStrategy };
+      if (opts.dailyReviewCap !== undefined || opts.queueStrategy !== undefined) await saveUserPreferences(root, next);
+      if (opts.json) out(JSON.stringify(next, null, 2));
+      else out(`dailyReviewCap=${next.dailyReviewCap}\nqueueStrategy=${next.queueStrategy}`);
+    });
+
+  program
     .command('due')
     .description('list cards due now')
     .option('--set <id>', 'only this set')
     .option('--tag <id>', 'only cards with this tag')
     .option('--folder <path>', 'only this folder subtree')
-    .action(async (opts: { set?: string; tag?: string; folder?: string }) => {
+    .option('--limit <n>', 'override the configured review cap')
+    .option('--strategy <name>', 'override: interleaved or overdue')
+    .action(async (opts: { set?: string; tag?: string; folder?: string; limit?: string; strategy?: string }) => {
+      const root = rootFrom(homeOpt());
       const filter = {
         setIds: opts.set ? [opts.set] : undefined,
         tagIds: opts.tag ? [opts.tag] : undefined,
         folderPaths: opts.folder ? [opts.folder] : undefined,
       };
-      const due = await getDueCards(rootFrom(homeOpt()), new Date(), filter);
-      out(`${due.length} card(s) due`);
+      const prefs = await loadUserPreferences(root);
+      const limit = opts.limit === undefined ? prefs.dailyReviewCap : Number(opts.limit);
+      const strategy = (opts.strategy ?? prefs.queueStrategy) as QueueStrategy;
+      if (!Number.isInteger(limit) || limit < 0 || !['overdue', 'interleaved'].includes(strategy)) {
+        out('limit must be non-negative and strategy must be overdue or interleaved'); process.exitCode = 1; return;
+      }
+      const all = await getDueCards(root, new Date(), filter);
+      const due = orderDueQueue(selectDueCards(all, limit), { strategy, seed: new Date().toISOString().slice(0, 10) });
+      out(`${due.length} of ${all.length} card(s) due (${strategy})`);
       for (const c of due) out(`  ${c.setId}/${c.id}  ${c.front.prompt}`);
     });
 

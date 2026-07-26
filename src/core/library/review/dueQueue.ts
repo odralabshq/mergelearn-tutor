@@ -12,6 +12,19 @@ import { loadCardsForSet } from '../cardStore.js';
 
 export type DueFilter = NonNullable<ReviewSession['filter']>;
 
+/** Select a bounded sitting without starving new/learning cards. Input order is
+ * the debt priority and is preserved within each pool. A zero/absent cap means
+ * uncapped. */
+export function selectDueCards(cards: Card[], limit?: number, newShare = 0.25): Card[] {
+  if (!limit || limit < 1 || cards.length <= limit) return cards.slice();
+  const reserve = Math.floor(limit * newShare);
+  const fresh = cards.filter((c) => c.fsrs.state <= 1).slice(0, reserve);
+  const key = (c: Card) => `${c.setId}/${c.id}`;
+  const chosen = new Set(fresh.map(key));
+  const rest = cards.filter((c) => !chosen.has(key(c))).slice(0, limit - fresh.length);
+  return [...fresh, ...rest];
+}
+
 /**
  * Faceted match. Within one dimension (several tags, several folders), values
  * are always OR'd. Across dimensions (folders vs tags vs sets), the combinator

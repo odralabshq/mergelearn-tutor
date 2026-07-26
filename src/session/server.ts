@@ -9,8 +9,10 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import { getDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
-import { startSession, gradeCard, endSession } from '../core/library/review/session.js';
+import { getDueCards, selectDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
+import { orderDueQueue } from '../core/library/review/interleave.js';
+import { loadUserPreferences } from '../core/library/userPreferences.js';
+import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
 import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
@@ -25,6 +27,7 @@ import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, Review
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
 import { join } from 'node:path';
+import { MAX_REQUEUE, REQUEUE_GAP, planRequeue } from './requeue.js';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
@@ -60,6 +63,7 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   // Per-sitting session lifecycle (doc 06 addendum A2): start -> grade* -> end.
   if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/session/undo') return sessionUndoApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res);
   // Opt-in sample lesson: the empty-state button POSTs here, then redirects.
   if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res);
@@ -138,8 +142,17 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
     };
     if (!filter.setIds && !filter.tagIds && !filter.folderPaths) filter = undefined;
   }
-  const due = await getDueCards(root, new Date(), filter);
-  return sendJson(res, 200, { total: due.length, cards: due.map(cardView) });
+  const now = new Date();
+  const [due, prefs] = await Promise.all([getDueCards(root, now, filter), loadUserPreferences(root)]);
+  const selected = selectDueCards(due, prefs.dailyReviewCap);
+  const ordered = orderDueQueue(selected, { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) });
+  return sendJson(res, 200, {
+    total: ordered.length,
+    totalDue: due.length,
+    remaining: Math.max(0, due.length - ordered.length),
+    strategy: prefs.queueStrategy,
+    cards: ordered.map(cardView),
+  });
 }
 
 /** GET /api/lesson?set=<id> returns all active cards in authored order.
@@ -253,6 +266,30 @@ async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerRe
   const updated = await gradeCard(root, session, card, rating, new Date(), confidence, attempt);
   await persistSession(root, session);
   return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
+}
+
+/** /api/session/undo — body: { sessionId }. Exact one-level grade reversal. */
+async function sessionUndoApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: { sessionId?: string };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (!body.sessionId) return sendJson(res, 400, { ok: false, error: 'need sessionId' });
+  let session = activeSessions.get(body.sessionId);
+  if (!session) {
+    for (const path of await listSessionFiles(root)) {
+      const saved = await readJsonIO<ReviewSession>(path);
+      if (saved?.id === body.sessionId) { session = saved; activeSessions.set(saved.id, saved); break; }
+    }
+  }
+  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+  try {
+    const card = await undoLastGrade(root, session);
+    await persistSession(root, session);
+    return sendJson(res, 200, { ok: true, cardId: card.id, setId: card.setId, due: card.fsrs.due });
+  } catch (error) {
+    if (error instanceof UndoUnavailableError) return sendJson(res, 409, { ok: false, error: error.message });
+    throw error;
+  }
 }
 
 /** /api/session/end — body: { sessionId }. Finalizes and removes from memory. */
@@ -377,10 +414,11 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
 }
 
 async function renderHome(root: string): Promise<string> {
-  const [summaries, due, attemptedMap] = await Promise.all([
+  const [summaries, due, attemptedMap, prefs] = await Promise.all([
     listSetSummaries(root),
     getDueCards(root, new Date()),
     attemptedByLessonSet(root),
+    loadUserPreferences(root),
   ]);
   const dueBySet = new Map<string, number>();
   for (const c of due) dueBySet.set(c.setId, (dueBySet.get(c.setId) ?? 0) + 1);
@@ -416,12 +454,15 @@ async function renderHome(root: string): Promise<string> {
     return pageShell('MergeLearn — Home', 'home', body);
   }
 
-  // Review is the separate FSRS job: one banner linking to the global due queue.
+  // Review is the separate FSRS job: one banner linking to the capped queue.
+  const sittingCount = selectDueCards(due, prefs.dailyReviewCap).length;
+  const waiting = Math.max(0, due.length - sittingCount);
   const cta = due.length > 0
-    ? `<a class="cta" href="/practice">Review ${due.length} due</a>`
+    ? `<a class="cta" href="/practice">Review ${sittingCount} now</a>`
     : `<span class="cta is-disabled">Nothing due right now</span>`;
+  const backlog = waiting ? `<span class="muted small">${waiting} more waiting</span>` : '';
   const banner = `<div class="due-banner"><strong>${due.length}</strong>` +
-    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>${cta}`;
+    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>${cta}${backlog}`;
 
   // Lessons are the primary object: each row shows objective, progress, and one
   // Start/Continue action. Progress is derived from persisted lesson sessions.
@@ -896,6 +937,7 @@ function renderPractice(): string {
   const body =
     `<h1>Practice</h1>` +
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
+    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" hidden>Undo last grade</button></div>` +
     `<div id="mount"></div>` +
     `<div class="status" id="status"></div>` +
     `<script>${practiceScript()}</script>`;
@@ -904,11 +946,15 @@ function renderPractice(): string {
 
 function practiceScript(): string {
   return `
+var REQUEUE_GAP=${REQUEUE_GAP},MAX_REQUEUE=${MAX_REQUEUE};
+${planRequeue.toString()}
 var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;
 var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
+var requeueCounts={};var requeueSeq=0;var lastGrade=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}var noun=practiceMode==='lesson'?'Activity':'Card';p.textContent=noun+' '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';}
+function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}if(practiceMode==='lesson'){p.textContent='Activity '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';return;}var pending=queue.slice(pos).filter(function(c){return !!c.__requeueSeq;}).length;p.textContent=reviewed+' attempt'+(reviewed===1?'':'s')+' · '+Math.max(0,queue.length-pos)+' remaining'+(pending?' ('+pending+' to revisit)':'');}
+function syncUndo(){var b=document.getElementById('undo-grade');if(b)b.hidden=!lastGrade;}
 function render(){
   progress();
   var mount=document.getElementById('mount');
@@ -1063,11 +1109,27 @@ async function grade(r){
     var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined})});
     var j=await res.json();
     if(!j.ok){statusMsg(j.error||'grade failed');return;}
-    reviewed++;statusMsg('Graded · next due '+new Date(j.due).toLocaleDateString());
-    pos++;render();
+    var revisit=null;
+    if(r===1&&practiceMode==='review'){
+      var plan=planRequeue(queue.length,pos,requeueCounts[c.id]||0,REQUEUE_GAP,MAX_REQUEUE);
+      if(plan){var copy=Object.assign({},c,{__requeueSeq:++requeueSeq});queue.splice(plan.insertAt,0,copy);requeueCounts[c.id]=plan.nextCount;revisit=copy.__requeueSeq;}
+    }
+    lastGrade={index:pos,rating:r,cardId:c.id,requeueSeq:revisit};
+    reviewed++;statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
+    pos++;render();syncUndo();
   }catch(e){statusMsg('grade failed');}
 }
+async function undoGrade(){
+  if(!lastGrade||!sessionId)return;
+  try{
+    var res=await fetch('/api/session/undo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});
+    var j=await res.json();if(!j.ok){statusMsg(j.error||'undo failed');return;}
+    if(lastGrade.requeueSeq){queue=queue.filter(function(c){return c.__requeueSeq!==lastGrade.requeueSeq;});requeueCounts[lastGrade.cardId]=Math.max(0,(requeueCounts[lastGrade.cardId]||1)-1);}
+    pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);lastGrade=null;render();syncUndo();statusMsg('Last grade undone');
+  }catch(e){statusMsg('undo failed');}
+}
 function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
+var undoBtn=document.getElementById('undo-grade');if(undoBtn)undoBtn.addEventListener('click',undoGrade);
 document.addEventListener('keydown',function(e){
   if(['INPUT','TEXTAREA','SELECT'].indexOf(e.target.tagName)>=0)return;
   if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!isRevealed())reveal();return;}
