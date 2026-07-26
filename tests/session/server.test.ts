@@ -134,7 +134,7 @@ describe('review GUI server (functional)', () => {
 
   it('/api/due applies the user cap and reports the waiting backlog', async () => {
     const root = await seedMany(5);
-    await saveUserPreferences(root, { dailyReviewCap: 3, queueStrategy: 'interleaved' });
+    await saveUserPreferences(root, { reviewSessionCap: 3, queueStrategy: 'interleaved' });
     running = await startReviewServer(root);
     const j = await (await fetch(`${running.url}/api/due`)).json();
     expect(j).toMatchObject({ total: 3, totalDue: 5, remaining: 2, strategy: 'interleaved' });

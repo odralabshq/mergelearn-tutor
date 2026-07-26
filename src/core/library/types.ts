@@ -85,6 +85,7 @@ export type SourceRefStatus = 'fresh' | 'drifted' | 'missing' | 'orphaned_commit
 export type SourceRef = {
   repoId: string;
   repoLabel?: string;
+  originUrl?: string; // portable remote URL; never a local checkout path
   path: string; // repo-relative
   startLine?: number;
   endLine?: number;
@@ -126,6 +127,7 @@ export type Card = {
   createdAt: string;
   updatedAt: string;
   archivedAt?: string;
+  statusBeforeArchive?: Exclude<CardStatus, 'archived'>;
 };
 
 /**
@@ -198,6 +200,7 @@ export type ReviewEvent = {
    * sessions written before 0.2 remain readable (but are not undoable). */
   setId?: string;
   fsrsBefore?: FsrsState;
+  fsrsAfter?: FsrsState;
   cardUpdatedAtBefore?: string;
   rating: ReviewRating;
   /** Pre-reveal confidence, recorded for calibration; does not affect FSRS. */

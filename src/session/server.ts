@@ -51,6 +51,10 @@ export async function startReviewServer(root: string, port = 0): Promise<ReviewS
 async function handleRequest(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  if (method === 'POST') {
+    const origin = req.headers.origin;
+    if (origin && origin !== `http://${req.headers.host}`) return sendJson(res, 403, { ok: false, error: 'cross-origin request rejected' });
+  }
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root));
   if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice());
   if (method === 'GET' && url.pathname.startsWith('/set/')) {
@@ -150,7 +154,7 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
   }
   const now = new Date();
   const [due, prefs] = await Promise.all([getDueCards(root, now, filter), loadUserPreferences(root)]);
-  const selected = selectDueCards(due, prefs.dailyReviewCap);
+  const selected = selectDueCards(due, prefs.reviewSessionCap);
   const ordered = orderDueQueue(selected, { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) });
   return sendJson(res, 200, {
     total: ordered.length,
@@ -171,24 +175,24 @@ async function cardsApi(root: string, res: ServerResponse, url: URL): Promise<vo
 }
 
 async function cardActionApi(root: string, req: IncomingMessage, res: ServerResponse, action: string): Promise<void> {
-  let body: { setId?: string; cardId?: string; edit?: unknown; confirm?: boolean };
+  let body: { setId?: string; cardId?: string; edit?: unknown; confirm?: boolean; expectedUpdatedAt?: string };
   try { body = (await readJson(req)) as typeof body; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
   if (!body.setId || !body.cardId) return sendJson(res, 400, { ok: false, error: 'need setId and cardId' });
   try {
-    if (action === 'archive') return sendJson(res, 200, { ok: true, card: await archiveCard(root, body.setId, body.cardId) });
-    if (action === 'unarchive') return sendJson(res, 200, { ok: true, card: await unarchiveCard(root, body.setId, body.cardId) });
+    if (action === 'archive') return sendJson(res, 200, { ok: true, card: await archiveCard(root, body.setId, body.cardId, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
+    if (action === 'unarchive') return sendJson(res, 200, { ok: true, card: await unarchiveCard(root, body.setId, body.cardId, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
     if (action === 'edit' && body.edit && typeof body.edit === 'object') {
-      return sendJson(res, 200, { ok: true, card: await editCard(root, body.setId, body.cardId, body.edit as CardEdit) });
+      return sendJson(res, 200, { ok: true, card: await editCard(root, body.setId, body.cardId, body.edit as CardEdit, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
     }
     if (action === 'delete') {
       if (!body.confirm) return sendJson(res, 409, { ok: false, error: 'permanent deletion requires confirm=true' });
-      return sendJson(res, 200, { ok: true, result: await deleteCard(root, body.setId, body.cardId) });
+      return sendJson(res, 200, { ok: true, result: await deleteCard(root, body.setId, body.cardId, { expectedUpdatedAt: body.expectedUpdatedAt }) });
     }
     return sendJson(res, 400, { ok: false, error: `unknown or incomplete card action: ${action}` });
   } catch (error) {
     if (error instanceof CardLifecycleError) {
-      const status = error.message.startsWith('card not found') ? 404 : 400;
+      const status = error.message.startsWith('card not found') ? 404 : error.message.startsWith('card changed') ? 409 : 400;
       return sendJson(res, status, { ok: false, error: error.message });
     }
     throw error;
@@ -302,6 +306,7 @@ async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerRe
     : undefined;
   const card = await loadCard(root, body.setId, body.cardId);
   if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
+  if (card.status !== 'active') return sendJson(res, 409, { ok: false, code: 'card_unavailable', error: 'card is no longer active' });
   const attempt = asAttempt(body.attempt);
   const updated = await gradeCard(root, session, card, rating, new Date(), confidence, attempt);
   await persistSession(root, session);
@@ -495,7 +500,7 @@ async function renderHome(root: string): Promise<string> {
   }
 
   // Review is the separate FSRS job: one banner linking to the capped queue.
-  const sittingCount = selectDueCards(due, prefs.dailyReviewCap).length;
+  const sittingCount = selectDueCards(due, prefs.reviewSessionCap).length;
   const waiting = Math.max(0, due.length - sittingCount);
   const cta = due.length > 0
     ? `<a class="cta" href="/practice">Review ${sittingCount} now</a>`
@@ -747,7 +752,7 @@ function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){retur
 function cardStatus(t){var n=document.getElementById('card-status');if(n)n.textContent=t;}
 function cardHtml(c){
   var action=c.status==='archived'?'unarchive':'archive';
-  return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'">'+
+  return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
     '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><span class="badge next">'+esc(c.status)+'</span></div>'+
     '<div class="muted small">'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</div><p>'+esc(c.shortAnswer)+'</p>'+
     '<div class="curation-actions"><button type="button" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button>'+
@@ -763,7 +768,7 @@ async function loadCardResults(){
 }
 async function cardAction(button){
   var row=button.closest('.curation-card'),action=button.getAttribute('data-card-action');if(!row||!action)return;
-  var body={setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card')};
+  var body={setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card'),expectedUpdatedAt:row.getAttribute('data-updated')};
   if(action==='edit')body.edit={front:{prompt:row.querySelector('[data-edit="prompt"]').value},back:{shortAnswer:row.querySelector('[data-edit="shortAnswer"]').value,explanationMarkdown:row.querySelector('[data-edit="explanation"]').value}};
   button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');button.disabled=false;return;}cardStatus(action==='edit'?'Saved':'Card updated');await loadCardResults();}catch(e){cardStatus('Update failed');button.disabled=false;}
 }
@@ -1021,7 +1026,7 @@ function practiceScript(): string {
   return `
 var REQUEUE_GAP=${REQUEUE_GAP},MAX_REQUEUE=${MAX_REQUEUE};
 ${planRequeue.toString()}
-var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;
+var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;var mutationBusy=false;
 var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
 var requeueCounts={};var requeueSeq=0;var lastGrade=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
@@ -1177,11 +1182,12 @@ function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.
 async function grade(r){
   var c=queue[pos];if(!c)return;
   if(!sessionId){statusMsg('no active session');return;}
+  if(mutationBusy)return;mutationBusy=true;
   try{
     if(attempt){var deep=document.getElementById('deep');attempt.revealedFull=!!(deep&&deep.open);}
     var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined})});
     var j=await res.json();
-    if(!j.ok){statusMsg(j.error||'grade failed');return;}
+    if(!j.ok){if(j.code==='card_unavailable'){statusMsg('Card was archived · skipped');pos++;render();return;}statusMsg(j.error||'grade failed');return;}
     var revisit=null;
     if(r===1&&practiceMode==='review'){
       var plan=planRequeue(queue.length,pos,requeueCounts[c.id]||0,REQUEUE_GAP,MAX_REQUEUE);
@@ -1190,16 +1196,17 @@ async function grade(r){
     lastGrade={index:pos,rating:r,cardId:c.id,requeueSeq:revisit};
     reviewed++;statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
     pos++;render();syncUndo();
-  }catch(e){statusMsg('grade failed');}
+  }catch(e){statusMsg('grade failed');}finally{mutationBusy=false;}
 }
 async function undoGrade(){
   if(!lastGrade||!sessionId)return;
+  if(mutationBusy)return;mutationBusy=true;
   try{
     var res=await fetch('/api/session/undo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});
     var j=await res.json();if(!j.ok){statusMsg(j.error||'undo failed');return;}
     if(lastGrade.requeueSeq){queue=queue.filter(function(c){return c.__requeueSeq!==lastGrade.requeueSeq;});requeueCounts[lastGrade.cardId]=Math.max(0,(requeueCounts[lastGrade.cardId]||1)-1);}
     pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);lastGrade=null;render();syncUndo();statusMsg('Last grade undone');
-  }catch(e){statusMsg('undo failed');}
+  }catch(e){statusMsg('undo failed');}finally{mutationBusy=false;}
 }
 function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
 var undoBtn=document.getElementById('undo-grade');if(undoBtn)undoBtn.addEventListener('click',undoGrade);
@@ -1241,8 +1248,17 @@ window.addEventListener('beforeunload',function(){endSession(true);});
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 1024 * 1024) throw new Error('JSON body too large');
+    chunks.push(buffer);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
+  if (raw && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+    throw new Error('JSON content type required');
+  }
   return raw ? JSON.parse(raw) : {};
 }
 

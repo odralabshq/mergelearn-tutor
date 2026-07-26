@@ -1,5 +1,6 @@
 import type { Card } from '../types.js';
 import type { QueueStrategy } from '../userPreferences.js';
+import { compareDueCards } from './dueQueue.js';
 
 export type InterleaveOptions = { strategy?: QueueStrategy; seed?: string };
 
@@ -11,8 +12,8 @@ function hash(value: string): number {
 
 /** Deterministic weighted round-robin across sets. Input order remains the
  * within-set debt priority; one-set queues are returned unchanged. */
-export function orderDueQueue(cards: Card[], opts: InterleaveOptions = {}): Card[] {
-  if ((opts.strategy ?? 'interleaved') === 'overdue') return cards.slice();
+export function orderDueQueue(cards: readonly Card[], opts: InterleaveOptions = {}): Card[] {
+  if ((opts.strategy ?? 'interleaved') === 'overdue') return cards.slice().sort(compareDueCards);
   const groups = new Map<string, Card[]>();
   for (const card of cards) {
     const group = groups.get(card.setId) ?? [];

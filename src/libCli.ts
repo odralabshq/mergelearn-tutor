@@ -35,6 +35,7 @@ import { orderDueQueue } from './core/library/review/interleave.js';
 import { loadUserPreferences, saveUserPreferences, type QueueStrategy } from './core/library/userPreferences.js';
 import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from './core/library/cardLifecycle.js';
 import { searchCards } from './core/library/searchCards.js';
+import { exportLessonBundle, exportProfileBackup, importLessonBundle, restoreProfileBackup } from './core/library/bundle.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
 import { startReviewServer } from './session/server.js';
 import {
@@ -180,24 +181,69 @@ Manual/advanced: author a lesson yourself.
       else out('Run `mergelearn serve` and open the printed URL to learn it.');
     });
 
+  program.command('export')
+    .description('export one lesson as a shareable, state-free bundle')
+    .requiredOption('--set <id>', 'set id')
+    .requiredOption('--output <path>', 'output .mergelearn.zip path')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { set: string; output: string; json?: boolean }) => {
+      const manifest = await exportLessonBundle(rootFrom(homeOpt()), opts.set, opts.output);
+      if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
+      else out(`exported ${manifest.cardCount} cards to ${opts.output}`);
+    });
+
+  program.command('import-bundle')
+    .description('import a shareable lesson bundle with fresh review state')
+    .requiredOption('--file <path>', 'bundle .mergelearn.zip path')
+    .option('--as-copy', 'allocate a new set and card ids if the set already exists')
+    .option('--dry-run', 'validate without writing')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { file: string; asCopy?: boolean; dryRun?: boolean; json?: boolean }) => {
+      const result = await importLessonBundle(rootFrom(homeOpt()), opts.file, { asCopy: opts.asCopy, dryRun: opts.dryRun });
+      if (opts.json) out(JSON.stringify(result, null, 2));
+      else out(`${opts.dryRun ? 'would import' : 'imported'} ${result.cards.length} cards as ${result.setId}${opts.dryRun ? ' (dry run: nothing written)' : ''}`);
+    });
+
+  program.command('backup')
+    .description('create a private backup containing learning state and history')
+    .requiredOption('--output <path>', 'output .mergelearn-backup.zip path')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { output: string; json?: boolean }) => {
+      const manifest = await exportProfileBackup(rootFrom(homeOpt()), opts.output);
+      if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
+      else out(`private unencrypted backup written to ${opts.output} (${manifest.entryCount} files); store it securely`);
+    });
+
+  program.command('restore')
+    .description('validate and restore a private profile backup')
+    .requiredOption('--file <path>', 'backup .mergelearn-backup.zip path')
+    .option('--force', 'replace a non-empty profile after validated staging')
+    .option('--dry-run', 'validate without writing')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { file: string; force?: boolean; dryRun?: boolean; json?: boolean }) => {
+      const manifest = await restoreProfileBackup(rootFrom(homeOpt()), opts.file, { force: opts.force, dryRun: opts.dryRun });
+      if (opts.json) out(JSON.stringify({ ok: true, restored: !opts.dryRun, manifest }, null, 2));
+      else out(opts.dryRun ? `backup valid (${manifest.entryCount} files; dry run: nothing written)` : `restored ${manifest.entryCount} files from private backup`);
+    });
+
   program
     .command('settings')
     .description('show or update review settings')
-    .option('--daily-review-cap <n>', 'maximum cards per review sitting; 0 means uncapped')
+    .option('--review-session-cap <n>', 'maximum distinct cards per review sitting; 0 means uncapped')
     .option('--queue-strategy <name>', 'interleaved (default) or overdue')
     .option('--json', 'emit machine-readable settings')
-    .action(async (opts: { dailyReviewCap?: string; queueStrategy?: string; json?: boolean }) => {
+    .action(async (opts: { reviewSessionCap?: string; queueStrategy?: string; json?: boolean }) => {
       const root = rootFrom(homeOpt());
       const current = await loadUserPreferences(root);
-      const cap = opts.dailyReviewCap === undefined ? current.dailyReviewCap : Number(opts.dailyReviewCap);
-      if (!Number.isInteger(cap) || cap < 0) { out('daily review cap must be a non-negative integer'); process.exitCode = 1; return; }
+      const cap = opts.reviewSessionCap === undefined ? current.reviewSessionCap : Number(opts.reviewSessionCap);
+      if (!Number.isInteger(cap) || cap < 0) { out('review session cap must be a non-negative integer'); process.exitCode = 1; return; }
       if (opts.queueStrategy && !['overdue', 'interleaved'].includes(opts.queueStrategy)) {
         out('queue strategy must be overdue or interleaved'); process.exitCode = 1; return;
       }
-      const next = { dailyReviewCap: cap, queueStrategy: (opts.queueStrategy ?? current.queueStrategy) as QueueStrategy };
-      if (opts.dailyReviewCap !== undefined || opts.queueStrategy !== undefined) await saveUserPreferences(root, next);
+      const next = { reviewSessionCap: cap, queueStrategy: (opts.queueStrategy ?? current.queueStrategy) as QueueStrategy };
+      if (opts.reviewSessionCap !== undefined || opts.queueStrategy !== undefined) await saveUserPreferences(root, next);
       if (opts.json) out(JSON.stringify(next, null, 2));
-      else out(`dailyReviewCap=${next.dailyReviewCap}\nqueueStrategy=${next.queueStrategy}`);
+      else out(`reviewSessionCap=${next.reviewSessionCap}\nqueueStrategy=${next.queueStrategy}`);
     });
 
   program
@@ -274,7 +320,7 @@ Manual/advanced: author a lesson yourself.
         folderPaths: opts.folder ? [opts.folder] : undefined,
       };
       const prefs = await loadUserPreferences(root);
-      const limit = opts.limit === undefined ? prefs.dailyReviewCap : Number(opts.limit);
+      const limit = opts.limit === undefined ? prefs.reviewSessionCap : Number(opts.limit);
       const strategy = (opts.strategy ?? prefs.queueStrategy) as QueueStrategy;
       if (!Number.isInteger(limit) || limit < 0 || !['overdue', 'interleaved'].includes(strategy)) {
         out('limit must be non-negative and strategy must be overdue or interleaved'); process.exitCode = 1; return;

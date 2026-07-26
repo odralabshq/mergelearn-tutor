@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { importAgentSet } from '../../../src/core/library/importAgentSet.js';
 import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from '../../../src/core/library/cardLifecycle.js';
-import { listCardIds, loadCard } from '../../../src/core/library/cardStore.js';
+import { listCardIds, loadCard, saveCard } from '../../../src/core/library/cardStore.js';
 import { endSession, gradeCard, startSession } from '../../../src/core/library/review/session.js';
 import { loadTags } from '../../../src/core/library/tagStore.js';
 import { getDueCards } from '../../../src/core/library/review/dueQueue.js';
@@ -79,5 +79,21 @@ describe('card lifecycle', () => {
     expect(await listSetIds(r)).toContain('curation');
     expect((await deleteSet(r, 'curation', { force: true })).deleted).toBe(true);
     expect(await listSetIds(r)).not.toContain('curation');
+  });
+
+  it('restores the status held before archive', async () => {
+    const r = await root();
+    const card = (await getDueCards(r, new Date('2026-07-16T12:00:00Z')))[0];
+    await saveCard(r, { ...card, status: 'needs_review' });
+    await archiveCard(r, 'curation', card.id);
+    expect((await unarchiveCard(r, 'curation', card.id)).status).toBe('needs_review');
+  });
+
+  it('refuses stale and unsafe lifecycle mutations', async () => {
+    const r = await root();
+    const card = (await getDueCards(r, new Date('2026-07-16T12:00:00Z')))[0];
+    await expect(archiveCard(r, 'curation', card.id, undefined, { expectedUpdatedAt: 'stale' })).rejects.toThrow(/refresh and retry/);
+    await expect(deleteCard(r, '../escape', card.id)).rejects.toThrow(/set id/);
+    expect(await loadCard(r, 'curation', card.id)).toBeDefined();
   });
 });

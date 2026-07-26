@@ -74,6 +74,23 @@ try {
   const setup = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'setup-agent', '--agent', 'claude', '--scope', 'project', '--dry-run'], { cwd: extractDir });
   assert(setup.stdout.includes('dry run'), 'packed setup-agent dry-run did not run');
 
+  run('node', ['package/dist/libCli.js', '--home', sampleHome, 'sample'], { cwd: extractDir });
+  const bundlePath = path.join(tmp, 'sample.mergelearn.zip');
+  const exported = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'export', '--set', 'mergelearn-sample', '--output', bundlePath], { cwd: extractDir });
+  assert(exported.stdout.includes('exported 4 cards'), 'packed lesson export did not run');
+  const importHome = path.join(tmp, 'bundle-import-home');
+  const imported = run('node', ['package/dist/libCli.js', '--home', importHome, 'import-bundle', '--file', bundlePath], { cwd: extractDir });
+  assert(imported.stdout.includes('imported 4 cards'), 'packed lesson import did not run');
+
+  const backupPath = path.join(tmp, 'profile.mergelearn-backup.zip');
+  const backedUp = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'backup', '--output', backupPath], { cwd: extractDir });
+  assert(backedUp.stdout.includes('private unencrypted backup'), 'packed profile backup did not run');
+  const restoreHome = path.join(tmp, 'restore-home');
+  const restored = run('node', ['package/dist/libCli.js', '--home', restoreHome, 'restore', '--file', backupPath], { cwd: extractDir });
+  assert(restored.stdout.includes('restored'), 'packed profile restore did not run');
+  const restoredSets = run('node', ['package/dist/libCli.js', '--home', restoreHome, 'sets'], { cwd: extractDir });
+  assert(restoredSets.stdout.includes('mergelearn-sample'), 'packed profile restore lost the sample lesson');
+
   if (failures.length) {
     throw new Error(`Packaged smoke failed:\n- ${failures.join('\n- ')}`);
   }

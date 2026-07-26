@@ -138,9 +138,9 @@ describe('library CLI (functional, end-to-end)', () => {
 
   it('settings persists the review cap and queue strategy', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-settings-'));
-    await run(root, 'settings', '--daily-review-cap', '12', '--queue-strategy', 'overdue');
+    await run(root, 'settings', '--review-session-cap', '12', '--queue-strategy', 'overdue');
     const saved = JSON.parse(await run(root, 'settings', '--json'));
-    expect(saved).toEqual({ dailyReviewCap: 12, queueStrategy: 'overdue' });
+    expect(saved).toEqual({ reviewSessionCap: 12, queueStrategy: 'overdue' });
   });
 
   it('lists, archives, and restores a card', async () => {
@@ -161,6 +161,36 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(JSON.parse(await run(root, 'cards', '--query', 'fixed cli', '--json'))[0].prompt).toBe('Fixed CLI prompt');
     await run(root, 'delete', '--set', 'cli-deck', '--card', cardId, '--yes');
     expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))).toEqual([]);
+  });
+
+  it('exports and imports a portable lesson bundle', async () => {
+    const source = await mkdtemp(join(tmpdir(), 'mlt-cli-bundle-source-'));
+    const patchFile = join(source, 'patch.json');
+    const bundle = join(source, 'cli-deck.mergelearn.zip');
+    await writeFile(patchFile, JSON.stringify(patch), 'utf8');
+    await run(source, 'import', '--file', patchFile);
+    expect(await run(source, 'export', '--set', 'cli-deck', '--output', bundle)).toContain('exported 1 cards');
+
+    const target = await mkdtemp(join(tmpdir(), 'mlt-cli-bundle-target-'));
+    expect(await run(target, 'import-bundle', '--file', bundle, '--dry-run')).toContain('dry run: nothing written');
+    expect(await run(target, 'sets')).not.toContain('cli-deck');
+    expect(await run(target, 'import-bundle', '--file', bundle)).toContain('imported 1 cards as cli-deck');
+    expect(await run(target, 'sets')).toContain('cli-deck');
+  });
+
+  it('backs up and restores the private profile', async () => {
+    const source = await mkdtemp(join(tmpdir(), 'mlt-cli-backup-source-'));
+    const patchFile = join(source, 'patch.json');
+    const backup = join(await mkdtemp(join(tmpdir(), 'mlt-cli-backup-output-')), 'profile.mergelearn-backup.zip');
+    await writeFile(patchFile, JSON.stringify(patch), 'utf8');
+    await run(source, 'import', '--file', patchFile);
+    expect(await run(source, 'backup', '--output', backup)).toContain('private unencrypted backup');
+
+    const target = await mkdtemp(join(tmpdir(), 'mlt-cli-restore-target-'));
+    expect(await run(target, 'restore', '--file', backup, '--dry-run')).toContain('dry run: nothing written');
+    expect(await run(target, 'sets')).not.toContain('cli-deck');
+    expect(await run(target, 'restore', '--file', backup)).toContain('restored');
+    expect(await run(target, 'sets')).toContain('cli-deck');
   });
 
   it('import --dry-run --json includes a lesson summary and writes nothing', async () => {

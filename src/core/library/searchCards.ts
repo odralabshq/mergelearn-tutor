@@ -9,6 +9,7 @@ export type CardHit = {
   prompt: string;
   shortAnswer: string;
   explanation: string;
+  updatedAt: string;
   tagIds: string[];
   status: CardStatus;
 };
@@ -32,7 +33,7 @@ export async function searchCards(root: string, query: string, opts: SearchOptio
       if (opts.tagIds?.length && !opts.tagIds.some((id) => card.tagIds.includes(id))) continue;
       const haystack = `${set.title}\n${card.front.prompt}\n${card.back.shortAnswer}`.toLocaleLowerCase();
       if (!haystack.includes(needle)) continue;
-      hits.push({ setId, setTitle: set.title, cardId: card.id, prompt: card.front.prompt, shortAnswer: card.back.shortAnswer, explanation: card.back.explanationMarkdown, tagIds: card.tagIds, status: card.status });
+      hits.push({ setId, setTitle: set.title, cardId: card.id, prompt: card.front.prompt, shortAnswer: card.back.shortAnswer, explanation: card.back.explanationMarkdown, updatedAt: card.updatedAt, tagIds: card.tagIds, status: card.status });
     }
   }
   hits.sort((a, b) => a.setTitle.localeCompare(b.setTitle) || a.prompt.localeCompare(b.prompt));
