@@ -30,7 +30,12 @@ import { installSampleLesson } from './core/library/sampleLesson.js';
 import { runDoctor } from './core/library/doctor.js';
 import { listSetSummaries } from './core/library/setStore.js';
 import { loadCard } from './core/library/cardStore.js';
-import { getDueCards } from './core/library/review/dueQueue.js';
+import { getDueCards, selectDueCards } from './core/library/review/dueQueue.js';
+import { orderDueQueue } from './core/library/review/interleave.js';
+import { loadUserPreferences, saveUserPreferences, type QueueStrategy } from './core/library/userPreferences.js';
+import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from './core/library/cardLifecycle.js';
+import { searchCards } from './core/library/searchCards.js';
+import { exportLessonBundle, exportProfileBackup, importLessonBundle, restoreProfileBackup } from './core/library/bundle.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
 import { startReviewServer } from './session/server.js';
 import {
@@ -176,20 +181,155 @@ Manual/advanced: author a lesson yourself.
       else out('Run `mergelearn serve` and open the printed URL to learn it.');
     });
 
+  program.command('export')
+    .description('export one lesson as a shareable, state-free bundle')
+    .requiredOption('--set <id>', 'set id')
+    .requiredOption('--output <path>', 'output .mergelearn.zip path')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { set: string; output: string; json?: boolean }) => {
+      const manifest = await exportLessonBundle(rootFrom(homeOpt()), opts.set, opts.output);
+      if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
+      else out(`exported ${manifest.cardCount} cards to ${opts.output}`);
+    });
+
+  program.command('import-bundle')
+    .description('import a shareable lesson bundle with fresh review state')
+    .requiredOption('--file <path>', 'bundle .mergelearn.zip path')
+    .option('--as-copy', 'allocate a new set and card ids if the set already exists')
+    .option('--dry-run', 'validate without writing')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { file: string; asCopy?: boolean; dryRun?: boolean; json?: boolean }) => {
+      const result = await importLessonBundle(rootFrom(homeOpt()), opts.file, { asCopy: opts.asCopy, dryRun: opts.dryRun });
+      if (opts.json) out(JSON.stringify(result, null, 2));
+      else out(`${opts.dryRun ? 'would import' : 'imported'} ${result.cards.length} cards as ${result.setId}${opts.dryRun ? ' (dry run: nothing written)' : ''}`);
+    });
+
+  program.command('backup')
+    .description('create a private backup containing learning state and history')
+    .requiredOption('--output <path>', 'output .mergelearn-backup.zip path')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { output: string; json?: boolean }) => {
+      const manifest = await exportProfileBackup(rootFrom(homeOpt()), opts.output);
+      if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
+      else out(`private unencrypted backup written to ${opts.output} (${manifest.entryCount} files); store it securely`);
+    });
+
+  program.command('restore')
+    .description('validate and restore a private profile backup')
+    .requiredOption('--file <path>', 'backup .mergelearn-backup.zip path')
+    .option('--force', 'replace a non-empty profile after validated staging')
+    .option('--dry-run', 'validate without writing')
+    .option('--json', 'emit machine-readable result')
+    .action(async (opts: { file: string; force?: boolean; dryRun?: boolean; json?: boolean }) => {
+      const manifest = await restoreProfileBackup(rootFrom(homeOpt()), opts.file, { force: opts.force, dryRun: opts.dryRun });
+      if (opts.json) out(JSON.stringify({ ok: true, restored: !opts.dryRun, manifest }, null, 2));
+      else out(opts.dryRun ? `backup valid (${manifest.entryCount} files; dry run: nothing written)` : `restored ${manifest.entryCount} files from private backup`);
+    });
+
+  program
+    .command('settings')
+    .description('show or update review settings')
+    .option('--review-session-cap <n>', 'maximum distinct cards per review sitting; 0 means uncapped')
+    .option('--queue-strategy <name>', 'interleaved (default) or overdue')
+    .option('--json', 'emit machine-readable settings')
+    .action(async (opts: { reviewSessionCap?: string; queueStrategy?: string; json?: boolean }) => {
+      const root = rootFrom(homeOpt());
+      const current = await loadUserPreferences(root);
+      const cap = opts.reviewSessionCap === undefined ? current.reviewSessionCap : Number(opts.reviewSessionCap);
+      if (!Number.isInteger(cap) || cap < 0) { out('review session cap must be a non-negative integer'); process.exitCode = 1; return; }
+      if (opts.queueStrategy && !['overdue', 'interleaved'].includes(opts.queueStrategy)) {
+        out('queue strategy must be overdue or interleaved'); process.exitCode = 1; return;
+      }
+      const next = { reviewSessionCap: cap, queueStrategy: (opts.queueStrategy ?? current.queueStrategy) as QueueStrategy };
+      if (opts.reviewSessionCap !== undefined || opts.queueStrategy !== undefined) await saveUserPreferences(root, next);
+      if (opts.json) out(JSON.stringify(next, null, 2));
+      else out(`reviewSessionCap=${next.reviewSessionCap}\nqueueStrategy=${next.queueStrategy}`);
+    });
+
+  program
+    .command('cards')
+    .description('list or search cards')
+    .option('--set <id>', 'only this set')
+    .option('--query <text>', 'search set title, prompt, and short answer', '')
+    .option('--archived', 'include archived cards')
+    .option('--json', 'emit machine-readable results')
+    .action(async (opts: { set?: string; query: string; archived?: boolean; json?: boolean }) => {
+      const hits = await searchCards(rootFrom(homeOpt()), opts.query, {
+        setIds: opts.set ? [opts.set] : undefined, includeArchived: opts.archived,
+      });
+      if (opts.json) out(JSON.stringify(hits, null, 2));
+      else for (const hit of hits) out(`${hit.status.padEnd(10)} ${hit.setId}/${hit.cardId}  ${hit.prompt}`);
+    });
+
+  for (const action of ['archive', 'unarchive'] as const) {
+    program.command(action)
+      .description(`${action} one card`)
+      .requiredOption('--set <id>', 'set id')
+      .requiredOption('--card <id>', 'card id')
+      .action(async (opts: { set: string; card: string }) => {
+        const card = action === 'archive'
+          ? await archiveCard(rootFrom(homeOpt()), opts.set, opts.card)
+          : await unarchiveCard(rootFrom(homeOpt()), opts.set, opts.card);
+        out(`${action}d ${card.setId}/${card.id}`);
+      });
+  }
+
+  program.command('edit')
+    .description('edit teaching text on one card without resetting its schedule')
+    .requiredOption('--set <id>', 'set id')
+    .requiredOption('--card <id>', 'card id')
+    .option('--prompt <text>', 'new prompt')
+    .option('--short-answer <text>', 'new short answer')
+    .option('--explanation <text>', 'new explanation markdown')
+    .action(async (opts: { set: string; card: string; prompt?: string; shortAnswer?: string; explanation?: string }) => {
+      const card = await editCard(rootFrom(homeOpt()), opts.set, opts.card, {
+        ...(opts.prompt !== undefined ? { front: { prompt: opts.prompt } } : {}),
+        ...(opts.shortAnswer !== undefined || opts.explanation !== undefined ? { back: {
+          ...(opts.shortAnswer !== undefined ? { shortAnswer: opts.shortAnswer } : {}),
+          ...(opts.explanation !== undefined ? { explanationMarkdown: opts.explanation } : {}),
+        } } : {}),
+      });
+      out(`edited ${card.setId}/${card.id}`);
+    });
+
+  program.command('delete')
+    .description('permanently delete one card or set (archive is safer)')
+    .requiredOption('--set <id>', 'set id')
+    .option('--card <id>', 'card id; omit to delete the set')
+    .option('--yes', 'confirm permanent deletion')
+    .option('--force', 'allow set deletion when review history exists')
+    .action(async (opts: { set: string; card?: string; yes?: boolean; force?: boolean }) => {
+      if (!opts.yes) { out('refusing permanent deletion without --yes; use archive for reversible removal'); process.exitCode = 1; return; }
+      if (opts.card) { await deleteCard(rootFrom(homeOpt()), opts.set, opts.card); out(`deleted ${opts.set}/${opts.card}`); }
+      else { await deleteSet(rootFrom(homeOpt()), opts.set, { force: opts.force }); out(`deleted set ${opts.set}`); }
+    });
+
   program
     .command('due')
     .description('list cards due now')
     .option('--set <id>', 'only this set')
     .option('--tag <id>', 'only cards with this tag')
     .option('--folder <path>', 'only this folder subtree')
-    .action(async (opts: { set?: string; tag?: string; folder?: string }) => {
+    .option('--limit <n>', 'override the configured review cap')
+    .option('--strategy <name>', 'override: interleaved or overdue')
+    .action(async (opts: { set?: string; tag?: string; folder?: string; limit?: string; strategy?: string }) => {
+      const root = rootFrom(homeOpt());
       const filter = {
         setIds: opts.set ? [opts.set] : undefined,
         tagIds: opts.tag ? [opts.tag] : undefined,
         folderPaths: opts.folder ? [opts.folder] : undefined,
       };
-      const due = await getDueCards(rootFrom(homeOpt()), new Date(), filter);
-      out(`${due.length} card(s) due`);
+      const prefs = await loadUserPreferences(root);
+      const limit = opts.limit === undefined ? prefs.reviewSessionCap : Number(opts.limit);
+      const strategy = (opts.strategy ?? prefs.queueStrategy) as QueueStrategy;
+      if (!Number.isInteger(limit) || limit < 0 || !['overdue', 'interleaved'].includes(strategy)) {
+        out('limit must be non-negative and strategy must be overdue or interleaved'); process.exitCode = 1; return;
+      }
+      const all = await getDueCards(root, new Date(), filter);
+      const queueOptions = { strategy, seed: new Date().toISOString().slice(0, 10) };
+      const prioritized = orderDueQueue(all, queueOptions);
+      const due = orderDueQueue(selectDueCards(prioritized, limit), queueOptions);
+      out(`${due.length} of ${all.length} card(s) due (${strategy})`);
       for (const c of due) out(`  ${c.setId}/${c.id}  ${c.front.prompt}`);
     });
 

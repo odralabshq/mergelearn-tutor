@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { importAgentSet } from '../../../src/core/library/importAgentSet.js';
 import { getDueCards } from '../../../src/core/library/review/dueQueue.js';
-import { startSession, gradeCard, endSession } from '../../../src/core/library/review/session.js';
+import { startSession, gradeCard, undoLastGrade, endSession } from '../../../src/core/library/review/session.js';
 import { newFsrsState, gradeFsrs } from '../../../src/core/library/fsrs.js';
 import { loadCard } from '../../../src/core/library/cardStore.js';
 import { readJson } from '../../../src/core/library/io.js';
@@ -61,6 +61,23 @@ describe('fsrs adapter', () => {
 });
 
 describe('due queue + review session', () => {
+  it('undo restores the exact persisted card state and session counters', async () => {
+    const root = await freshRoot();
+    const now = new Date('2026-07-07T12:00:00.000Z');
+    const res = await importAgentSet(root, twoCardPatch(), { now });
+    const card = (await getDueCards(root, now))[0];
+    const before = structuredClone(card);
+    const session = startSession('recommended', undefined, now);
+
+    await gradeCard(root, session, card, 3, now);
+    expect(session.events).toHaveLength(1);
+    await undoLastGrade(root, session);
+
+    expect(await loadCard(root, res.setId!, card.id)).toEqual(before);
+    expect(session.events).toEqual([]);
+    expect(session.summary).toEqual({ reviewedCount: 0, distinctCardCount: 0, again: 0, hard: 0, good: 0, easy: 0 });
+  });
+
   it('surfaces both fresh cards as due, then grading removes one from the queue', async () => {
     const root = await freshRoot();
     const now = new Date('2026-07-07T12:00:00.000Z');
@@ -190,5 +207,30 @@ describe('due queue + review session', () => {
     expect(saved?.events).toHaveLength(2);
     expect(saved?.endedAt).toBeDefined();
     expect(path).toContain(join('sessions', '2026-07-07'));
+  });
+
+  it('refuses stale undo after another session advances the card', async () => {
+    const root = await freshRoot();
+    const now = new Date('2026-07-16T12:00:00Z');
+    await importAgentSet(root, twoCardPatch(), { now });
+    const card = (await getDueCards(root, now))[0];
+    const first = startSession('recommended', undefined, now);
+    const afterFirst = await gradeCard(root, first, card, 3, new Date('2026-07-16T12:01:00Z'));
+    const second = startSession('recommended', undefined, new Date('2026-07-16T12:02:00Z'));
+    await gradeCard(root, second, afterFirst, 2, new Date('2026-07-16T12:03:00Z'));
+    await expect(undoLastGrade(root, first)).rejects.toThrow(/changed after this grade/);
+    expect(first.events).toHaveLength(1);
+  });
+
+  it('rejects grading and undo after a session has ended', async () => {
+    const root = await freshRoot();
+    const now = new Date('2026-07-16T12:00:00Z');
+    await importAgentSet(root, twoCardPatch(), { now });
+    const card = (await getDueCards(root, now))[0];
+    const session = startSession('recommended', undefined, now);
+    await gradeCard(root, session, card, 3, now);
+    await endSession(root, session, new Date('2026-07-16T12:02:00Z'));
+    await expect(gradeCard(root, session, card, 3)).rejects.toThrow(/session already ended/);
+    await expect(undoLastGrade(root, session)).rejects.toThrow(/session already ended/);
   });
 });

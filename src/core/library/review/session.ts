@@ -11,7 +11,7 @@ import { join } from 'node:path';
 
 import type { Card, Confidence, ReviewAttempt, ReviewEvent, ReviewRating, ReviewSession } from '../types.js';
 import { gradeFsrs } from '../fsrs.js';
-import { saveCard } from '../cardStore.js';
+import { loadCard, saveCard } from '../cardStore.js';
 import { libraryPaths } from '../libraryStore.js';
 import { writeJson } from '../io.js';
 import { stableId } from '../../util.js';
@@ -29,11 +29,11 @@ export function startSession(
     mode,
     filter,
     events: [],
-    summary: { reviewedCount: 0, again: 0, hard: 0, good: 0, easy: 0 },
+    summary: { reviewedCount: 0, distinctCardCount: 0, again: 0, hard: 0, good: 0, easy: 0 },
   };
 }
 
-const RATING_KEY: Record<ReviewRating, keyof ReviewSession['summary']> = {
+const RATING_KEY: Record<ReviewRating, 'again' | 'hard' | 'good' | 'easy'> = {
   1: 'again', 2: 'hard', 3: 'good', 4: 'easy',
 };
 
@@ -51,6 +51,7 @@ export async function gradeCard(
   confidenceBeforeReveal?: Confidence,
   attempt?: ReviewAttempt,
 ): Promise<Card> {
+  if (session.endedAt) throw new UndoUnavailableError('session already ended');
   const before = card.fsrs;
   const nextFsrs = gradeFsrs(before, rating, now);
   const updated: Card = { ...card, fsrs: nextFsrs, updatedAt: now.toISOString() };
@@ -58,6 +59,10 @@ export async function gradeCard(
 
   const event: ReviewEvent = {
     cardId: card.id,
+    setId: card.setId,
+    fsrsBefore: structuredClone(before),
+    fsrsAfter: structuredClone(nextFsrs),
+    cardUpdatedAtBefore: card.updatedAt,
     rating,
     ...(confidenceBeforeReveal !== undefined ? { confidenceBeforeReveal } : {}),
     ...(attempt !== undefined ? { attempt } : {}),
@@ -69,9 +74,43 @@ export async function gradeCard(
     reviewedAt: now.toISOString(),
   };
   session.events.push(event);
-  session.summary.reviewedCount += 1;
-  session.summary[RATING_KEY[rating]] += 1;
+  session.summary = recomputeSummary(session.events);
   return updated;
+}
+
+export class UndoUnavailableError extends Error {
+  constructor(message: string) { super(message); this.name = 'UndoUnavailableError'; }
+}
+
+export function recomputeSummary(events: ReviewEvent[]): ReviewSession['summary'] {
+  const summary: ReviewSession['summary'] = {
+    reviewedCount: events.length,
+    distinctCardCount: new Set(events.map((e) => `${e.setId ?? ''}/${e.cardId}`)).size,
+    again: 0, hard: 0, good: 0, easy: 0,
+  };
+  for (const event of events) summary[RATING_KEY[event.rating]] += 1;
+  return summary;
+}
+
+/** Undo exactly one grade. Sessions from before exact snapshots were introduced
+ * remain readable but cannot be reconstructed safely, so we refuse to guess. */
+export async function undoLastGrade(root: string, session: ReviewSession): Promise<Card> {
+  if (session.endedAt) throw new UndoUnavailableError('session already ended');
+  const event = session.events.at(-1);
+  if (!event) throw new UndoUnavailableError('nothing to undo');
+  if (!event.setId || !event.fsrsBefore || !event.fsrsAfter || !event.cardUpdatedAtBefore) {
+    throw new UndoUnavailableError('last grade predates exact undo snapshots');
+  }
+  const card = await loadCard(root, event.setId, event.cardId);
+  if (!card) throw new UndoUnavailableError('graded card no longer exists');
+  if (JSON.stringify(card.fsrs) !== JSON.stringify(event.fsrsAfter)) {
+    throw new UndoUnavailableError('card changed after this grade; refusing stale undo');
+  }
+  const restored: Card = { ...card, fsrs: structuredClone(event.fsrsBefore), updatedAt: event.cardUpdatedAtBefore };
+  await saveCard(root, restored);
+  session.events.pop();
+  session.summary = recomputeSummary(session.events);
+  return restored;
 }
 
 /** Finalize a session and persist it as a per-day file. Returns the path. */

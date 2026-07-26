@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { startReviewServer, type ReviewServer } from '../../src/session/server.js';
 import { importAgentSet } from '../../src/core/library/importAgentSet.js';
+import { saveUserPreferences } from '../../src/core/library/userPreferences.js';
 import type { AgentSetPatch } from '../../src/core/library/types.js';
 
 let running: ReviewServer | undefined;
@@ -30,6 +31,43 @@ async function seed(): Promise<string> {
   };
   const res = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
   if (!res.ok) throw new Error('seed import failed');
+  return root;
+}
+
+async function seedMany(count: number): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'mlt-many-'));
+  const localIds = Array.from({ length: count }, (_, i) => `c${i}`);
+  const patch: AgentSetPatch = {
+    version: 1,
+    set: { title: 'Many', tagIds: [] },
+    tagPatch: { reuse: [], add: [] }, order: localIds,
+    cards: localIds.map((localId) => ({
+      localId, tagRefs: [], front: { prompt: localId },
+      back: { shortAnswer: localId, explanationMarkdown: localId },
+    })),
+  };
+  const result = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+  if (!result.ok) throw new Error('many-card seed failed');
+  return root;
+}
+
+async function seedTwoSets(countPerSet: number): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'mlt-two-sets-'));
+  for (const setId of ['alpha', 'beta']) {
+    const localIds = Array.from({ length: countPerSet }, (_, i) => `c${i}`);
+    const patch: AgentSetPatch = {
+      version: 1,
+      set: { id: setId, title: `${setId} deck`, tagIds: [] },
+      tagPatch: { reuse: [], add: [] },
+      order: localIds,
+      cards: localIds.map((localId) => ({
+        localId, tagRefs: [], front: { prompt: localId },
+        back: { shortAnswer: localId, explanationMarkdown: localId },
+      })),
+    };
+    const result = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+    if (!result.ok) throw new Error(`seed import failed: ${setId}`);
+  }
   return root;
 }
 
@@ -78,8 +116,19 @@ describe('review GUI server (functional)', () => {
     expect(status).toBe(200);
     expect(text).toContain('Server Deck');
     expect(text).toContain('1</strong>'); // due banner count
-    expect(text).toContain('Review 1 due'); // Review is the separate FSRS entry
+    expect(text).toContain('Review 1 now'); // Review is the separate capped FSRS entry
+    expect(text).toContain('class="review-entry"');
     expect(text).toContain('aria-current="page"'); // Home tab active
+  });
+
+  it('renders card search, archive, and edit controls on Manage', async () => {
+    running = await startReviewServer(await seed());
+    const { status, text } = await get(`${running.url}/manage`);
+    expect(status).toBe(200);
+    expect(text).toContain('id="card-search"');
+    expect(text).toContain('/api/cards?q=');
+    expect(text).toContain('data-card-action');
+    expect(text).toContain('Edit teaching text');
   });
 
   it('serves the Practice shell', async () => {
@@ -88,6 +137,17 @@ describe('review GUI server (functional)', () => {
     expect(status).toBe(200);
     expect(text).toContain('id="mount"');
     expect(text).toContain('/api/due'); // client fetches the queue
+    expect(text).toContain('function planRequeue');
+    expect(text).toContain('/api/session/undo');
+    expect(text).toContain("/^[1-4]$/.test(e.key)&&isRevealed()");
+    expect(text).toContain('MAX_REQUEUE=2');
+    expect(text).toContain('waitingBacklog');
+    expect(text).toContain('Review next sitting');
+    expect(text).toContain("esc(c.setTitle||'Review')");
+    expect(text).not.toContain("esc(c.setId)+'</span><span>'+esc(c.id)");
+    expect(text).toContain('aria-label="Good, shortcut 3"');
+    expect(text).toContain('@media(max-width:600px)');
+    expect(text).toContain('.hint{display:none}');
   });
 
   it('/api/due returns the due card with its self-contained back', async () => {
@@ -96,8 +156,45 @@ describe('review GUI server (functional)', () => {
     const j = await r.json();
     expect(j.total).toBe(1);
     expect(j.cards[0].prompt).toBe('What is a union type?');
+    expect(j.cards[0].setTitle).toBe('Server Deck');
     expect(j.cards[0].shortAnswer).toBe('One of several types.');
     expect(j.cards[0].explanation).toContain('either A or B');
+  });
+
+  it('/api/due applies the user cap and reports the waiting backlog', async () => {
+    const root = await seedMany(5);
+    await saveUserPreferences(root, { reviewSessionCap: 3, queueStrategy: 'interleaved' });
+    running = await startReviewServer(root);
+    const j = await (await fetch(`${running.url}/api/due`)).json();
+    expect(j).toMatchObject({ total: 3, totalDue: 5, remaining: 2, strategy: 'interleaved' });
+    expect(j.cards).toHaveLength(3);
+    const home = await (await fetch(`${running.url}/`)).text();
+    expect(home).toContain('Review 3 now');
+    expect(home).toContain('2 more waiting');
+  });
+
+  it('/api/due interleaves sets before applying the sitting cap', async () => {
+    const root = await seedTwoSets(4);
+    await saveUserPreferences(root, { reviewSessionCap: 4, queueStrategy: 'interleaved' });
+    running = await startReviewServer(root);
+    const j = await (await fetch(`${running.url}/api/due`)).json();
+    const setIds = j.cards.map((card: { setId: string }) => card.setId);
+    expect(j).toMatchObject({ total: 4, totalDue: 8, remaining: 4, strategy: 'interleaved' });
+    expect(new Set(setIds)).toEqual(new Set(['alpha', 'beta']));
+    expect(setIds.every((setId: string, index: number) => index === 0 || setId !== setIds[index - 1])).toBe(true);
+  });
+
+  it('archives a card through the API and finds it in archived search', async () => {
+    running = await startReviewServer(await seed());
+    const card = (await (await fetch(`${running.url}/api/due`)).json()).cards[0];
+    const response = await fetch(`${running.url}/api/card/archive`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setId: card.setId, cardId: card.id }),
+    });
+    expect(response.status).toBe(200);
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(0);
+    const hits = await (await fetch(`${running.url}/api/cards?q=union&archived=1`)).json();
+    expect(hits.cards).toMatchObject([{ cardId: card.id, status: 'archived' }]);
   });
 
   it('/api/session lifecycle advances FSRS and drops the card from the due queue', async () => {
@@ -130,6 +227,33 @@ describe('review GUI server (functional)', () => {
     expect(ended.ok).toBe(true);
     expect(ended.summary.reviewedCount).toBe(1);
     expect(ended.summary.good).toBe(1);
+  });
+
+  it('/api/session/undo restores the last grade exactly', async () => {
+    running = await startReviewServer(await seed());
+    const card = (await (await fetch(`${running.url}/api/due`)).json()).cards[0];
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId, cardId: card.id, setId: card.setId, rating: 3 }),
+    });
+
+    const undoResponse = await fetch(`${running.url}/api/session/undo`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    });
+    const undo = await undoResponse.json();
+    expect(undoResponse.status).toBe(200);
+    expect(undo).toMatchObject({ ok: true, cardId: card.id });
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(1);
+
+    const ended = await (await fetch(`${running.url}/api/session/end`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId: start.sessionId }),
+    })).json();
+    expect(ended.summary).toMatchObject({ reviewedCount: 0, distinctCardCount: 0, good: 0 });
   });
 
   it('rejects a bad grade payload', async () => {

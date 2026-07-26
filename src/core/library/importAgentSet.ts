@@ -9,7 +9,7 @@
 import { join } from 'node:path';
 
 import type {
-  AgentSetPatch, Card, CardSet, CardStatus, ImportRecord, SetOrder,
+  AgentSetPatch, Card, CardSet, CardStatus, ImportRecord, SetOrder, SourceRef,
 } from './types.js';
 import { loadTags, saveTags, applyTagPatch, tagIdFromLabel } from './tagStore.js';
 import { validateSetPatchStructure, type PatchValidationError } from './validateSetPatch.js';
@@ -20,6 +20,7 @@ import { newFsrsState } from './fsrs.js';
 import { readJson, writeJson } from './io.js';
 import { libraryPaths } from './libraryStore.js';
 import { nowIso, stableId } from '../util.js';
+import { storageIdError } from './storageId.js';
 
 export type ImportCardResult = { localId: string; cardId: string; status: CardStatus; reasons: string[] };
 export type ImportResult = {
@@ -30,7 +31,14 @@ export type ImportResult = {
   tagIdsAdded: string[];
 };
 
-export type ImportOptions = { agentName?: string; agentModel?: string; now?: Date; dryRun?: boolean };
+export type ImportOptions = {
+  agentName?: string;
+  agentModel?: string;
+  now?: Date;
+  dryRun?: boolean;
+  /** Internal trust seam for validated portable bundles. */
+  frozenSourceRefsByLocalId?: ReadonlyMap<string, SourceRef[]>;
+};
 
 function setIdFromTitle(title: string): string {
   // Linear split/filter/join — no anchored-quantifier regex (ReDoS-safe,
@@ -49,6 +57,13 @@ export async function importAgentSet(
 ): Promise<ImportResult> {
   const now = opts.now ?? new Date();
   const iso = now.toISOString();
+
+  const idErrors: PatchValidationError[] = [];
+  if (patch.set.id && storageIdError(patch.set.id)) idErrors.push({ code: 'set:id', message: `set id ${storageIdError(patch.set.id)}` });
+  for (const card of patch.cards) {
+    if (card.id && storageIdError(card.id)) idErrors.push({ code: 'card:id', message: `card ${card.localId} id ${storageIdError(card.id)}` });
+  }
+  if (idErrors.length) return { ok: false, errors: idErrors, cards: [], tagIdsAdded: [] };
 
   // Gate 1: tag-graph. Pure; no disk write yet.
   const existingTags = await loadTags(root);
@@ -96,14 +111,15 @@ async function persist(
   const cards: Card[] = [];
   for (const c of patch.cards) {
     const cardId = cardIdOf.get(c.localId)!;
-    const sourceRefs = await freezeSourceRefs(root, c.sourceRefs);
+    const suppliedSources = opts.frozenSourceRefsByLocalId?.get(c.localId);
+    const sourceRefs = suppliedSources ?? await freezeSourceRefs(root, c.sourceRefs);
     const reasons: string[] = [];
     // Status: a cited-but-unresolvable source can't be verified -> needs_review.
     // Conceptual cards (no refs) and fully-frozen cards are active.
     const hadRefs = (c.sourceRefs?.length ?? 0) > 0;
     const anyMissing = sourceRefs.some((r) => r.status !== 'fresh');
     let status: CardStatus = 'active';
-    if (hadRefs && anyMissing) {
+    if (!suppliedSources && hadRefs && anyMissing) {
       status = 'needs_review';
       reasons.push('source:unresolved');
     }
@@ -117,7 +133,7 @@ async function persist(
     return { ok: true, errors: [], setId, cards: results, tagIdsAdded: tagResult.addedTagIds };
   }
 
-  return finalize(root, patch, setId, cards, cardIdOf, results, tagResult.addedTagIds, iso, opts);
+  return finalize(root, patch, setId, cards, cardIdOf, results, tagResult.addedTagIds, iso, opts, resolveTagRef);
 }
 
 function buildCard(
@@ -159,6 +175,7 @@ async function finalize(
   addedTagIds: string[],
   iso: string,
   opts: ImportOptions,
+  resolveTagRef: (ref: string) => string,
 ): Promise<ImportResult> {
   // Merge with any existing set (adding cards to an existing set is allowed).
   const existing = await readJson<CardSet>(libraryPaths(root).setFile(setId));
@@ -168,11 +185,11 @@ async function finalize(
     description: patch.set.description ?? existing?.description,
     folderPath: patch.set.folderPath ?? existing?.folderPath,
     repoId: existing?.repoId,
-    tagIds: patch.set.tagIds ?? existing?.tagIds ?? [],
+    tagIds: (patch.set.tagIds ?? existing?.tagIds ?? []).map(resolveTagRef),
     // Lesson metadata: a re-import can set it; unset fields keep prior values.
     objective: patch.set.objective ?? existing?.objective,
     lessonKind: patch.set.lessonKind ?? existing?.lessonKind,
-    prerequisiteTagIds: patch.set.prerequisiteTagIds ?? existing?.prerequisiteTagIds,
+    prerequisiteTagIds: (patch.set.prerequisiteTagIds ?? existing?.prerequisiteTagIds)?.map(resolveTagRef),
     estimatedMinutes: patch.set.estimatedMinutes ?? existing?.estimatedMinutes,
     defaultAltitude: patch.set.defaultAltitude ?? existing?.defaultAltitude,
     createdVia: existing?.createdVia ?? 'agent_import',

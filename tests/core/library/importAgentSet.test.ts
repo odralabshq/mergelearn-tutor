@@ -297,4 +297,15 @@ describe('importAgentSet — lessons and interactions (first learning loop)', ()
     expect(await listSetIds(r)).toEqual([]);
     expect(await loadTags(r)).toHaveLength(0);
   });
+
+  it('rejects unsafe persisted set and card ids before writing', async () => {
+    const r = await freshRoot();
+    const unsafeSet = conceptualPatch();
+    unsafeSet.set.id = '../escape';
+    expect((await importAgentSet(r, unsafeSet)).ok).toBe(false);
+    const unsafeCard = conceptualPatch();
+    unsafeCard.cards[0].id = 'bad/card';
+    expect((await importAgentSet(r, unsafeCard)).ok).toBe(false);
+    expect(await listSetIds(r)).toEqual([]);
+  });
 });

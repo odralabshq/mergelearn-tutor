@@ -12,6 +12,25 @@ import { loadCardsForSet } from '../cardStore.js';
 
 export type DueFilter = NonNullable<ReviewSession['filter']>;
 
+/** Select a bounded sitting without starving new/learning cards. Input order is
+ * the debt priority and is preserved within each pool. A zero/absent cap means
+ * uncapped. */
+export function selectDueCards(cards: readonly Card[], limit?: number, newShare = 0.25): Card[] {
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 0)) throw new RangeError('review cap must be a non-negative integer');
+  if (!limit || cards.length <= limit) return cards.slice();
+  const reserve = Math.floor(limit * newShare);
+  const fresh = cards.filter((c) => c.fsrs.state <= 1).slice(0, reserve);
+  const key = (c: Card) => `${c.setId}/${c.id}`;
+  const chosen = new Set(fresh.map(key));
+  const rest = cards.filter((c) => !chosen.has(key(c))).slice(0, limit - fresh.length);
+  return [...fresh, ...rest];
+}
+
+export function compareDueCards(a: Card, b: Card): number {
+  return new Date(a.fsrs.due).getTime() - new Date(b.fsrs.due).getTime()
+    || a.setId.localeCompare(b.setId) || a.id.localeCompare(b.id);
+}
+
 /**
  * Faceted match. Within one dimension (several tags, several folders), values
  * are always OR'd. Across dimensions (folders vs tags vs sets), the combinator
@@ -55,6 +74,6 @@ export async function getDueCards(root: string, now = new Date(), filter?: DueFi
     }
   }
   // Most-overdue first, so the oldest debt is cleared first.
-  due.sort((a, b) => new Date(a.fsrs.due).getTime() - new Date(b.fsrs.due).getTime());
+  due.sort(compareDueCards);
   return due;
 }

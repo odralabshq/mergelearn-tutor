@@ -126,9 +126,19 @@ mergelearn import      --file <patch.json> [--agent <name>] [--dry-run] [--json]
 mergelearn sample      [--dry-run]
 mergelearn doctor      [--json]
 mergelearn sets
-mergelearn due         [--set <id>] [--tag <id>] [--folder <path>]
+mergelearn cards       [--query <text>] [--set <id>] [--archived] [--json]
+mergelearn archive     --set <id> --card <id>
+mergelearn unarchive   --set <id> --card <id>
+mergelearn edit        --set <id> --card <id> [content options]
+mergelearn delete      --set <id> [--card <id>] --yes [--force]
+mergelearn settings    [--review-session-cap <n>] [--queue-strategy overdue|interleaved]
+mergelearn due         [--set <id>] [--tag <id>] [--folder <path>] [--limit <n>]
 mergelearn show        --set <id> --card <id>
 mergelearn grade       --card <id> --rating <1-4>
+mergelearn export      --set <id> --output <lesson.mergelearn.zip>
+mergelearn import-bundle --file <lesson.mergelearn.zip> [--as-copy] [--dry-run]
+mergelearn backup      --output <profile.mergelearn-backup.zip>
+mergelearn restore     --file <profile.mergelearn-backup.zip> [--force] [--dry-run]
 mergelearn serve       [--port <n>]
 mergelearn setup-agent [--agent <ids|all>] [--scope global|project] [--dry-run] [--uninstall]
 ```
@@ -138,6 +148,13 @@ helps focus the lesson. `import` validates the patch, freezes cited code, and
 prints the lesson objective, duration, interaction mix, source coverage, and
 advisory warnings. `import --dry-run` writes nothing; `--json` is for agents and
 automation.
+
+Lesson bundles contain authored teaching content, interactions, referenced tags,
+assets, and frozen source excerpts. They exclude review schedules, sessions,
+preferences, agent metadata, and local repository identifiers. Private profile
+backups are different: they preserve learning state, history, configuration, and
+the repository registry. Backup files are unencrypted and should be stored
+securely.
 
 ## Storage layout
 

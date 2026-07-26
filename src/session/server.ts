@@ -9,8 +9,12 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 
-import { getDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
-import { startSession, gradeCard, endSession } from '../core/library/review/session.js';
+import { getDueCards, selectDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
+import { orderDueQueue } from '../core/library/review/interleave.js';
+import { loadUserPreferences } from '../core/library/userPreferences.js';
+import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
+import { searchCards } from '../core/library/searchCards.js';
+import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
 import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
@@ -25,6 +29,7 @@ import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, Review
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
 import { join } from 'node:path';
+import { MAX_REQUEUE, REQUEUE_GAP, planRequeue } from './requeue.js';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
@@ -46,6 +51,10 @@ export async function startReviewServer(root: string, port = 0): Promise<ReviewS
 async function handleRequest(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  if (method === 'POST') {
+    const origin = req.headers.origin;
+    if (origin && origin !== `http://${req.headers.host}`) return sendJson(res, 403, { ok: false, error: 'cross-origin request rejected' });
+  }
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root));
   if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice());
   if (method === 'GET' && url.pathname.startsWith('/set/')) {
@@ -55,11 +64,16 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
   // Empty body / empty object both mean "everything due."
   if (url.pathname === '/api/due') return dueData(root, req, res, url);
+  if (method === 'GET' && url.pathname === '/api/cards') return cardsApi(root, res, url);
+  if (method === 'POST' && url.pathname.startsWith('/api/card/')) {
+    return cardActionApi(root, req, res, url.pathname.slice('/api/card/'.length));
+  }
   // Learn mode: every active card in one set, in authored order, independent of FSRS due state.
   if (method === 'GET' && url.pathname === '/api/lesson') return lessonData(root, res, url);
   // Per-sitting session lifecycle (doc 06 addendum A2): start -> grade* -> end.
   if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/session/undo') return sessionUndoApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res);
   // Opt-in sample lesson: the empty-state button POSTs here, then redirects.
   if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res);
@@ -138,8 +152,59 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
     };
     if (!filter.setIds && !filter.tagIds && !filter.folderPaths) filter = undefined;
   }
-  const due = await getDueCards(root, new Date(), filter);
-  return sendJson(res, 200, { total: due.length, cards: due.map(cardView) });
+  const now = new Date();
+  const [due, prefs] = await Promise.all([getDueCards(root, now, filter), loadUserPreferences(root)]);
+  const queueOptions = { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) };
+  // Interleave before applying the cap so one set cannot fill the entire
+  // sitting before the mixer has a chance to see cards from other sets.
+  const prioritized = orderDueQueue(due, queueOptions);
+  const selected = selectDueCards(prioritized, prefs.reviewSessionCap);
+  const ordered = orderDueQueue(selected, queueOptions);
+  const setTitles = new Map<string, string>();
+  await Promise.all([...new Set(ordered.map((card) => card.setId))].map(async (setId) => {
+    setTitles.set(setId, (await loadSet(root, setId))?.title ?? setId);
+  }));
+  return sendJson(res, 200, {
+    total: ordered.length,
+    totalDue: due.length,
+    remaining: Math.max(0, due.length - ordered.length),
+    strategy: prefs.queueStrategy,
+    cards: ordered.map((card) => cardView(card, setTitles.get(card.setId))),
+  });
+}
+
+async function cardsApi(root: string, res: ServerResponse, url: URL): Promise<void> {
+  const cards = await searchCards(root, url.searchParams.get('q') ?? '', {
+    setIds: url.searchParams.get('set') ? [url.searchParams.get('set')!] : undefined,
+    includeArchived: url.searchParams.get('archived') === '1',
+    limit: Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100)),
+  });
+  return sendJson(res, 200, { ok: true, cards });
+}
+
+async function cardActionApi(root: string, req: IncomingMessage, res: ServerResponse, action: string): Promise<void> {
+  let body: { setId?: string; cardId?: string; edit?: unknown; confirm?: boolean; expectedUpdatedAt?: string };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (!body.setId || !body.cardId) return sendJson(res, 400, { ok: false, error: 'need setId and cardId' });
+  try {
+    if (action === 'archive') return sendJson(res, 200, { ok: true, card: await archiveCard(root, body.setId, body.cardId, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
+    if (action === 'unarchive') return sendJson(res, 200, { ok: true, card: await unarchiveCard(root, body.setId, body.cardId, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
+    if (action === 'edit' && body.edit && typeof body.edit === 'object') {
+      return sendJson(res, 200, { ok: true, card: await editCard(root, body.setId, body.cardId, body.edit as CardEdit, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
+    }
+    if (action === 'delete') {
+      if (!body.confirm) return sendJson(res, 409, { ok: false, error: 'permanent deletion requires confirm=true' });
+      return sendJson(res, 200, { ok: true, result: await deleteCard(root, body.setId, body.cardId, { expectedUpdatedAt: body.expectedUpdatedAt }) });
+    }
+    return sendJson(res, 400, { ok: false, error: `unknown or incomplete card action: ${action}` });
+  } catch (error) {
+    if (error instanceof CardLifecycleError) {
+      const status = error.message.startsWith('card not found') ? 404 : error.message.startsWith('card changed') ? 409 : 400;
+      return sendJson(res, status, { ok: false, error: error.message });
+    }
+    throw error;
+  }
 }
 
 /** GET /api/lesson?set=<id> returns all active cards in authored order.
@@ -175,7 +240,7 @@ async function lessonData(root: string, res: ServerResponse, url: URL): Promise<
     lesson: { id: set.id, title: set.title, objective: set.objective ?? null, lessonKind: set.lessonKind ?? null },
     total: ordered.length,
     progress,
-    cards: ordered.map(cardView),
+    cards: ordered.map((card) => cardView(card, set.title)),
   });
 }
 
@@ -249,10 +314,35 @@ async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerRe
     : undefined;
   const card = await loadCard(root, body.setId, body.cardId);
   if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
+  if (card.status !== 'active') return sendJson(res, 409, { ok: false, code: 'card_unavailable', error: 'card is no longer active' });
   const attempt = asAttempt(body.attempt);
   const updated = await gradeCard(root, session, card, rating, new Date(), confidence, attempt);
   await persistSession(root, session);
   return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
+}
+
+/** /api/session/undo — body: { sessionId }. Exact one-level grade reversal. */
+async function sessionUndoApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: { sessionId?: string };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (!body.sessionId) return sendJson(res, 400, { ok: false, error: 'need sessionId' });
+  let session = activeSessions.get(body.sessionId);
+  if (!session) {
+    for (const path of await listSessionFiles(root)) {
+      const saved = await readJsonIO<ReviewSession>(path);
+      if (saved?.id === body.sessionId) { session = saved; activeSessions.set(saved.id, saved); break; }
+    }
+  }
+  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+  try {
+    const card = await undoLastGrade(root, session);
+    await persistSession(root, session);
+    return sendJson(res, 200, { ok: true, cardId: card.id, setId: card.setId, due: card.fsrs.due });
+  } catch (error) {
+    if (error instanceof UndoUnavailableError) return sendJson(res, 409, { ok: false, error: error.message });
+    throw error;
+  }
 }
 
 /** /api/session/end — body: { sessionId }. Finalizes and removes from memory. */
@@ -310,10 +400,11 @@ async function listSessionFiles(root: string): Promise<string[]> {
 
 /** Trim a card to what the Practice UI renders, with server-pre-rendered HTML
  * for code (diff-snippet widget) and explanations (markdown → HTML). */
-function cardView(card: Card) {
+function cardView(card: Card, setTitle?: string) {
   return {
     id: card.id,
     setId: card.setId,
+    setTitle: setTitle ?? card.setId,
     prompt: card.front.prompt,
     // Pre-rendered so a fenced code block / multi-line prompt shows as a real
     // <pre><code> block (not mangled inline). Mirrors explanationHtml.
@@ -377,10 +468,11 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
 }
 
 async function renderHome(root: string): Promise<string> {
-  const [summaries, due, attemptedMap] = await Promise.all([
+  const [summaries, due, attemptedMap, prefs] = await Promise.all([
     listSetSummaries(root),
     getDueCards(root, new Date()),
     attemptedByLessonSet(root),
+    loadUserPreferences(root),
   ]);
   const dueBySet = new Map<string, number>();
   for (const c of due) dueBySet.set(c.setId, (dueBySet.get(c.setId) ?? 0) + 1);
@@ -416,12 +508,16 @@ async function renderHome(root: string): Promise<string> {
     return pageShell('MergeLearn — Home', 'home', body);
   }
 
-  // Review is the separate FSRS job: one banner linking to the global due queue.
+  // Review is the separate FSRS job: one banner linking to the capped queue.
+  const sittingCount = selectDueCards(due, prefs.reviewSessionCap).length;
+  const waiting = Math.max(0, due.length - sittingCount);
   const cta = due.length > 0
-    ? `<a class="cta" href="/practice">Review ${due.length} due</a>`
+    ? `<a class="cta" href="/practice">Review ${sittingCount} now</a>`
     : `<span class="cta is-disabled">Nothing due right now</span>`;
+  const backlog = waiting ? `<span class="muted small">${waiting} more waiting</span>` : '';
   const banner = `<div class="due-banner"><strong>${due.length}</strong>` +
-    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>${cta}`;
+    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>` +
+    `<div class="review-entry">${cta}${backlog}</div>`;
 
   // Lessons are the primary object: each row shows objective, progress, and one
   // Start/Continue action. Progress is derived from persisted lesson sessions.
@@ -635,6 +731,12 @@ async function renderManage(root: string): Promise<string> {
     `Bar shows <strong>mastery</strong>: share of cards learned</span>`;
 
   const body = `<h1>Manage</h1>` +
+    `<p class="muted">Search, fix, or archive cards. Folder and tag filters below feed the Practice tab.</p>` +
+    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status"></span></div>` +
+    `<div class="card-tools"><input id="card-search" type="search" placeholder="Search cards and lessons" aria-label="Search cards">` +
+    `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
+    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div></section>` +
+    `<h2 style="margin-top:32px">Practice filters</h2>` +
     `<p class="muted">Pick the concepts you want to drill. The active filter feeds the Practice tab.</p>` +
     `<div class="active-filter" id="active-filter">` +
     `<span class="muted" id="match-count">—</span>` +
@@ -657,6 +759,33 @@ var selected={folderPaths:[],tagIds:[],combinator:'union'};
 var CARDS=[];
 try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function cardStatus(t){var n=document.getElementById('card-status');if(n)n.textContent=t;}
+function cardHtml(c){
+  var action=c.status==='archived'?'unarchive':'archive';
+  return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
+    '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><span class="badge next">'+esc(c.status)+'</span></div>'+
+    '<div class="muted small">'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</div><p>'+esc(c.shortAnswer)+'</p>'+
+    '<div class="curation-actions"><button type="button" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button>'+
+    '<details><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
+    '<label>Short answer<textarea data-edit="shortAnswer" rows="2">'+esc(c.shortAnswer)+'</textarea></label>'+
+    '<label>Explanation<textarea data-edit="explanation" rows="4">'+esc(c.explanation)+'</textarea></label>'+
+    '<button type="button" class="primary" data-card-action="edit">Save changes</button></details></div></article>';
+}
+async function loadCardResults(){
+  var q=document.getElementById('card-search').value||'';var archived=document.getElementById('show-archived').checked;
+  try{var r=await fetch('/api/cards?q='+encodeURIComponent(q)+(archived?'&archived=1':''));var j=await r.json();var box=document.getElementById('card-results');box.innerHTML=(j.cards||[]).map(cardHtml).join('')||'<div class="empty">No cards match.</div>';cardStatus((j.cards||[]).length+' shown');}
+  catch(e){cardStatus('Could not load cards');}
+}
+async function cardAction(button){
+  var row=button.closest('.curation-card'),action=button.getAttribute('data-card-action');if(!row||!action)return;
+  var body={setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card'),expectedUpdatedAt:row.getAttribute('data-updated')};
+  if(action==='edit')body.edit={front:{prompt:row.querySelector('[data-edit="prompt"]').value},back:{shortAnswer:row.querySelector('[data-edit="shortAnswer"]').value,explanationMarkdown:row.querySelector('[data-edit="explanation"]').value}};
+  button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');button.disabled=false;return;}cardStatus(action==='edit'?'Saved':'Card updated');await loadCardResults();}catch(e){cardStatus('Update failed');button.disabled=false;}
+}
+var searchTimer=null;document.getElementById('card-search').addEventListener('input',function(){clearTimeout(searchTimer);searchTimer=setTimeout(loadCardResults,180);});
+document.getElementById('show-archived').addEventListener('change',loadCardResults);
+document.getElementById('card-results').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-card-action]');if(b)cardAction(b);});
+loadCardResults();
 function statusMsg(t){var s=document.getElementById('match-count');s.textContent=t;}
 function selectedFilter(){var f={};if(selected.folderPaths.length)f.folderPaths=selected.folderPaths;if(selected.tagIds.length)f.tagIds=selected.tagIds;if(Object.keys(f).length)f.combinator=selected.combinator;return f;}
 function isSelectedFolder(p){return selected.folderPaths.indexOf(p)>=0;}
@@ -896,6 +1025,7 @@ function renderPractice(): string {
   const body =
     `<h1>Practice</h1>` +
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
+    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" hidden>Undo last grade</button></div>` +
     `<div id="mount"></div>` +
     `<div class="status" id="status"></div>` +
     `<script>${practiceScript()}</script>`;
@@ -904,18 +1034,26 @@ function renderPractice(): string {
 
 function practiceScript(): string {
   return `
-var queue=[];var pos=0;var reviewed=0;var confidence=0;var sessionId=null;
+var REQUEUE_GAP=${REQUEUE_GAP},MAX_REQUEUE=${MAX_REQUEUE};
+${planRequeue.toString()}
+var queue=[];var pos=0;var reviewed=0;var reviewedCards={};var waitingBacklog=0;var confidence=0;var sessionId=null;var mutationBusy=false;
 var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
+var requeueCounts={};var requeueSeq=0;var lastGrade=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}var noun=practiceMode==='lesson'?'Activity':'Card';p.textContent=noun+' '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';}
+function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}if(practiceMode==='lesson'){p.textContent='Activity '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';return;}var pending=queue.slice(pos).filter(function(c){return !!c.__requeueSeq;}).length;p.textContent=reviewed+' attempt'+(reviewed===1?'':'s')+' · '+Math.max(0,queue.length-pos)+' remaining'+(pending?' ('+pending+' to revisit)':'');}
+function syncUndo(){var b=document.getElementById('undo-grade');if(b)b.hidden=!lastGrade;}
 function render(){
   progress();
   var mount=document.getElementById('mount');
   if(pos>=queue.length){
-    var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewed+' reviewed. Nothing more due.';
+    var distinct=Object.keys(reviewedCards).length;
+    var reviewSummary=distinct+' card'+(distinct===1?'':'s')+' reviewed'+(reviewed!==distinct?' in '+reviewed+' attempts':'');
+    var dueSummary=waitingBacklog?waitingBacklog+' more waiting.':'Nothing more due.';
+    var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewSummary+'. '+dueSummary;
     var empty=practiceMode==='lesson'?'This lesson has no active activities.':'Nothing due right now. Come back later, or author more cards.';
-    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>':'<div class="empty">'+empty+'</div>';return;
+    var next=practiceMode==='review'&&waitingBacklog?'<div class="done-actions"><a class="secondary-action" href="/practice">Review next sitting</a></div>':'';
+    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>'+next:'<div class="empty">'+empty+'</div>';return;
   }
   var c=queue[pos];confidence=0;attempt=null;cardStartedAt=Date.now();
   var interaction=c.interaction||{type:'flashcard'};
@@ -929,7 +1067,7 @@ function render(){
   var ctx=c.context?'<div class="ctx markdown-body">'+(c.contextHtml||fmt(c.context))+'</div>':'';
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
   var confLabels=[['1','Guessing'],['2','Low'],['3','Medium'],['4','High'],['5','Certain']];
-  var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'">'+p[1]+'<kbd>'+p[0]+'</kbd></button>';}).join('');
+  var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'" aria-label="'+p[1]+', shortcut '+p[0]+'">'+p[1]+'<kbd aria-hidden="true">'+p[0]+'</kbd></button>';}).join('');
   var attemptUi='';
   if(interaction.type==='self_response'){
     attemptUi='<div class="attempt"><label class="label" for="attempt-text">Your answer</label><textarea id="attempt-text" rows="3" placeholder="'+esc(interaction.placeholder||'Write a short answer before revealing...')+'"></textarea></div>';
@@ -941,15 +1079,15 @@ function render(){
     var pitems=pblocks.map(function(b){var lbl=b.label?'<span class="p-label">'+esc(b.label)+'</span>':'';return '<li class="p-block" data-bid="'+esc(b.id)+'" tabindex="0" draggable="true" role="option" aria-selected="false"><span class="p-move"><button type="button" class="p-up" aria-label="Move block up" tabindex="-1">▲</button><button type="button" class="p-down" aria-label="Move block down" tabindex="-1">▼</button></span><span class="p-body">'+lbl+'<pre><code>'+esc(b.code)+'</code></pre></span></li>';}).join('');
     attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><p class="p-hint">Click a block then use ↑/↓, drag it, or use the ▲▼ buttons.</p><ol class="p-list" id="p-list" role="listbox" aria-label="Order the code blocks">'+pitems+'</ol></div>';
   }
-  var check=interactive?'<button class="primary check-answer" id="check-answer">Check answer <kbd>Enter</kbd></button>':'';
-  mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setId)+'</span><span>'+esc(c.id)+'</span></div>'+
+  var check=interactive?'<button class="primary check-answer" id="check-answer" aria-label="Check answer, shortcut Enter">Check answer <kbd aria-hidden="true">Enter</kbd></button>':'';
+  mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
     '<div class="confidence" id="confidence"><p class="label">Before reveal — how confident are you?</p><div class="conf-opts">'+confBtns+'</div></div>'+check+
     '<div class="reveal" id="reveal-panel"><div id="attempt-review"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
-    '<div class="actions grade"><button class="g1" data-r="1">Again<kbd>1</kbd></button><button class="g2" data-r="2">Hard<kbd>2</kbd></button><button class="g3" data-r="3">Good<kbd>3</kbd></button><button class="g4" data-r="4">Easy<kbd>4</kbd></button></div></div></article>';
+    '<div class="actions grade"><button class="g1" data-r="1" aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
   var checkBtn=document.getElementById('check-answer');if(checkBtn)checkBtn.addEventListener('click',reveal);
   wireParsons();
@@ -1058,16 +1196,38 @@ function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.
 async function grade(r){
   var c=queue[pos];if(!c)return;
   if(!sessionId){statusMsg('no active session');return;}
+  if(mutationBusy)return;mutationBusy=true;
   try{
     if(attempt){var deep=document.getElementById('deep');attempt.revealedFull=!!(deep&&deep.open);}
     var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined})});
     var j=await res.json();
-    if(!j.ok){statusMsg(j.error||'grade failed');return;}
-    reviewed++;statusMsg('Graded · next due '+new Date(j.due).toLocaleDateString());
-    pos++;render();
-  }catch(e){statusMsg('grade failed');}
+    if(!j.ok){if(j.code==='card_unavailable'){statusMsg('Card was archived · skipped');pos++;render();return;}statusMsg(j.error||'grade failed');return;}
+    var revisit=null;
+    if(r===1&&practiceMode==='review'){
+      var plan=planRequeue(queue.length,pos,requeueCounts[c.id]||0,REQUEUE_GAP,MAX_REQUEUE);
+      if(plan){var copy=Object.assign({},c,{__requeueSeq:++requeueSeq});queue.splice(plan.insertAt,0,copy);requeueCounts[c.id]=plan.nextCount;revisit=copy.__requeueSeq;}
+    }
+    lastGrade={index:pos,rating:r,cardId:c.id,requeueSeq:revisit};
+    reviewed++;reviewedCards[c.id]=(reviewedCards[c.id]||0)+1;
+    statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
+    pos++;render();syncUndo();
+  }catch(e){statusMsg('grade failed');}finally{mutationBusy=false;}
+}
+async function undoGrade(){
+  if(!lastGrade||!sessionId)return;
+  if(mutationBusy)return;mutationBusy=true;
+  try{
+    var res=await fetch('/api/session/undo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});
+    var j=await res.json();if(!j.ok){statusMsg(j.error||'undo failed');return;}
+    if(lastGrade.requeueSeq){queue=queue.filter(function(c){return c.__requeueSeq!==lastGrade.requeueSeq;});requeueCounts[lastGrade.cardId]=Math.max(0,(requeueCounts[lastGrade.cardId]||1)-1);}
+    pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);
+    reviewedCards[lastGrade.cardId]=Math.max(0,(reviewedCards[lastGrade.cardId]||1)-1);
+    if(!reviewedCards[lastGrade.cardId])delete reviewedCards[lastGrade.cardId];
+    lastGrade=null;render();syncUndo();statusMsg('Last grade undone');
+  }catch(e){statusMsg('undo failed');}finally{mutationBusy=false;}
 }
 function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
+var undoBtn=document.getElementById('undo-grade');if(undoBtn)undoBtn.addEventListener('click',undoGrade);
 document.addEventListener('keydown',function(e){
   if(['INPUT','TEXTAREA','SELECT'].indexOf(e.target.tagName)>=0)return;
   if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!isRevealed())reveal();return;}
@@ -1090,7 +1250,7 @@ window.addEventListener('beforeunload',function(){endSession(true);});
     var endpoint=lessonMode?'/api/lesson?set='+encodeURIComponent(setParam):'/api/due';
     var options=lessonMode?undefined:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})};
     var res=await fetch(endpoint,options);
-    var j=await res.json();queue=j.cards||[];
+    var j=await res.json();queue=j.cards||[];waitingBacklog=lessonMode?0:Number(j.remaining)||0;
     // Continue: resume a partially-done lesson at its first unattempted card.
     if(lessonMode&&j.progress&&j.progress.resumeCardId){
       var ri=queue.findIndex(function(c){return c.id===j.progress.resumeCardId;});
@@ -1106,8 +1266,17 @@ window.addEventListener('beforeunload',function(){endSession(true);});
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  let size = 0;
+  for await (const chunk of req) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 1024 * 1024) throw new Error('JSON body too large');
+    chunks.push(buffer);
+  }
   const raw = Buffer.concat(chunks).toString('utf8');
+  if (raw && !String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
+    throw new Error('JSON content type required');
+  }
   return raw ? JSON.parse(raw) : {};
 }
 
@@ -1215,6 +1384,7 @@ h2{font-size:1.15rem;margin:0 0 10px}
 .empty code{background:var(--overlay);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px;color:var(--text)}
 .due-banner{display:flex;align-items:baseline;gap:10px;margin:18px 0 24px}
 .due-banner strong{font-size:2rem;color:var(--accent-hover);letter-spacing:-0.03em}
+.review-entry{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .cta{display:inline-block;margin-top:6px;padding:9px 18px;border-radius:var(--radius-sm);background:var(--accent);color:#fff;font-weight:600}
 button.cta{border:0;font:inherit;font-weight:600;cursor:pointer;vertical-align:baseline;margin-top:0}
 button.cta:hover{background:var(--accent-hover)}
@@ -1285,6 +1455,7 @@ button.primary:hover{background:var(--accent-hover)}
 .status{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:var(--overlay);border:1px solid var(--border);padding:8px 16px;border-radius:var(--radius);font-size:13px;opacity:0;transition:opacity .2s}
 .status.show{opacity:1}
 .done-note{text-align:center;padding:40px;color:var(--success);font-weight:600}
+.done-actions{text-align:center;margin-top:-24px}
 .confidence{margin-top:18px;padding-top:16px;border-top:1px solid var(--border-soft)}
 .conf-opts{display:flex;gap:6px;flex-wrap:wrap}
 .conf-opts button kbd{font-family:var(--mono);font-size:11px;opacity:0.7;margin-left:4px}
@@ -1377,6 +1548,16 @@ button.primary:hover{background:var(--accent-hover)}
 .browse-body .label{margin-top:14px}
 .browse-body .label:first-child{margin-top:0}
 .active-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);margin:18px 0}
+.card-curation{margin-top:24px}
+.card-tools{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:12px 0}
+.card-tools input[type="search"]{flex:1;min-width:240px;padding:9px 11px;background:var(--raised);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.curation-list{display:grid;gap:10px}
+.curation-card{padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
+.curation-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.curation-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+.curation-actions details{flex:1;min-width:260px}
+.curation-actions label{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--muted)}
+.curation-actions textarea{width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit}
 .active-filter #match-count{flex:1;min-width:120px}
 .active-filter .clear{background:transparent;border:1px solid var(--border)}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--overlay);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px}
@@ -1415,5 +1596,11 @@ button.primary:hover{background:var(--accent-hover)}
 .combo-tile:focus{box-shadow:inset 0 0 0 2px var(--accent)}
 .combo-tile.sel{background:rgba(99,102,241,0.12);border-color:var(--accent)}
 .combo-title{font-weight:600;font-size:14px}
-.combo-hint{color:var(--muted);font-size:12px;font-family:var(--mono)}`;
+.combo-hint{color:var(--muted);font-size:12px;font-family:var(--mono)}
+@media(max-width:600px){
+  .topbar{gap:8px;padding:12px}
+  .tabs a{padding:6px 9px}
+  .hint{display:none}
+  main{padding:24px 16px 56px}
+}`;
 }
