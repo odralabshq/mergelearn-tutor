@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises';
 
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 
@@ -334,27 +334,45 @@ function allowedBackupEntry(name: string): boolean {
     || BACKUP_ROOT_DIRS.some((dir) => name.startsWith(`${dir}/`));
 }
 
-async function addBackupPath(root: string, relativePath: string, entries: Record<string, Uint8Array>): Promise<void> {
+async function addBackupFile(root: string, relativePath: string, entries: Record<string, Uint8Array>): Promise<void> {
   const absolute = join(root, ...relativePath.split('/'));
-  let info;
-  try { info = await lstat(absolute); }
+  let handle;
+  try { handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new BundleError(`backup refuses symlink: ${relativePath}`);
+    throw error;
+  }
+  try {
+    if (!(await handle.stat()).isFile()) throw new BundleError(`backup refuses non-regular path: ${relativePath}`);
+    entries[relativePath] = new Uint8Array(await handle.readFile());
+  } finally { await handle.close(); }
+}
+
+async function addBackupDirectory(root: string, relativePath: string, entries: Record<string, Uint8Array>): Promise<void> {
+  const absolute = resolve(root, ...relativePath.split('/'));
+  let actual;
+  try { actual = await realpath(absolute); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
     throw error;
   }
-  if (info.isSymbolicLink()) throw new BundleError(`backup refuses symlink: ${relativePath}`);
-  if (info.isFile()) {
-    const handle = await open(absolute, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-    try {
-      if (!(await handle.stat()).isFile()) throw new BundleError(`backup refuses non-regular path: ${relativePath}`);
-      entries[relativePath] = new Uint8Array(await handle.readFile());
-    } finally { await handle.close(); }
-    return;
+  const expected = join(await realpath(dirname(absolute)), basename(absolute));
+  if (actual !== expected) throw new BundleError(`backup refuses symlink: ${relativePath}`);
+  for (const item of await readdir(actual, { withFileTypes: true })) {
+    const child = `${relativePath}/${item.name}`;
+    if (item.isSymbolicLink()) throw new BundleError(`backup refuses symlink: ${child}`);
+    if (item.isDirectory()) await addBackupDirectory(root, child, entries);
+    else if (item.isFile()) await addBackupFile(root, child, entries);
+    else throw new BundleError(`backup refuses non-regular path: ${child}`);
   }
-  if (!info.isDirectory()) throw new BundleError(`backup refuses non-regular path: ${relativePath}`);
-  for (const item of await readdir(absolute, { withFileTypes: true })) {
-    await addBackupPath(root, `${relativePath}/${item.name}`, entries);
-  }
+}
+
+async function backupEntries(root: string): Promise<Record<string, Uint8Array>> {
+  const entries: Record<string, Uint8Array> = {};
+  for (const path of BACKUP_ROOT_FILES) await addBackupFile(root, path, entries);
+  for (const path of BACKUP_ROOT_DIRS) await addBackupDirectory(root, path, entries);
+  return entries;
 }
 
 export async function exportProfileBackup(
@@ -362,8 +380,7 @@ export async function exportProfileBackup(
 ): Promise<ProfileBackupManifest> {
   const source = resolve(root), output = resolve(outputPath);
   if (output === source || output.startsWith(`${source}${sep}`)) throw new BundleError('backup output must be outside the profile root');
-  const content: Record<string, Uint8Array> = {};
-  for (const path of [...BACKUP_ROOT_FILES, ...BACKUP_ROOT_DIRS]) await addBackupPath(source, path, content);
+  const content = await backupEntries(source);
   const manifest: ProfileBackupManifest = {
     formatVersion: 1, kind: 'profile_backup', createdAt: (opts.now ?? new Date()).toISOString(),
     entryCount: Object.keys(content).length, contentChecksum: checksum(content),
@@ -431,8 +448,7 @@ export async function restoreProfileBackup(
     else await rm(target, { recursive: true, force: true });
     try {
       await rename(stagedRoot, target);
-      const verified: Record<string, Uint8Array> = {};
-      for (const path of [...BACKUP_ROOT_FILES, ...BACKUP_ROOT_DIRS]) await addBackupPath(target, path, verified);
+      const verified = await backupEntries(target);
       if (checksum(verified) !== manifest.contentChecksum) throw new BundleError('restored profile failed read-back verification');
     } catch (error) {
       await rm(target, { recursive: true, force: true });
