@@ -32,7 +32,7 @@ describe('public package manifest', () => {
     const pkg = JSON.parse(await readFile('package.json', 'utf8')) as PackageJson;
     expect(pkg.private).not.toBe(true);
     expect(pkg.publishConfig?.access).toBe('public');
-    expect(pkg.license).toBe('PolyForm-Noncommercial-1.0.0');
+    expect(pkg.license).toBe('Apache-2.0');
     expect(pkg.repository?.url).toContain('odralabshq/mergelearn-tutor');
   });
 });

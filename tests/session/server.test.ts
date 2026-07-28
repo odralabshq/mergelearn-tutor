@@ -77,6 +77,35 @@ async function get(url: string): Promise<{ status: number; text: string }> {
 }
 
 describe('review GUI server (functional)', () => {
+  it('reports health and keeps the health probe out of activity tracking', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-health-'));
+    let activity = 0;
+    running = await startReviewServer(root, 0, { instanceId: 'test-instance', managed: true, onActivity: () => { activity += 1; } });
+
+    const health = await (await fetch(`${running.url}/health`)).json();
+    expect(health).toEqual({ ok: true, instanceId: 'test-instance', managed: true });
+    expect(activity).toBe(0);
+
+    expect((await (await fetch(`${running.url}/api/keepalive`)).json()).ok).toBe(true);
+    expect(activity).toBe(1);
+  });
+
+  it('records explicit dogfood feedback and deferral locally', async () => {
+    const root = await seed();
+    running = await startReviewServer(root);
+
+    const feedback = await fetch(`${running.url}/api/dogfood/feedback`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setId: 'server-deck', worthAnswering: true, note: 'caught an edge case' }),
+    });
+    expect(await feedback.json()).toMatchObject({ ok: true, event: { kind: 'feedback', setId: 'server-deck', worthAnswering: true } });
+
+    const deferred = await fetch(`${running.url}/api/dogfood/defer`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setId: 'server-deck' }),
+    });
+    expect(await deferred.json()).toMatchObject({ ok: true, event: { kind: 'deferred', setId: 'server-deck' } });
+  });
+
   it('renders an onboarding empty state (bridge to the agent) when the library has no sets', async () => {
     const emptyRoot = await mkdtemp(join(tmpdir(), 'mlt-empty-'));
     running = await startReviewServer(emptyRoot);

@@ -259,6 +259,17 @@ export type SetSummary = {
 };
 
 /** Step 1: tutor -> agent. Existing state the agent must reuse/extend. */
+export type RecentLesson = {
+  setId: string;
+  title: string;
+  objective?: string;
+  createdAt: string;
+  tagIds: string[];
+  citedPaths: string[];
+  questionSummaries: string[];
+  reviewState: { cards: number; due: number; lapses: number };
+};
+
 export type AuthoringContext = {
   goal?: string;
   repo?: RepoRef;
@@ -266,6 +277,7 @@ export type AuthoringContext = {
   existingTags: CardTag[];
   folderTree: string[];
   targetSetId?: string;
+  recentLessons: RecentLesson[];
 };
 
 /** A NEW tag proposed within a patch; referenced by cards via localId. */

@@ -48,6 +48,7 @@ export function libraryPaths(root: string) {
     profile,
     userFile: join(profile, 'user.json'),
     statsFile: join(profile, 'stats.json'),
+    dogfoodFile: join(root, 'dogfood.jsonl'),
     sessionsDir: join(profile, 'sessions'),
     sessionDayDir: (day: string) => join(profile, 'sessions', day),
   };

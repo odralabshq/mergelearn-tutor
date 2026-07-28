@@ -28,8 +28,8 @@
     "developer-tools"
   ],
   "author": "Odra Labs",
-  "license": "PolyForm-Noncommercial-1.0.0",
-  "description": "Local-first learning for agent-authored lessons. Source-available for noncommercial use; commercial use requires permission from Odra Labs.",
+  "license": "Apache-2.0",
+  "description": "Local-first learning for agent-authored lessons. Model-free and Apache-2.0 licensed.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/odralabshq/mergelearn-tutor.git"

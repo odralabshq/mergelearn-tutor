@@ -16,17 +16,16 @@ Then open your coding agent in a repository and ask:
 
 > Create a MergeLearn lesson from my last PR.
 
-The agent runs the authoring commands for you. When it says the lesson is ready:
+For worthwhile work, the agent reads relevant recent lessons, writes an
+AgentSetPatch, and runs `mergelearn create-and-open --file <patch.json>`. That
+single action validates and stores the lesson, starts or reuses one local server,
+opens its exact URL, and prints the URL as a fallback. It may deliberately create
+no lesson when the work has no durable learning value.
 
-```bash
-mergelearn serve            # prints a local URL like http://127.0.0.1:52134
-mergelearn serve --port 4321  # or pin a fixed port
-```
-
-Open the printed URL and learn in your browser. This is the primary day-to-day
-interface. Home lists lessons with their objective, estimated time, progress,
-and one Start / Continue / Practice again action. Due spaced-repetition reviews
-stay in a separate banner.
+`mergelearn serve` reuses the same managed local server; `--port 4321` requests a
+fixed port only when it needs to start one. The server closes after inactivity.
+Home lists lessons with their objective, estimated time, progress, and one Start /
+Continue / Practice again action. Due spaced-repetition reviews stay separate.
 
 <p align="center">
   <img src="docs/assets/screenshots/lesson-home.png" alt="MergeLearn Home showing a sample lesson, its objective and duration, and four due reviews" width="100%">
@@ -121,8 +120,11 @@ The browser is the main interface, but every action is also available on the
 command line.
 
 ```bash
-mergelearn context     [--goal "..."] [--repo <path>] [--target-set <id>]
+mergelearn context     [--goal "..."] [--repo <path>] [--target-set <id>] [--recent <n>]
+mergelearn create-and-open --file <patch.json> [--agent <name>] [--no-open] [--dry-run] [--json]
 mergelearn import      --file <patch.json> [--agent <name>] [--dry-run] [--json]
+mergelearn skipped     --task <text> --reason <text>
+mergelearn dogfood-summary [--json]
 mergelearn sample      [--dry-run]
 mergelearn doctor      [--json]
 mergelearn sets
@@ -144,10 +146,12 @@ mergelearn setup-agent [--agent <ids|all>] [--scope global|project] [--dry-run] 
 ```
 
 `context` prints the current library state for an agent; `--goal` is optional but
-helps focus the lesson. `import` validates the patch, freezes cited code, and
-prints the lesson objective, duration, interaction mix, source coverage, and
-advisory warnings. `import --dry-run` writes nothing; `--json` is for agents and
-automation.
+helps focus the lesson, while `--recent` exposes recent question summaries,
+source paths, and review state. `create-and-open` is the normal agent workflow:
+it validates, stores, starts or reuses one local GUI, opens the exact lesson, and
+prints the URL. `import` is the lower-level storage primitive for scripts and dry
+runs. `dogfood-summary` counts local trial events; `skipped` records meaningful
+completed work for which the developer deliberately made no lesson.
 
 Lesson bundles contain authored teaching content, interactions, referenced tags,
 assets, and frozen source excerpts. They exclude review schedules, sessions,
@@ -195,7 +199,5 @@ npm run smoke:package  # pack the tarball and run the packaged binary
 
 ## License
 
-Licensed under the PolyForm Noncommercial License 1.0.0. See [LICENSE](./LICENSE).
-Noncommercial use is allowed under the public license; commercial use requires
-separate permission from the copyright holder, Odra Labs. This is a
-source-available license, not an OSI-approved open-source license.
+Licensed under the [Apache License 2.0](./LICENSE). MergeLearn is free to use,
+modify, and distribute under its terms.
