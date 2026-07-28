@@ -28,15 +28,23 @@ import {
 import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, ReviewSession, SetOrder, SetSummary } from '../core/library/types.js';
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
+import { appendDogfoodEvent } from '../core/library/dogfood.js';
 import { join } from 'node:path';
 import { MAX_REQUEUE, REQUEUE_GAP, planRequeue } from './requeue.js';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
-export async function startReviewServer(root: string, port = 0): Promise<ReviewServer> {
+export type ReviewServerOptions = {
+  instanceId?: string;
+  managed?: boolean;
+  onActivity?: () => void;
+  onLessonOpen?: (setId: string, source?: string) => void | Promise<void>;
+};
+
+export async function startReviewServer(root: string, port = 0, options: ReviewServerOptions = {}): Promise<ReviewServer> {
   const server = createServer(async (req, res) => {
     try {
-      await handleRequest(root, req, res);
+      await handleRequest(root, req, res, options);
     } catch (error) {
       sendText(res, 500, `session error: ${error instanceof Error ? error.message : String(error)}\n`);
     }
@@ -45,12 +53,25 @@ export async function startReviewServer(root: string, port = 0): Promise<ReviewS
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('could not determine server address');
   const url = `http://127.0.0.1:${address.port}`;
-  return { server, url, close: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))) };
+  const close = (): Promise<void> => new Promise((resolve, reject) => {
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  return { server, url, close };
 }
 
-async function handleRequest(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function handleRequest(root: string, req: IncomingMessage, res: ServerResponse, options: ReviewServerOptions): Promise<void> {
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+  if (method === 'GET' && url.pathname === '/health') {
+    return sendJson(res, 200, { ok: true, instanceId: options.instanceId, managed: !!options.managed });
+  }
+  if (method === 'GET' && url.pathname === '/api/keepalive') {
+    options.onActivity?.();
+    return sendJson(res, 200, { ok: true });
+  }
+  options.onActivity?.();
   if (method === 'POST') {
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) return sendJson(res, 403, { ok: false, error: 'cross-origin request rejected' });
@@ -59,6 +80,10 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice());
   if (method === 'GET' && url.pathname.startsWith('/set/')) {
     const setId = decodeURIComponent(url.pathname.slice('/set/'.length));
+    // Do not count a typo or deleted lesson as an open in dogfood evidence.
+    if (await loadSet(root, setId)) {
+      await options.onLessonOpen?.(setId, url.searchParams.get('source') ?? undefined);
+    }
     return sendHtml(res, 200, await renderSetBrowser(root, setId));
   }
   // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
@@ -77,6 +102,8 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res);
   // Opt-in sample lesson: the empty-state button POSTs here, then redirects.
   if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res);
+  if (method === 'POST' && url.pathname === '/api/dogfood/feedback') return dogfoodFeedbackApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/dogfood/defer') return dogfoodDeferApi(root, req, res);
   // Manage tab (doc 06): server-rendered; card membership is embedded in the
   // page so match counts recompute client-side (no per-keystroke round-trip).
   if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root));
@@ -131,6 +158,27 @@ function asAttempt(v: unknown): ReviewAttempt | undefined {
   if (typeof o.revealedFull === 'boolean') a.revealedFull = o.revealedFull;
   if (typeof o.elapsedMs === 'number' && Number.isFinite(o.elapsedMs) && o.elapsedMs >= 0) a.elapsedMs = o.elapsedMs;
   return a;
+}
+
+async function dogfoodFeedbackApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: Record<string, unknown>;
+  try { body = await readJson(req) as Record<string, unknown>; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (typeof body.setId !== 'string' || typeof body.worthAnswering !== 'boolean') {
+    return sendJson(res, 400, { ok: false, error: 'setId and worthAnswering are required' });
+  }
+  const note = typeof body.note === 'string' ? body.note.slice(0, 1000) : undefined;
+  const event = await appendDogfoodEvent(root, { kind: 'feedback', setId: body.setId, worthAnswering: body.worthAnswering, ...(note ? { note } : {}) });
+  return sendJson(res, 200, { ok: true, event });
+}
+
+async function dogfoodDeferApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: Record<string, unknown>;
+  try { body = await readJson(req) as Record<string, unknown>; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (typeof body.setId !== 'string') return sendJson(res, 400, { ok: false, error: 'setId is required' });
+  const event = await appendDogfoodEvent(root, { kind: 'deferred', setId: body.setId });
+  return sendJson(res, 200, { ok: true, event });
 }
 
 /** /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
@@ -605,10 +653,15 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
     : progress.state === 'in_progress' ? `${progress.attemptedCount}/${progress.total} done`
     : 'Not started';
   const est = set.estimatedMinutes ? ` · ~${set.estimatedMinutes} min` : '';
+  const dogfood = `<div class="lesson-actions dogfood-actions">` +
+    `<button class="secondary-action" data-dogfood="defer">Not now</button>` +
+    `<button class="secondary-action" data-dogfood="worth">Worth it</button>` +
+    `<button class="secondary-action" data-dogfood="not-worth">Not worth it</button></div>` +
+    `<script>(function(){var id=${JSON.stringify(setId)};document.querySelectorAll('[data-dogfood]').forEach(function(b){b.onclick=function(){var a=b.getAttribute('data-dogfood');var body=a==='defer'?{setId:id}:{setId:id,worthAnswering:a==='worth'};fetch('/api/dogfood/'+(a==='defer'?'defer':'feedback'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(){b.textContent='Recorded';b.disabled=true;});};});var t=null;function ping(){if(document.visibilityState==='visible')fetch('/api/keepalive').catch(function(){});}function start(){if(!t){ping();t=setInterval(ping,60000);}}function stop(){if(t){clearInterval(t);t=null;}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')start();else stop();});start();})();</script>`;
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
     `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'}${est} · ` +
     `<span class="progress-pill state-${progress.state}">${pillLabel}</span> · ${due.length} due</p>` +
-    `${objective}${actions}` +
+    `${objective}${actions}${dogfood}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`);
   return pageShell(`MergeLearn — ${set.title}`, 'set', body);
 }

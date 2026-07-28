@@ -54,6 +54,11 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(importOut).toContain('imported set "cli-deck": 1 active');
     expect(importOut).toContain('+1 tags');
 
+    // context: recent lessons expose enough grounded metadata to deepen instead of repeat.
+    const afterImport = JSON.parse(await run(root, 'context', '--recent', '1'));
+    expect(afterImport.recentLessons).toMatchObject([{ setId: 'cli-deck', title: 'CLI Deck' }]);
+    expect(afterImport.recentLessons[0].questionSummaries).toEqual(['What does the CLI import do?']);
+
     // sets: the new set shows up with its card count
     const setsOut = await run(root, 'sets');
     expect(setsOut).toContain('cli-deck');

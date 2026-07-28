@@ -15,24 +15,27 @@ re-fetches every cited snippet from disk (your snippet text is never trusted),
 runs deterministic structure + tag-graph checks, and stages only cards that
 pass. Your job is to pick strong targets and write cards that genuinely teach.
 
-## The handshake (two commands)
+## The workflow
 
-1. `mergelearn context --goal "<what to author>" [--repo <path>] [--target-set <id>]`
-   Emits an AuthoringContext JSON: existing sets, existing tags (the learning
-   graph), and the folder tree. Read it first so you REUSE tags/folders instead
-   of inventing synonyms. Blind tagging fragments the graph.
+1. After a meaningful task, decide whether there is anything worth learning. A
+   trivial edit, routine version bump, or task with no durable insight needs no
+   lesson. Do not create filler merely because the task ended.
+2. When the task overlaps earlier work, run:
+   `mergelearn context --goal "<what to author>" --recent 10`
+   It returns recent questions, cited paths, tags, and review state. Use it to
+   deepen, reconnect, or deliberately revisit concepts rather than repeat them.
+3. Author from explicit information available in the task, conversation, code,
+   and tool results: objective, behavior change, implementation decisions,
+   trade-offs actually considered, assumptions, failure cases, verification, and
+   relevant files or commits. Never invent a rejected alternative or uncertainty.
+4. Write the AgentSetPatch JSON and run:
+   `mergelearn create-and-open --file <patch.json> [--agent <name>]`
+   It validates, stores, starts or reuses the local GUI, opens the exact lesson,
+   and prints its URL. Use `--no-open` for a headless session. On validation
+   failure, read `--json` errors, correct the patch, and retry.
 
-2. `mergelearn import --file <patch.json> [--agent <name>]`
-   Applies your AgentSetPatch. Both gates (tag-graph + card structure) must pass
-   or NOTHING is written. Cards flagged `needs_review` are reported with reasons.
-
-After a successful import, CLOSE THE LOOP: tell the user their lesson is ready
-and to run `mergelearn serve`, then open the printed URL to learn it. This is the
-one command the user runs themselves, so always hand it to them by name.
-
-The `--goal` on `context` is optional but you should pass it: it records what the
-user asked for. Verify the CLI is wired with `mergelearn --help`. `mergelearn
-serve` prints a URL and blocks until Ctrl+C; it does not auto-launch a browser.
+`mergelearn import` remains the lower-level storage primitive. Use it for scripts
+or dry runs; use `create-and-open` for normal coding-agent workflow.
 
 ## The single rule that determines provenance quality
 
@@ -97,11 +100,11 @@ Field notes: `front.prompt` must end in `?` and must NOT contain the
 illustrative only — it is NOT provenance and is never frozen. Only `sourceRefs`
 are re-read from disk.
 
-## A set is a lesson: give it an objective and interactions
+## A set is a lesson: use the right amount of material
 
-A set is not a loose pile of facts — it is one lesson with one **objective** and
-6-10 ordered activities that build toward it. Author the whole lesson, not
-isolated cards. Set-level fields:
+A set is one lesson with one **objective**. It may have one card or several; make
+only the cards that genuinely improve understanding. Do not pad a short insight
+into a fixed-size packet. Set-level fields:
 
 - `objective` — one observable capability the learner earns ("predict when `?`
   returns early", not "understand errors"). One objective per set.
@@ -130,10 +133,10 @@ read. Three types:
 - `{ "type": "flashcard" }` (or omit `interaction`) — legacy reveal-then-self-
   grade. Use ONLY for pure recall where no attempt is meaningful.
 
-A good lesson mixes at least one `self_response` and one `choice`, and ends with
-a harder transfer/application card. `altitude` (`line|function|module|service|
-system`) tags the abstraction level so the learner can climb a concept from
-syntax to architecture — set it per card when it varies.
+Choose the interaction that fits the material. A transfer or application card is
+valuable when the task supports one, but it is not a quota. `altitude`
+(`line|function|module|service|system`) tags the abstraction level so the learner
+can climb a concept from syntax to architecture; set it per card when it varies.
 
 ### Writing choices that teach
 

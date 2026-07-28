@@ -16,6 +16,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -37,7 +38,9 @@ import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from './c
 import { searchCards } from './core/library/searchCards.js';
 import { exportLessonBundle, exportProfileBackup, importLessonBundle, restoreProfileBackup } from './core/library/bundle.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
-import { startReviewServer } from './session/server.js';
+import { ensureServer, startManagedServer } from './session/managedServer.js';
+import { createAndOpen } from './createAndOpen.js';
+import { appendDogfoodEvent, dogfoodEventCounts } from './core/library/dogfood.js';
 import {
   AGENT_ADAPTERS, applyInstall, detectAgents, planInstall, uninstall,
   type Scope,
@@ -54,6 +57,24 @@ const packageVersion = (): string => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   return pkg.version;
 };
+
+function requestBrowserOpen(url: string): boolean {
+  const [command, args] = process.platform === 'darwin'
+    ? ['open', [url]]
+    : process.platform === 'win32'
+      ? ['cmd', ['/c', 'start', '', url]]
+      : ['xdg-open', [url]];
+  try {
+    const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+    // A missing platform opener reports asynchronously; consume it so the CLI
+    // still returns the printed URL instead of crashing.
+    child.once('error', () => undefined);
+    child.unref();
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function buildProgram(): Command {
   const program = new Command();
@@ -85,10 +106,11 @@ Manual/advanced: author a lesson yourself.
     .option('--goal <text>', 'optional: what to author, e.g. "Explain the auth changes in my last PR"')
     .option('--repo <path>', 'register + attach a repo for grounded cards')
     .option('--target-set <id>', 'author into an existing set')
-    .action(async (opts: { goal?: string; repo?: string; targetSet?: string }) => {
+    .option('--recent <n>', 'recent lessons to include for progression context', (value) => Number(value), 10)
+    .action(async (opts: { goal?: string; repo?: string; targetSet?: string; recent: number }) => {
       const root = rootFrom(homeOpt());
       const repo = opts.repo ? await registerRepo(root, opts.repo) : undefined;
-      const ctx = await buildAuthoringContext(root, { goal: opts.goal, repo, targetSetId: opts.targetSet });
+      const ctx = await buildAuthoringContext(root, { goal: opts.goal, repo, targetSetId: opts.targetSet, recent: opts.recent });
       out(JSON.stringify(ctx, null, 2));
       if (!opts.goal) note('note: no --goal given, so the agent has no steer on what to author. Add e.g. --goal "TypeScript unions" for a focused lesson.');
     });
@@ -181,6 +203,37 @@ Manual/advanced: author a lesson yourself.
       else out('Run `mergelearn serve` and open the printed URL to learn it.');
     });
 
+  program
+    .command('create-and-open')
+    .description('import an agent-authored lesson, start/reuse the local GUI, and open that lesson')
+    .requiredOption('--file <path>', 'path to the AgentSetPatch JSON')
+    .option('--agent <name>', 'authoring agent name (provenance)')
+    .option('--dry-run', 'validate and preview the outcome, write nothing')
+    .option('--json', 'emit machine-readable workflow result')
+    .option('--no-open', 'start/reuse the GUI and print the URL without launching a browser')
+    .action(async (opts: { file: string; agent?: string; dryRun?: boolean; json?: boolean; open?: boolean }) => {
+      const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
+      const result = await createAndOpen(rootFrom(homeOpt()), patch, {
+        agentName: opts.agent,
+        dryRun: opts.dryRun,
+        noOpen: opts.open === false,
+        openUrl: requestBrowserOpen,
+      });
+      if (opts.json) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
+      else if (!result.imported) {
+        out(`import REJECTED (${result.errors.length} error(s)) — nothing written:`);
+        for (const error of result.errors) out(`  - ${error.code}: ${error.message}`);
+      } else if (!result.ok) {
+        out(`lesson imported as ${result.setId}, but the local GUI did not start: ${result.errors[0]?.message}`);
+        out('Run `mergelearn serve` to open the stored lesson.');
+      } else {
+        out(`imported set "${result.setId}": ${result.cards.length} card(s)`);
+        for (const line of formatLessonSummary(result.summary!)) out(`  ${line}`);
+        out(`open: ${result.url}`);
+      }
+      if (!result.ok) process.exitCode = 1;
+    });
+
   program.command('export')
     .description('export one lesson as a shareable, state-free bundle')
     .requiredOption('--set <id>', 'set id')
@@ -190,6 +243,26 @@ Manual/advanced: author a lesson yourself.
       const manifest = await exportLessonBundle(rootFrom(homeOpt()), opts.set, opts.output);
       if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
       else out(`exported ${manifest.cardCount} cards to ${opts.output}`);
+    });
+
+  program
+    .command('skipped')
+    .description('record a meaningful task for which no lesson was created')
+    .requiredOption('--task <text>', 'completed task')
+    .requiredOption('--reason <text>', 'why no lesson was worthwhile')
+    .action(async (opts: { task: string; reason: string }) => {
+      const event = await appendDogfoodEvent(rootFrom(homeOpt()), { kind: 'skipped', task: opts.task, reason: opts.reason });
+      out(`recorded skipped task at ${event.ts}`);
+    });
+
+  program
+    .command('dogfood-summary')
+    .description('summarize local dogfooding events')
+    .option('--json', 'emit machine-readable counts')
+    .action(async (opts: { json?: boolean }) => {
+      const counts = await dogfoodEventCounts(rootFrom(homeOpt()));
+      if (opts.json) out(JSON.stringify(counts, null, 2));
+      else out(`opened=${counts.opened}\nfeedback=${counts.feedback}\ndeferred=${counts.deferred}\nskipped=${counts.skipped}`);
     });
 
   program.command('import-bundle')
@@ -375,10 +448,21 @@ Manual/advanced: author a lesson yourself.
     .option('--port <n>', 'port (default: random free port)', (v) => Number(v))
     .action(async (opts: { port?: number }) => {
       const root = rootFrom(homeOpt());
-      const { url } = await startReviewServer(root, opts.port ?? 0);
-      out(`MergeLearn review GUI running at ${url}`);
-      out('Open it in your browser. Press Ctrl+C to stop.');
-      // The listening socket keeps the process alive; nothing else to do.
+      const server = await ensureServer(root, { port: opts.port });
+      out(`MergeLearn review GUI running at ${server.url}${server.reused ? ' (reused)' : ''}`);
+      out(server.reused ? 'A local GUI is already running.' : 'Open it in your browser. It closes after inactivity.');
+    });
+
+  program
+    .command('server-run', { hidden: true })
+    .description('internal managed local server entry point')
+    .option('--port <n>', 'internal requested port', (v) => Number(v))
+    .action(async (opts: { port?: number }) => {
+      const managed = await startManagedServer(rootFrom(homeOpt()), { port: opts.port });
+      out(`MergeLearn managed review GUI running at ${managed.url}`);
+      const shutdown = () => { void managed.close().finally(() => process.exit(0)); };
+      process.once('SIGINT', shutdown);
+      process.once('SIGTERM', shutdown);
     });
 
   // Install the canonical authoring skill into coding agents' discovery dirs.
