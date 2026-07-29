@@ -33,6 +33,8 @@ export type CardSet = LessonMeta & {
   folderPath?: string; // e.g. "typescript/basics"
   repoId?: string; // OPTIONAL: a set need not be repo-bound
   tagIds: string[];
+  /** Learner preference. Absent/true = due queue; false = learn-once. */
+  spacedRepetition?: boolean;
   createdVia: 'agent_import' | 'manual' | 'migration';
   createdAt: string;
   updatedAt: string;

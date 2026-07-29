@@ -15,7 +15,7 @@ import { loadUserPreferences } from '../core/library/userPreferences.js';
 import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
 import { searchCards } from '../core/library/searchCards.js';
 import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
-import { listSetSummaries, loadSet, loadOrder, listSetIds } from '../core/library/setStore.js';
+import { listSetSummaries, loadSet, loadOrder, listSetIds, saveSet } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
 import { loadTags } from '../core/library/tagStore.js';
@@ -28,7 +28,7 @@ import {
 import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, ReviewSession, SetOrder, SetSummary } from '../core/library/types.js';
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
-import { appendDogfoodEvent } from '../core/library/dogfood.js';
+import { appendDogfoodEvent, listDogfoodEvents } from '../core/library/dogfood.js';
 import { join } from 'node:path';
 import { MAX_REQUEUE, REQUEUE_GAP, planRequeue } from './requeue.js';
 
@@ -39,6 +39,7 @@ export type ReviewServerOptions = {
   managed?: boolean;
   onActivity?: () => void;
   onLessonOpen?: (setId: string, source?: string) => void | Promise<void>;
+  dogfoodControls?: boolean;
 };
 
 export async function startReviewServer(root: string, port = 0, options: ReviewServerOptions = {}): Promise<ReviewServer> {
@@ -84,7 +85,8 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
     if (await loadSet(root, setId)) {
       await options.onLessonOpen?.(setId, url.searchParams.get('source') ?? undefined);
     }
-    return sendHtml(res, 200, await renderSetBrowser(root, setId));
+    const showDogfood = options.dogfoodControls ?? process.env.MERGELEARN_DOGFOOD_CONTROLS !== '0';
+    return sendHtml(res, 200, await renderSetBrowser(root, setId, showDogfood));
   }
   // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
   // Empty body / empty object both mean "everything due."
@@ -104,6 +106,7 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res);
   if (method === 'POST' && url.pathname === '/api/dogfood/feedback') return dogfoodFeedbackApi(root, req, res);
   if (method === 'POST' && url.pathname === '/api/dogfood/defer') return dogfoodDeferApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/set/spaced-repetition') return setSpacedRepetitionApi(root, req, res);
   // Manage tab (doc 06): server-rendered; card membership is embedded in the
   // page so match counts recompute client-side (no per-keystroke round-trip).
   if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root));
@@ -164,8 +167,8 @@ async function dogfoodFeedbackApi(root: string, req: IncomingMessage, res: Serve
   let body: Record<string, unknown>;
   try { body = await readJson(req) as Record<string, unknown>; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
-  if (typeof body.setId !== 'string' || typeof body.worthAnswering !== 'boolean') {
-    return sendJson(res, 400, { ok: false, error: 'setId and worthAnswering are required' });
+  if (typeof body.setId !== 'string' || (typeof body.worthAnswering !== 'boolean' && body.worthAnswering !== null)) {
+    return sendJson(res, 400, { ok: false, error: 'setId and worthAnswering (boolean or null) are required' });
   }
   const note = typeof body.note === 'string' ? body.note.slice(0, 1000) : undefined;
   const event = await appendDogfoodEvent(root, { kind: 'feedback', setId: body.setId, worthAnswering: body.worthAnswering, ...(note ? { note } : {}) });
@@ -179,6 +182,19 @@ async function dogfoodDeferApi(root: string, req: IncomingMessage, res: ServerRe
   if (typeof body.setId !== 'string') return sendJson(res, 400, { ok: false, error: 'setId is required' });
   const event = await appendDogfoodEvent(root, { kind: 'deferred', setId: body.setId });
   return sendJson(res, 200, { ok: true, event });
+}
+
+async function setSpacedRepetitionApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+  let body: Record<string, unknown>;
+  try { body = await readJson(req) as Record<string, unknown>; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (typeof body.setId !== 'string' || typeof body.enabled !== 'boolean') {
+    return sendJson(res, 400, { ok: false, error: 'setId and enabled are required' });
+  }
+  const set = await loadSet(root, body.setId);
+  if (!set) return sendJson(res, 404, { ok: false, error: 'set not found' });
+  await saveSet(root, { ...set, spacedRepetition: body.enabled, updatedAt: new Date().toISOString() });
+  return sendJson(res, 200, { ok: true, enabled: body.enabled });
 }
 
 /** /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
@@ -588,18 +604,19 @@ async function renderHome(root: string): Promise<string> {
  * expandable panel. Lets you revisit a card's front, frozen snippets, answer,
  * explanation and examples at any time — independent of the review schedule.
  */
-async function renderSetBrowser(root: string, setId: string): Promise<string> {
+async function renderSetBrowser(root: string, setId: string, showDogfood: boolean): Promise<string> {
   const set = await loadSet(root, setId);
   if (!set) {
     const body = `<p><a href="/">← Home</a></p><h1>Set not found</h1>` +
       `<div class="empty">No set with id <code>${escapeHtml(setId)}</code>.</div>`;
     return pageShell('MergeLearn — Set', 'set', body);
   }
-  const [cards, due, order, attempted] = await Promise.all([
+  const [cards, due, order, attempted, dogfoodEvents] = await Promise.all([
     loadCardsForSet(root, setId),
     getDueCards(root, new Date(), { setIds: [setId] }),
     loadOrder(root, setId),
     attemptedCardIds(root, setId),
+    showDogfood ? listDogfoodEvents(root) : Promise.resolve([]),
   ]);
   const dueIds = new Set(due.map((c) => c.id));
   const now = Date.now();
@@ -627,8 +644,10 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
     const ctx = v.context ? `<div class="ctx markdown-body">${v.contextHtml || inlineCode(v.context)}</div>` : '';
     // Summary holds a safe one-line preview (a <summary> can't contain block
     // code); the full prompt — fenced code and all — renders in the body.
+    const inspectCommand = `mergelearn show --set ${shellQuote(setId)} --card ${shellQuote(card.id)}`;
     return `<details class="browse-card"><summary><span class="q">${promptPreview(v.prompt)}</span>${state}</summary>` +
       `<div class="browse-body">` +
+      `<button type="button" class="secondary-action copy-card" data-copy-command="${escapeHtml(inspectCommand)}">Copy card command</button>` +
       `<p class="label">Question</p><div class="prompt-full markdown-body">${v.promptHtml || inlineCode(v.prompt)}</div>` +
       `${ctx}${srcs}` +
       `<p class="label">Answer</p><p class="short">${inlineCode(v.shortAnswer)}</p>` +
@@ -653,15 +672,28 @@ async function renderSetBrowser(root: string, setId: string): Promise<string> {
     : progress.state === 'in_progress' ? `${progress.attemptedCount}/${progress.total} done`
     : 'Not started';
   const est = set.estimatedMinutes ? ` · ~${set.estimatedMinutes} min` : '';
-  const dogfood = `<div class="lesson-actions dogfood-actions">` +
-    `<button class="secondary-action" data-dogfood="defer">Not now</button>` +
-    `<button class="secondary-action" data-dogfood="worth">Worth it</button>` +
-    `<button class="secondary-action" data-dogfood="not-worth">Not worth it</button></div>` +
-    `<script>(function(){var id=${JSON.stringify(setId)};document.querySelectorAll('[data-dogfood]').forEach(function(b){b.onclick=function(){var a=b.getAttribute('data-dogfood');var body=a==='defer'?{setId:id}:{setId:id,worthAnswering:a==='worth'};fetch('/api/dogfood/'+(a==='defer'?'defer':'feedback'),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}).then(function(){b.textContent='Recorded';b.disabled=true;});};});var t=null;function ping(){if(document.visibilityState==='visible')fetch('/api/keepalive').catch(function(){});}function start(){if(!t){ping();t=setInterval(ping,60000);}}function stop(){if(t){clearInterval(t);t=null;}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')start();else stop();});start();})();</script>`;
+  const lastFeedback = dogfoodEvents.filter((event) => event.kind === 'feedback' && event.setId === setId).at(-1);
+  const feedbackValue = lastFeedback?.kind === 'feedback' ? lastFeedback.worthAnswering : null;
+  const dogfood = showDogfood ? `<div class="lesson-actions dogfood-actions" aria-label="Dogfood feedback">` +
+    `<button class="secondary-action" data-dogfood-defer>Not now</button>` +
+    `<button class="secondary-action${feedbackValue === true ? ' sel' : ''}" data-dogfood="worth" aria-pressed="${feedbackValue === true}">Worth it</button>` +
+    `<button class="secondary-action${feedbackValue === false ? ' sel' : ''}" data-dogfood="not-worth" aria-pressed="${feedbackValue === false}">Not worth it</button></div>` : '';
+  const scheduling = `<label class="schedule-toggle"><input type="checkbox" id="spaced-repetition"${set.spacedRepetition === false ? '' : ' checked'}>` +
+    ` Include in spaced repetition</label>`;
+  const dogfoodScript = showDogfood
+    ? `document.querySelectorAll('[data-dogfood]').forEach(function(b){b.onclick=function(){var on=b.getAttribute('aria-pressed')==='true';var value=on?null:b.getAttribute('data-dogfood')==='worth';fetch('/api/dogfood/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,worthAnswering:value})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)return;document.querySelectorAll('[data-dogfood]').forEach(function(x){x.classList.remove('sel');x.setAttribute('aria-pressed','false');});if(value!==null){b.classList.add('sel');b.setAttribute('aria-pressed','true');}});};});` +
+      `var defer=document.querySelector('[data-dogfood-defer]');if(defer)defer.onclick=function(){fetch('/api/dogfood/defer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id})}).then(function(r){return r.json();}).then(function(j){if(j.ok){defer.textContent='Deferred';setTimeout(function(){defer.textContent='Not now';},1200);}});};`
+    : '';
+  const controlsScript = `<script>(function(){var id=${JSON.stringify(setId)};` +
+    `function copyText(text,b){var done=function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy card command';},1200);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done);return;}var a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();try{document.execCommand('copy');done();}finally{a.remove();}}` +
+    `document.querySelectorAll('[data-copy-command]').forEach(function(b){b.onclick=function(){copyText(b.getAttribute('data-copy-command'),b);};});` +
+    dogfoodScript +
+    `var sr=document.getElementById('spaced-repetition');if(sr)sr.onchange=function(){var enabled=sr.checked;sr.disabled=true;fetch('/api/set/spaced-repetition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,enabled:enabled})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)sr.checked=!enabled;}).finally(function(){sr.disabled=false;});};` +
+    `var t=null;function ping(){if(document.visibilityState==='visible')fetch('/api/keepalive').catch(function(){});}function start(){if(!t){ping();t=setInterval(ping,60000);}}function stop(){if(t){clearInterval(t);t=null;}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')start();else stop();});start();})();</script>`;
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
     `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'}${est} · ` +
     `<span class="progress-pill state-${progress.state}">${pillLabel}</span> · ${due.length} due</p>` +
-    `${objective}${actions}${dogfood}` +
+    `${objective}${actions}${scheduling}${dogfood}${controlsScript}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`);
   return pageShell(`MergeLearn — ${set.title}`, 'set', body);
 }
@@ -784,12 +816,8 @@ async function renderManage(root: string): Promise<string> {
     `Bar shows <strong>mastery</strong>: share of cards learned</span>`;
 
   const body = `<h1>Manage</h1>` +
-    `<p class="muted">Search, fix, or archive cards. Folder and tag filters below feed the Practice tab.</p>` +
-    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status"></span></div>` +
-    `<div class="card-tools"><input id="card-search" type="search" placeholder="Search cards and lessons" aria-label="Search cards">` +
-    `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
-    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div></section>` +
-    `<h2 style="margin-top:32px">Practice filters</h2>` +
+    `<p class="muted">Choose what to practice, then search, inspect, fix, or archive cards.</p>` +
+    `<section class="practice-filters"><h2>Practice filters</h2>` +
     `<p class="muted">Pick the concepts you want to drill. The active filter feeds the Practice tab.</p>` +
     `<div class="active-filter" id="active-filter">` +
     `<span class="muted" id="match-count">—</span>` +
@@ -800,7 +828,11 @@ async function renderManage(root: string): Promise<string> {
     `<ul class="tree">${tree}</ul>` +
     combinator +
     `<div class="section-head" style="margin-top:24px"><h2>Tags</h2>${masteryLegend}</div>` +
-    `<div class="tag-grid">${tagChips}</div>` +
+    `<div class="tag-grid">${tagChips}</div></section>` +
+    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status"></span></div>` +
+    `<div class="card-tools"><input id="card-search" type="search" placeholder="Search cards and lessons" aria-label="Search cards and lessons">` +
+    `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
+    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div></section>` +
     `<script type="application/json" id="ml-cards">${cardsJson}</script>`;
   return pageShell('MergeLearn — Manage', 'manage', body) +
     `<script>${manageScript()}</script>`;
@@ -813,12 +845,17 @@ var CARDS=[];
 try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function cardStatus(t){var n=document.getElementById('card-status');if(n)n.textContent=t;}
+function copyText(text,button){
+  var done=function(){button.textContent='Copied';setTimeout(function(){button.textContent='Copy card command';},1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(function(){cardStatus('Copy failed');});return;}
+  var area=document.createElement('textarea');area.value=text;document.body.appendChild(area);area.select();try{document.execCommand('copy');done();}catch(e){cardStatus('Copy failed');}area.remove();
+}
 function cardHtml(c){
   var action=c.status==='archived'?'unarchive':'archive';
   return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
     '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><span class="badge next">'+esc(c.status)+'</span></div>'+
     '<div class="muted small">'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</div><p>'+esc(c.shortAnswer)+'</p>'+
-    '<div class="curation-actions"><button type="button" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button>'+
+    '<div class="curation-actions"><button type="button" data-copy-card>Copy card command</button><button type="button" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button>'+
     '<details><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
     '<label>Short answer<textarea data-edit="shortAnswer" rows="2">'+esc(c.shortAnswer)+'</textarea></label>'+
     '<label>Explanation<textarea data-edit="explanation" rows="4">'+esc(c.explanation)+'</textarea></label>'+
@@ -837,7 +874,11 @@ async function cardAction(button){
 }
 var searchTimer=null;document.getElementById('card-search').addEventListener('input',function(){clearTimeout(searchTimer);searchTimer=setTimeout(loadCardResults,180);});
 document.getElementById('show-archived').addEventListener('change',loadCardResults);
-document.getElementById('card-results').addEventListener('click',function(e){var b=e.target.closest&&e.target.closest('[data-card-action]');if(b)cardAction(b);});
+document.getElementById('card-results').addEventListener('click',function(e){
+  var copy=e.target.closest&&e.target.closest('[data-copy-card]');
+  if(copy){var row=copy.closest('.curation-card');var quote=function(v){return "'"+String(v).replace(/'/g,"'\\''")+"'";};copyText('mergelearn show --set '+quote(row.getAttribute('data-set'))+' --card '+quote(row.getAttribute('data-card')),copy);return;}
+  var b=e.target.closest&&e.target.closest('[data-card-action]');if(b)cardAction(b);
+});
 loadCardResults();
 function statusMsg(t){var s=document.getElementById('match-count');s.textContent=t;}
 function selectedFilter(){var f={};if(selected.folderPaths.length)f.folderPaths=selected.folderPaths;if(selected.tagIds.length)f.tagIds=selected.tagIds;if(Object.keys(f).length)f.combinator=selected.combinator;return f;}
@@ -1078,7 +1119,7 @@ function renderPractice(): string {
   const body =
     `<h1>Practice</h1>` +
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
-    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" hidden>Undo last grade</button></div>` +
+    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" hidden>Undo last answer</button></div>` +
     `<div id="mount"></div>` +
     `<div class="status" id="status"></div>` +
     `<script>${practiceScript()}</script>`;
@@ -1150,7 +1191,7 @@ function render(){
 }
 function setConfidence(n){
   confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});
-  var c=queue[pos];if(!c||!c.interaction||c.interaction.type==='flashcard')reveal();
+  var c=queue[pos];if(!c||!c.interaction||c.interaction.type==='flashcard'||n===1)reveal();
 }
 // Present blocks in a non-solved order. Fisher-Yates, then if it landed on the
 // exact solution (likely for tiny sets) rotate once so the task never starts done.
@@ -1204,9 +1245,14 @@ function wireParsons(){
 function collectAttempt(){
   var c=queue[pos],i=c.interaction||{type:'flashcard'};
   if(i.type==='flashcard')return {interaction:'flashcard',elapsedMs:Date.now()-cardStartedAt};
+  if(confidence===1){
+    if(i.type==='self_response')return {interaction:'self_response',responseText:'',elapsedMs:Date.now()-cardStartedAt};
+    if(i.type==='choice')return {interaction:'choice',selectedOptionIds:[],correct:false,elapsedMs:Date.now()-cardStartedAt};
+    return {interaction:'parsons',orderedBlockIds:[],correct:false,elapsedMs:Date.now()-cardStartedAt};
+  }
   if(i.type==='self_response'){
     var text=(document.getElementById('attempt-text').value||'').trim();
-    if(!text){statusMsg('Write an answer first.');return null;}
+    if(!text&&confidence!==1){statusMsg('Write an answer, or choose Guessing.');return null;}
     return {interaction:'self_response',responseText:text,elapsedMs:Date.now()-cardStartedAt};
   }
   if(i.type==='parsons'){
@@ -1223,7 +1269,7 @@ function collectAttempt(){
 }
 function attemptReviewHtml(c,a){
   if(!a||a.interaction==='flashcard')return '';
-  if(a.interaction==='self_response')return '<p class="label">Your answer</p><p class="learner-answer">'+esc(a.responseText)+'</p>';
+  if(a.interaction==='self_response')return '<p class="label">Your answer</p><p class="learner-answer">'+(a.responseText?esc(a.responseText):'<span class="muted">No answer — marked Guessing</span>')+'</p>';
   if(a.interaction==='parsons'){
     var pi=c.interaction;var byId={};(pi.blocks||[]).forEach(function(b){byId[b.id]=b;});
     var correctHtml=(pi.correctOrder||[]).map(function(id){var b=byId[id]||{code:id};return '<li><pre><code>'+esc(b.code)+'</code></pre></li>';}).join('');
@@ -1232,6 +1278,7 @@ function attemptReviewHtml(c,a){
   }
   var i=c.interaction;var selected=new Set(a.selectedOptionIds||[]);
   var feedback=i.options.filter(function(o){return selected.has(o.id);}).map(function(o){return '<li><strong>'+esc(o.text)+'</strong> — '+esc(o.feedback)+'</li>';}).join('');
+  if(!feedback)feedback='<li class="muted">No answer — marked Guessing</li>';
   return '<p class="result '+(a.correct?'correct':'incorrect')+'">'+(a.correct?'Correct':'Not quite')+'</p><p class="label">Feedback on your choice</p><ul class="choice-feedback">'+feedback+'</ul>';
 }
 function reveal(){
@@ -1276,7 +1323,7 @@ async function undoGrade(){
     pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);
     reviewedCards[lastGrade.cardId]=Math.max(0,(reviewedCards[lastGrade.cardId]||1)-1);
     if(!reviewedCards[lastGrade.cardId])delete reviewedCards[lastGrade.cardId];
-    lastGrade=null;render();syncUndo();statusMsg('Last grade undone');
+    lastGrade=null;render();syncUndo();statusMsg('Last answer undone');
   }catch(e){statusMsg('undo failed');}finally{mutationBusy=false;}
 }
 function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
@@ -1350,6 +1397,10 @@ function sendText(res: ServerResponse, status: number, body: string): void {
 
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 // ---- HTML shell ----
@@ -1576,6 +1627,10 @@ button.primary:hover{background:var(--accent-hover)}
 .lesson-actions{display:flex;align-items:center;gap:12px;margin:16px 0 4px;flex-wrap:wrap}
 .secondary-action{padding:9px 16px;border-radius:var(--radius-sm);border:1px solid var(--border);color:var(--text);font-weight:500}
 .secondary-action:hover{background:var(--hover);text-decoration:none}
+.secondary-action.sel{background:rgba(99,102,241,.18);border-color:var(--accent);color:#fff}
+.schedule-toggle{display:inline-flex;align-items:center;gap:8px;margin:14px 0 2px;color:var(--muted);font-size:13px;cursor:pointer}
+.schedule-toggle input{accent-color:var(--accent)}
+.copy-card{float:right;margin:0 0 10px 12px}
 .lesson-list{display:grid;gap:12px;margin-top:16px;list-style:none;padding:0}
 .lesson-card{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);padding:16px 18px}
 .lesson-card:hover{border-color:var(--accent)}

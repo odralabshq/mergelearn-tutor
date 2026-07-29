@@ -192,6 +192,8 @@ async function finalize(
     prerequisiteTagIds: (patch.set.prerequisiteTagIds ?? existing?.prerequisiteTagIds)?.map(resolveTagRef),
     estimatedMinutes: patch.set.estimatedMinutes ?? existing?.estimatedMinutes,
     defaultAltitude: patch.set.defaultAltitude ?? existing?.defaultAltitude,
+    // Scheduling is a learner preference, not agent-authored lesson metadata.
+    spacedRepetition: existing?.spacedRepetition,
     createdVia: existing?.createdVia ?? 'agent_import',
     createdAt: existing?.createdAt ?? iso,
     updatedAt: iso,

@@ -8,7 +8,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { importAgentSet } from '../../../src/core/library/importAgentSet.js';
 import { registerRepo } from '../../../src/core/library/repoRegistry.js';
-import { loadSet, loadOrder, listSetIds } from '../../../src/core/library/setStore.js';
+import { loadSet, loadOrder, listSetIds, saveSet } from '../../../src/core/library/setStore.js';
 import { loadCardsForSet } from '../../../src/core/library/cardStore.js';
 import { loadTags } from '../../../src/core/library/tagStore.js';
 import type { AgentSetPatch } from '../../../src/core/library/types.js';
@@ -82,6 +82,26 @@ describe('importAgentSet — the only card-creation path', () => {
     expect(order?.cardIds).toEqual(cards.map((c) => c.id).sort((a, b) =>
       order!.cardIds.indexOf(a) - order!.cardIds.indexOf(b)));
     expect(order?.cardIds).toHaveLength(2);
+  });
+
+  it('preserves the learner spaced-repetition preference on re-import', async () => {
+    const r = await freshRoot();
+    const first = await importAgentSet(r, conceptualPatch(), { agentName: 'test-agent' });
+    const set = await loadSet(r, first.setId!);
+    await saveSet(r, { ...set!, spacedRepetition: false });
+
+    const patch = conceptualPatch();
+    const tagId = (await loadTags(r)).find((tag) => tag.label === 'unions')!.id;
+    patch.set.description = 'Updated by the agent';
+    patch.tagPatch = { reuse: [tagId], add: [] };
+    patch.cards.forEach((card) => { card.tagRefs = [tagId]; });
+    const updated = await importAgentSet(r, patch, { agentName: 'test-agent' });
+    expect(updated.ok).toBe(true);
+
+    expect(await loadSet(r, first.setId!)).toMatchObject({
+      description: 'Updated by the agent',
+      spacedRepetition: false,
+    });
   });
 
   it('freezes cited code from DISK for a repo-grounded card (trust boundary)', async () => {
