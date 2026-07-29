@@ -20,7 +20,7 @@ describe('public package manifest', () => {
   it('points consumers at the complete built artifact', async () => {
     const pkg = JSON.parse(await readFile('package.json', 'utf8')) as PackageJson;
     expect(pkg.name).toBe('mergelearn');
-    expect(pkg.version).toBe('0.1.0');
+    expect(pkg.version).toBe('0.1.1');
     expect(pkg.main).toBe('dist/index.js');
     expect(pkg.types).toBe('dist/index.d.ts');
     expect(pkg.bin?.mergelearn).toBe('./dist/libCli.js');
