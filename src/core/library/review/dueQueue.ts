@@ -65,6 +65,7 @@ export async function getDueCards(root: string, now = new Date(), filter?: DueFi
   const due: Card[] = [];
   for (const setId of await listSetIds(root)) {
     const set = await loadSet(root, setId);
+    if (set?.spacedRepetition === false) continue;
     const cards = await loadCardsForSet(root, setId);
     for (const card of cards) {
       if (card.status !== 'active') continue;

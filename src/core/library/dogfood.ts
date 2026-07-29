@@ -4,13 +4,13 @@ import { libraryPaths } from './libraryStore.js';
 
 export type DogfoodEvent =
   | { ts: string; kind: 'opened'; setId: string; source?: string }
-  | { ts: string; kind: 'feedback'; setId: string; worthAnswering: boolean; note?: string }
+  | { ts: string; kind: 'feedback'; setId: string; worthAnswering: boolean | null; note?: string }
   | { ts: string; kind: 'deferred'; setId: string }
   | { ts: string; kind: 'skipped'; task: string; reason: string };
 
 export type NewDogfoodEvent =
   | { kind: 'opened'; setId: string; source?: string }
-  | { kind: 'feedback'; setId: string; worthAnswering: boolean; note?: string }
+  | { kind: 'feedback'; setId: string; worthAnswering: boolean | null; note?: string }
   | { kind: 'deferred'; setId: string }
   | { kind: 'skipped'; task: string; reason: string };
 

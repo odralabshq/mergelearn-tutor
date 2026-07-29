@@ -151,7 +151,13 @@ source paths, and review state. `create-and-open` is the normal agent workflow:
 it validates, stores, starts or reuses one local GUI, opens the exact lesson, and
 prints the URL. `import` is the lower-level storage primitive for scripts and dry
 runs. `dogfood-summary` counts local trial events; `skipped` records meaningful
-completed work for which the developer deliberately made no lesson.
+completed work for which the developer deliberately made no lesson. Early-stage
+"Worth it" feedback controls are shown by default; set
+`MERGELEARN_DOGFOOD_CONTROLS=0` before starting the server to hide them.
+
+Each lesson is included in spaced repetition by default. Its lesson page has an
+**Include in spaced repetition** checkbox for a reversible learn-once opt-out.
+This learner preference survives later agent re-imports of the lesson.
 
 Lesson bundles contain authored teaching content, interactions, referenced tags,
 assets, and frozen source excerpts. They exclude review schedules, sessions,

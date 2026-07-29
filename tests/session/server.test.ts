@@ -104,6 +104,19 @@ describe('review GUI server (functional)', () => {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setId: 'server-deck' }),
     });
     expect(await deferred.json()).toMatchObject({ ok: true, event: { kind: 'deferred', setId: 'server-deck' } });
+
+    const clear = await fetch(`${running.url}/api/dogfood/feedback`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setId: 'server-deck', worthAnswering: null }),
+    });
+    expect(await clear.json()).toMatchObject({ ok: true, event: { kind: 'feedback', worthAnswering: null } });
+  });
+
+  it('hides dogfood controls when the development flag is disabled', async () => {
+    running = await startReviewServer(await seed(), 0, { dogfoodControls: false });
+    const text = await (await fetch(`${running.url}/set/server-deck`)).text();
+    expect(text).not.toContain('data-dogfood=');
+    expect(text).not.toContain('data-dogfood-defer');
   });
 
   it('renders an onboarding empty state (bridge to the agent) when the library has no sets', async () => {
@@ -157,7 +170,9 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('id="card-search"');
     expect(text).toContain('/api/cards?q=');
     expect(text).toContain('data-card-action');
+    expect(text).toContain('data-copy-card');
     expect(text).toContain('Edit teaching text');
+    expect(text.indexOf('Practice filters')).toBeLessThan(text.indexOf('id="card-search"'));
   });
 
   it('serves the Practice shell', async () => {
@@ -168,6 +183,9 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('/api/due'); // client fetches the queue
     expect(text).toContain('function planRequeue');
     expect(text).toContain('/api/session/undo');
+    expect(text).toContain('Undo last answer');
+    expect(text).toContain("c.interaction.type==='flashcard'||n===1");
+    expect(text).toContain("responseText:''");
     expect(text).toContain("/^[1-4]$/.test(e.key)&&isRevealed()");
     expect(text).toContain('MAX_REQUEUE=2');
     expect(text).toContain('waitingBacklog');
@@ -177,6 +195,36 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('aria-label="Good, shortcut 3"');
     expect(text).toContain('@media(max-width:600px)');
     expect(text).toContain('.hint{display:none}');
+  });
+
+  it('renders copy commands, reversible feedback, and default-on scheduling on a lesson', async () => {
+    running = await startReviewServer(await seed());
+    const text = await (await fetch(`${running.url}/set/server-deck`)).text();
+    expect(text).toContain('Copy card command');
+    expect(text).toContain('mergelearn show --set');
+    expect(text).toContain('id="spaced-repetition" checked');
+    expect(text).toContain('worthAnswering:value');
+    expect(text).toContain('var value=on?null:');
+  });
+
+  it('can opt a lesson out of spaced repetition and re-enable it', async () => {
+    const root = await seed();
+    running = await startReviewServer(root);
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(1);
+
+    const disable = await fetch(`${running.url}/api/set/spaced-repetition`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setId: 'server-deck', enabled: false }),
+    });
+    expect(await disable.json()).toEqual({ ok: true, enabled: false });
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(0);
+    expect((await (await fetch(`${running.url}/api/lesson?set=server-deck`)).json()).cards).toHaveLength(1);
+
+    await fetch(`${running.url}/api/set/spaced-repetition`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setId: 'server-deck', enabled: true }),
+    });
+    expect((await (await fetch(`${running.url}/api/due`)).json()).total).toBe(1);
   });
 
   it('/api/due returns the due card with its self-contained back', async () => {
