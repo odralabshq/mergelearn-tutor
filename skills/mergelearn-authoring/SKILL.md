@@ -29,13 +29,15 @@ pass. Your job is to pick strong targets and write cards that genuinely teach.
    trade-offs actually considered, assumptions, failure cases, verification, and
    relevant files or commits. Never invent a rejected alternative or uncertainty.
 4. Write the AgentSetPatch JSON and run:
-   `mergelearn create-and-open --file <patch.json> [--agent <name>]`
+   `mergelearn apply --file <patch.json> [--agent <name>] --open`
    It validates, stores, starts or reuses the local GUI, opens the exact lesson,
-   and prints its URL. Use `--no-open` for a headless session. On validation
-   failure, read `--json` errors, correct the patch, and retry.
+   and prints its URL. Omit `--open` for a headless session. On validation
+   failure, add the global `--json` option, read the structured errors, correct
+   the patch, and retry.
 
-`mergelearn import` remains the lower-level storage primitive. Use it for scripts
-or dry runs; use `create-and-open` for normal coding-agent workflow.
+`mergelearn apply` is the only card-creation path. Use `--dry-run` to validate
+without writing and `--open` for the normal coding-agent workflow. `mergelearn
+import` is reserved for installing a shared `.mergelearn.zip` lesson bundle.
 
 ## The single rule that determines provenance quality
 
@@ -47,7 +49,7 @@ Conceptual cards (no repo) simply omit `sourceRefs` — that is fully supported.
 
 ## AgentSetPatch schema (what `--file` expects)
 
-One JSON object per import. `tagPatch.add` proposes NEW tags (referenced by
+One JSON object per apply. `tagPatch.add` proposes NEW tags (referenced by
 `localId`); `tagPatch.reuse` lists existing tag ids you are reusing. `order`
 must cover exactly the cards in this patch (by `localId`).
 

@@ -18,7 +18,7 @@ sets, cards, tags, and per-sitting review sessions — all inspectable.
 There are two roles:
 
 - **Author** (a coding agent): creates cards via the two-step handshake
-  (`context` → `import`). That workflow lives in the `mergelearn-authoring`
+  (`context` → `apply`). That workflow lives in the `mergelearn-authoring`
   skill — load it when the task is *making* cards.
 - **Learner** (this skill): reviews due cards, browses the library, and runs the
   local GUI. That is what the commands below do.
@@ -34,26 +34,44 @@ yourself — grade through `grade` (or the GUI) so scheduling updates correctly.
 
 Run the linked binary `mergelearn` (or `node dist/libCli.js` in this repo).
 A global `--home <path>` overrides the library root; otherwise `MERGELEARN_HOME`
-or `~/.mergelearn` is used. Verify wiring with `mergelearn --help` — it lists
-every command below.
+or `~/.mergelearn` is used. Global `--json` makes operational output
+machine-readable and global `--yes` confirms destructive/bulk actions; global
+options work before or after the subcommand. Verify wiring with
+`mergelearn --help`; use `mergelearn help --all` for deprecated/internal names.
 
 ## Review loop (the learner path)
 
-1. `mergelearn sets` — list card sets (id, title, card count, folder).
+1. `mergelearn list sets` — list lessons (id, title, card count, folder).
 2. `mergelearn due [--set <id>] [--tag <id>] [--folder <path>]` — what is due
    now, optionally scoped. Empty filter = everything due across the library.
-3. `mergelearn show --set <id> --card <id>` — read one card's front + back
+3. `mergelearn show <setId/cardId>` — read one card's front + back
    (question, context, short answer, full explanation, and any frozen source
    snippet). Use this to learn by reading without affecting scheduling.
-4. `mergelearn grade --card <id> --rating <1-4>` — grade a DUE card
+4. `mergelearn grade <setId/cardId> <1-4>` — grade a DUE card
    (1 Again · 2 Hard · 3 Good · 4 Easy). This advances FSRS and sets the next
    due date. The card must currently be due.
 
+`setId/cardId` is the canonical card reference. It is shown by `list cards` and
+copied by the browser's **Copy reference** button. Older `--set/--card` flags
+still work during migration but should not be authored into new scripts.
+
+## Library health and learner model
+
+- `mergelearn mastery` — demonstrated mastery by overlapping skill tag and by
+  folder. Add `--json` when an agent should adapt explanations to known gaps.
+- `mergelearn check` — re-check frozen repository citations and report files,
+  lines, or commits that drifted or disappeared.
+- `mergelearn prune` — preview stale cards that could be archived. It changes
+  nothing unless `--yes` is supplied; archiving remains reversible.
+- `mergelearn status` — installed version, selected library, and managed server
+  state/URL.
+
 ## The local review GUI (recommended)
 
-`mergelearn serve [--port <n>]` starts the offline review server and prints a
-URL like `http://127.0.0.1:PORT`. It does NOT auto-open a browser — open the URL
-yourself. The process blocks the terminal and stays up until Ctrl+C. Three tabs:
+`mergelearn serve [--port <n>]` starts or reuses the managed offline review
+server and prints a URL like `http://127.0.0.1:PORT`. The command returns; the
+server stays available while active and closes after inactivity. Open the URL
+if the browser is not already there. Three tabs:
 
 - **Home** — sets and what's due.
 - **Practice** — one card at a time: rate confidence → reveal → grade. The short
@@ -66,7 +84,7 @@ yourself. The process blocks the terminal and stays up until Ctrl+C. Three tabs:
 
 ## Authoring is a separate skill
 
-To CREATE cards, load `mergelearn-authoring`: it covers the `context` → `import`
+To CREATE cards, load `mergelearn-authoring`: it covers the `context` → `apply`
 handshake, the `AgentSetPatch` schema, and how to write explanations that teach.
 Don't hand-write cards into `MERGELEARN_HOME`.
 
@@ -75,7 +93,7 @@ Don't hand-write cards into `MERGELEARN_HOME`.
 - `mergelearn <cmd>` printing nothing usually means a stale build — rebuild
   (`npm run build`) so the linked bin points at current `dist/`.
 - Nothing due? The library may be empty (author some cards) or everything is
-  scheduled for later — `sets` confirms whether cards exist at all.
+  scheduled for later — `list sets` confirms whether cards exist at all.
 - `grade` only accepts a card that is currently due; a "not due" result means
   FSRS has it scheduled ahead, not that it's missing.
 - Wrong `--home` (or unset `MERGELEARN_HOME`) points at a different library and

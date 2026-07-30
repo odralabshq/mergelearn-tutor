@@ -44,7 +44,7 @@ export async function createAndOpen(
 
   try {
     const server = await (options.ensure ?? ensureServer)(root);
-    const url = `${server.url}/set/${encodeURIComponent(imported.setId!)}?source=create-and-open`;
+    const url = `${server.url}/set/${encodeURIComponent(imported.setId!)}?source=apply-open`;
     const openRequested = options.noOpen ? false : (options.openUrl?.(url) ?? false);
     return { ok: true, imported: true, setId: imported.setId, url, openRequested,
       reused: server.reused, cards: imported.cards, errors: [], summary };

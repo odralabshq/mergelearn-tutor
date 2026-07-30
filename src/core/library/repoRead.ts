@@ -43,3 +43,20 @@ export async function getLastCommitSha(repoPath: string): Promise<string> {
   });
   return stdout.trimEnd();
 }
+
+/**
+ * Does this SHA still name a commit in the repo? False after a rebase, amend,
+ * or force-push discarded it — which is how a frozen citation becomes
+ * unverifiable even when the current file still reads the same.
+ */
+export async function commitExists(repoPath: string, commit: string): Promise<boolean> {
+  if (!commit) return false;
+  try {
+    await execFileAsync('git', ['cat-file', '-e', `${commit}^{commit}`], {
+      cwd: normalizeRepoPath(repoPath), encoding: 'utf8', maxBuffer: 1024 * 1024,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}

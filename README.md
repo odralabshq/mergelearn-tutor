@@ -17,7 +17,7 @@ Then open your coding agent in a repository and ask:
 > Create a MergeLearn lesson from my last PR.
 
 For worthwhile work, the agent reads relevant recent lessons, writes an
-AgentSetPatch, and runs `mergelearn create-and-open --file <patch.json>`. That
+AgentSetPatch, and runs `mergelearn apply --file <patch.json> --open`. That
 single action validates and stores the lesson, starts or reuses one local server,
 opens its exact URL, and prints the URL as a fallback. It may deliberately create
 no lesson when the work has no durable learning value.
@@ -111,7 +111,7 @@ is stored as evidence but does not grade your confidence for you.
   topic (a language feature, an algorithm, a protocol).
 - **Keep it fresh.** Review the due queue in the browser now and then; FSRS
   spaces cards so you revisit them right before you would forget.
-- **Preview before you trust it.** Run `mergelearn import --dry-run` on an
+- **Preview before you trust it.** Run `mergelearn apply --dry-run` on an
   agent's output to see what would be created before it touches your library.
 
 ## CLI commands
@@ -121,37 +121,43 @@ command line.
 
 ```bash
 mergelearn context     [--goal "..."] [--repo <path>] [--target-set <id>] [--recent <n>]
-mergelearn create-and-open --file <patch.json> [--agent <name>] [--no-open] [--dry-run] [--json]
-mergelearn import      --file <patch.json> [--agent <name>] [--dry-run] [--json]
-mergelearn skipped     --task <text> --reason <text>
-mergelearn dogfood-summary [--json]
+mergelearn apply       --file <patch.json> [--agent <name>] [--open] [--dry-run]
+mergelearn skip        --task <text> --reason <text>
 mergelearn sample      [--dry-run]
-mergelearn doctor      [--json]
-mergelearn sets
-mergelearn cards       [--query <text>] [--set <id>] [--archived] [--json]
-mergelearn archive     --set <id> --card <id>
-mergelearn unarchive   --set <id> --card <id>
-mergelearn edit        --set <id> --card <id> [content options]
-mergelearn delete      --set <id> [--card <id>] --yes [--force]
+mergelearn doctor
+mergelearn status
+mergelearn list        <sets|cards|due> [filters]
+mergelearn archive     <setId/cardId>
+mergelearn unarchive   <setId/cardId>
+mergelearn edit        <setId/cardId> [content options]
+mergelearn delete      <setId|setId/cardId> --yes [--force]
 mergelearn settings    [--review-session-cap <n>] [--queue-strategy overdue|interleaved]
 mergelearn due         [--set <id>] [--tag <id>] [--folder <path>] [--limit <n>]
-mergelearn show        --set <id> --card <id>
-mergelearn grade       --card <id> --rating <1-4>
+mergelearn show        <setId/cardId>
+mergelearn grade       <setId/cardId> <1-4>
+mergelearn mastery
+mergelearn check       [--set <id>] [--archived]
+mergelearn prune       [--set <id>] [--yes]
 mergelearn export      --set <id> --output <lesson.mergelearn.zip>
-mergelearn import-bundle --file <lesson.mergelearn.zip> [--as-copy] [--dry-run]
+mergelearn import      --file <lesson.mergelearn.zip> [--as-copy] [--dry-run]
 mergelearn backup      --output <profile.mergelearn-backup.zip>
 mergelearn restore     --file <profile.mergelearn-backup.zip> [--force] [--dry-run]
 mergelearn serve       [--port <n>]
 mergelearn setup-agent [--agent <ids|all>] [--scope global|project] [--dry-run] [--uninstall]
 ```
 
+Global options work before or after any operational command: `--home <path>`
+selects the library, `--json` emits machine-readable output, and `--yes`
+confirms destructive or bulk actions. Run `mergelearn help <command>` for full
+options or `mergelearn help --all` for internal and deprecated spellings.
+
 `context` prints the current library state for an agent; `--goal` is optional but
 helps focus the lesson, while `--recent` exposes recent question summaries,
-source paths, and review state. `create-and-open` is the normal agent workflow:
+source paths, and review state. `apply --open` is the normal agent workflow:
 it validates, stores, starts or reuses one local GUI, opens the exact lesson, and
-prints the URL. `import` is the lower-level storage primitive for scripts and dry
-runs. `dogfood-summary` counts local trial events; `skipped` records meaningful
-completed work for which the developer deliberately made no lesson. Early-stage
+prints the URL. `apply` without `--open` is the lower-level storage primitive for
+scripts and dry runs; `skip` records meaningful completed work for which the
+developer deliberately made no lesson. Early-stage
 "Worth it" feedback controls are shown by default; set
 `MERGELEARN_DOGFOOD_CONTROLS=0` before starting the server to hide them.
 

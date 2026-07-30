@@ -15,10 +15,10 @@ import { loadUserPreferences } from '../core/library/userPreferences.js';
 import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
 import { searchCards } from '../core/library/searchCards.js';
 import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
-import { listSetSummaries, loadSet, loadOrder, listSetIds, saveSet } from '../core/library/setStore.js';
+import { listSetSummaries, loadSet, loadOrder, saveSet } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
-import { loadTags } from '../core/library/tagStore.js';
+import { loadMasteryReport } from '../core/library/mastery.js';
 import {
   attemptedByLessonSet,
   attemptedCardIds,
@@ -644,7 +644,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     const ctx = v.context ? `<div class="ctx markdown-body">${v.contextHtml || inlineCode(v.context)}</div>` : '';
     // Summary holds a safe one-line preview (a <summary> can't contain block
     // code); the full prompt — fenced code and all — renders in the body.
-    const inspectCommand = `mergelearn show --set ${shellQuote(setId)} --card ${shellQuote(card.id)}`;
+    const inspectCommand = `mergelearn show ${setId}/${card.id}`;
     return `<details class="browse-card"><summary><span class="q">${promptPreview(v.prompt)}</span>${state}</summary>` +
       `<div class="browse-body">` +
       `<button type="button" class="copy-reference copy-card" data-copy-command="${escapeHtml(inspectCommand)}" aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button>` +
@@ -701,72 +701,10 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
 
 // ---- Manage tab (doc 06) ----
 
-/** Compute per-folder and per-tag mastery. Mastery = cards at FSRS state >= 2
- * (Review/Relearning) divided by total cards. v1: set-level folderPath only
- * (per addendum A5 — per-card sub-path granularity is deferred). */
-async function loadManageData(root: string): Promise<{
-  folders: { path: string; cardCount: number; mastery: number }[];
-  tags: { id: string; label: string; kind?: string; cardCount: number; mastery: number }[];
-  // Per-active-card membership, embedded in the page so the match count
-  // recomputes client-side (no /api round-trip → no "count unavailable").
-  cards: { folderPath: string; tagIds: string[] }[];
-}> {
-  // Read all cards once; cheap at this scale, cached per request.
-  const allCards: Card[] = [];
-  for (const setId of await listSetIds(root)) allCards.push(...(await loadCardsForSet(root, setId)));
-
-  // Folder stats keyed by set folderPath (v1 — per-card sub-paths deferred).
-  const sets = await listSetSummaries(root);
-  const setFolder = new Map(sets.map((s) => [s.id, s.folderPath ?? '']));
-  const folderTotals = new Map<string, number>();
-  const folderMastered = new Map<string, number>();
-  for (const c of allCards) {
-    const f = setFolder.get(c.setId) ?? '';
-    if (!f) continue;
-    folderTotals.set(f, (folderTotals.get(f) ?? 0) + 1);
-    if (c.fsrs.state >= 2) folderMastered.set(f, (folderMastered.get(f) ?? 0) + 1);
-  }
-  const folders = [...folderTotals.keys()].sort().map((path) => ({
-    path,
-    cardCount: folderTotals.get(path) ?? 0,
-    mastery: masteryPct(folderMastered.get(path) ?? 0, folderTotals.get(path) ?? 0),
-  }));
-
-  // Tag stats: count by tag id, count mastered per tag.
-  const tags = await loadTags(root);
-  const tagTotals = new Map<string, number>();
-  const tagMastered = new Map<string, number>();
-  for (const c of allCards) {
-    for (const t of c.tagIds) {
-      tagTotals.set(t, (tagTotals.get(t) ?? 0) + 1);
-      if (c.fsrs.state >= 2) tagMastered.set(t, (tagMastered.get(t) ?? 0) + 1);
-    }
-  }
-  const tagRows = tags
-    .map((t) => ({
-      id: t.id,
-      label: t.label,
-      kind: t.kind,
-      cardCount: tagTotals.get(t.id) ?? 0,
-      mastery: masteryPct(tagMastered.get(t.id) ?? 0, tagTotals.get(t.id) ?? 0),
-    }))
-    // Keep only tags that appear on at least one card; sorts the rest out.
-    .filter((t) => t.cardCount > 0)
-    .sort((a, b) => a.label.localeCompare(b.label));
-
-  // Membership per card (folder + tags) so the client can count matches locally.
-  // Counts the same cards as the folder/tag badges above, for consistency.
-  const cards = allCards.map((c) => ({
-    folderPath: setFolder.get(c.setId) ?? '',
-    tagIds: c.tagIds,
-  }));
-
-  return { folders, tags: tagRows, cards };
-}
-
-function masteryPct(mastered: number, total: number): number {
-  return total === 0 ? 0 : Math.round((mastered / total) * 100);
-}
+/** Per-folder and per-tag mastery for the Manage tab. The computation lives in
+ * core/library/mastery.ts so the `mastery` CLI command reports identical
+ * numbers from identical rules. */
+const loadManageData = loadMasteryReport;
 
 async function renderManage(root: string): Promise<string> {
   const { folders, tags, cards } = await loadManageData(root);
@@ -877,7 +815,7 @@ var searchTimer=null;document.getElementById('card-search').addEventListener('in
 document.getElementById('show-archived').addEventListener('change',loadCardResults);
 document.getElementById('card-results').addEventListener('click',function(e){
   var copy=e.target.closest&&e.target.closest('[data-copy-card]');
-  if(copy){var row=copy.closest('.curation-card');var quote=function(v){return "'"+String(v).replace(/'/g,"'\\''")+"'";};copyText('mergelearn show --set '+quote(row.getAttribute('data-set'))+' --card '+quote(row.getAttribute('data-card')),copy);return;}
+  if(copy){var row=copy.closest('.curation-card');copyText('mergelearn show '+row.getAttribute('data-set')+'/'+row.getAttribute('data-card'),copy);return;}
   var b=e.target.closest&&e.target.closest('[data-card-action]');if(b)cardAction(b);
 });
 loadCardResults();
@@ -1136,7 +1074,6 @@ var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
 var requeueCounts={};var requeueSeq=0;var lastGrade=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
-function shellArg(s){var q=String.fromCharCode(39);return q+String(s).split(q).join(q+'"'+q+'"'+q)+q;}
 function copyText(text,button){
   var label=button.querySelector('[data-copy-label]');
   var done=function(){button.classList.add('copied');button.setAttribute('aria-label','Reference copied');button.title='Copied';if(label)label.textContent='Copied';statusMsg('Reference copied');setTimeout(function(){button.classList.remove('copied');button.setAttribute('aria-label','Copy reference');button.title='Copy reference';if(label)label.textContent='Copy reference';},1200);};
@@ -1183,7 +1120,7 @@ function render(){
     attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><p class="p-hint">Click a block then use ↑/↓, drag it, or use the ▲▼ buttons.</p><ol class="p-list" id="p-list" role="listbox" aria-label="Order the code blocks">'+pitems+'</ol></div>';
   }
   var check=interactive?'<button class="primary check-answer" id="check-answer" aria-label="Check answer, shortcut Enter">Check answer <kbd aria-hidden="true">Enter</kbd></button>':'';
-  var inspectCommand='mergelearn show --set '+shellArg(c.setId)+' --card '+shellArg(c.id);
+  var inspectCommand='mergelearn show '+c.setId+'/'+c.id;
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span><button type="button" class="copy-reference copy-practice-card" data-copy-practice-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
     '<div class="confidence" id="confidence"><p class="label">Before reveal — how confident are you?</p><div class="conf-opts">'+confBtns+'</div></div>'+check+
@@ -1410,9 +1347,6 @@ export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'"'"'`)}'`;
-}
 
 // ---- HTML shell ----
 
