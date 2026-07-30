@@ -1,16 +1,15 @@
 #!/usr/bin/env node
 /**
- * Library CLI (docs/design/redesign-2026-07). Additive entry point for the v2
- * agent-authored library; the legacy `mergelearn-tutor` bin is untouched until
- * the Phase B cutover.
+ * MergeLearn CLI: a model-free library authored by coding agents and reviewed
+ * locally. The public surface is grouped by job in cliHelp.ts; deprecated
+ * spellings remain hidden compatibility aliases during the 0.1.x transition.
  *
- * Commands:
- *   context  emit the AuthoringContext JSON (tutor -> agent, handshake step 1)
- *   import   apply an AgentSetPatch JSON     (agent -> tutor, handshake step 2)
- *   sets     list card sets
- *   due      list cards due now (optionally filtered)
- *   show     print a card front+back (learn by reading)
- *   grade    grade one due card non-interactively (1..4)
+ * Canonical workflow:
+ *   context           emit AuthoringContext for an agent
+ *   apply [--open]    validate/store an AgentSetPatch, optionally open it
+ *   list/show/grade   inspect and review the resulting library
+ *   import/export     exchange state-free lesson bundles
+ *   mastery/check     inspect learner progress and source-code drift
  *
  * buildProgram() is exported so tests drive the real command wiring directly.
  */
@@ -20,7 +19,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { Command } from 'commander';
+import { Command, Help } from 'commander';
 
 import { resolveLibraryRoot } from './core/library/libraryStore.js';
 import { buildAuthoringContext } from './core/library/authoringContext.js';
@@ -38,9 +37,13 @@ import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from './c
 import { searchCards } from './core/library/searchCards.js';
 import { exportLessonBundle, exportProfileBackup, importLessonBundle, restoreProfileBackup } from './core/library/bundle.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
-import { ensureServer, startManagedServer } from './session/managedServer.js';
+import { ensureServer, probeServer, readServerLock, startManagedServer } from './session/managedServer.js';
 import { createAndOpen } from './createAndOpen.js';
 import { appendDogfoodEvent, dogfoodEventCounts } from './core/library/dogfood.js';
+import { loadMasteryReport } from './core/library/mastery.js';
+import { checkDrift, type DriftReport } from './core/library/drift.js';
+import { formatCardRef, resolveCardRef, resolveTargetRef } from './core/library/cardRef.js';
+import { renderHelp } from './cliHelp.js';
 import {
   AGENT_ADAPTERS, applyInstall, detectAgents, planInstall, uninstall,
   type Scope,
@@ -53,6 +56,27 @@ function rootFrom(opts: { home?: string }): string {
 
 const out = (s: string) => console.log(s);
 const note = (s: string) => console.error(s); // non-blocking hints; keeps stdout clean for piping
+
+type GlobalOptions = { home?: string; json?: boolean; yes?: boolean };
+
+function deprecation(oldName: string, replacement: string): void {
+  note(`deprecated: \`mergelearn ${oldName}\`; use \`mergelearn ${replacement}\``);
+}
+
+function printDrift(report: DriftReport): void {
+  if (report.stale.length === 0) {
+    out(`No stale citations (${report.groundedCards} grounded card(s) checked).`);
+    return;
+  }
+  out(`${report.stale.length} stale card(s) across ${report.groundedCards} grounded card(s):`);
+  for (const card of report.stale) {
+    out(`  ${card.status.padEnd(17)} ${formatCardRef(card.setId, card.cardId)}  ${card.prompt}`);
+    for (const ref of card.refs) {
+      out(`    ${ref.path}:${ref.startLine ?? 1}-${ref.endLine ?? ref.startLine ?? 1} — ${ref.detail}`);
+    }
+  }
+}
+
 const packageVersion = (): string => {
   const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
   return pkg.version;
@@ -78,25 +102,166 @@ function requestBrowserOpen(url: string): boolean {
 
 export function buildProgram(): Command {
   const program = new Command();
+  const defaultHelp = new Help();
   program
     .name('mergelearn')
     .description('Model-free, agent-authored learning library')
     .version(packageVersion())
-    .option('--home <path>', 'library root (default: MERGELEARN_HOME or ~/.mergelearn)');
+    .option('--home <path>', 'which library (default: MERGELEARN_HOME or ~/.mergelearn)')
+    .option('--json', 'emit machine-readable output')
+    .option('--yes', 'assume yes for destructive or bulk actions')
+    .addHelpCommand(false)
+    .configureHelp({
+      formatHelp: (command, helper) => command.parent
+        ? defaultHelp.formatHelp(command, helper)
+        : renderHelp(new Set(command.commands.map((child) => child.name()))),
+    });
 
-  program.addHelpText('after', `
-Recommended: use MergeLearn through your coding agent.
-  1. mergelearn setup-agent          install the authoring skill into your agent
-  2. In your agent, ask:             "Create a MergeLearn lesson from my last PR."
-  3. mergelearn serve                open the browser and learn
-Your agent runs 'context' and 'import' for you; you rarely type them yourself.
+  const globalOpt = () => program.opts<GlobalOptions>();
+  const homeOpt = () => globalOpt();
+  const wantsJson = (local?: { json?: boolean }) => !!(local?.json || globalOpt().json);
+  const assumesYes = (local?: { yes?: boolean }) => !!(local?.yes || globalOpt().yes);
 
-Manual/advanced: author a lesson yourself.
-  mergelearn context --goal "..."    print the library state to author against
-  mergelearn import --file patch.json   validate + apply an AgentSetPatch (use --dry-run to preview)
-  mergelearn serve                   open the browser and learn`);
+  program
+    .command('help [command]')
+    .description('show top-level or command-specific help')
+    .option('--all', 'include internal, trial, and deprecated commands')
+    .action((commandName: string | undefined, opts: { all?: boolean }) => {
+      if (!commandName) {
+        out(renderHelp(new Set(program.commands.map((command) => command.name())), { all: opts.all }).trimEnd());
+        return;
+      }
+      const command = program.commands.find((candidate) => candidate.name() === commandName);
+      if (!command) {
+        out(`unknown command: ${commandName}`);
+        process.exitCode = 1;
+        return;
+      }
+      command.outputHelp();
+    });
 
-  const homeOpt = () => program.opts<{ home?: string }>();
+  type ApplyOptions = {
+    file: string; agent?: string; dryRun?: boolean; open?: boolean; json?: boolean;
+    /** Compatibility vocabulary for the pre-0.2 `import <patch>` spelling. */
+    legacyImportWording?: boolean;
+  };
+  const runApply = async (opts: ApplyOptions): Promise<void> => {
+    const noun = opts.legacyImportWording ? 'import' : 'apply';
+    const past = opts.legacyImportWording ? 'imported' : 'applied';
+    const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
+    if (opts.open) {
+      const result = await createAndOpen(rootFrom(homeOpt()), patch, {
+        agentName: opts.agent, dryRun: opts.dryRun, openUrl: requestBrowserOpen,
+      });
+      if (wantsJson(opts)) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
+      else if (!result.imported) {
+        out(`${noun} REJECTED (${result.errors.length} error(s)) — nothing written:`);
+        for (const error of result.errors) out(`  - ${error.code}: ${error.message}`);
+      } else if (!result.ok) {
+        out(`lesson ${past} as ${result.setId}, but the local GUI did not start: ${result.errors[0]?.message}`);
+        out('Run `mergelearn serve` to open the stored lesson.');
+      } else {
+        out(`${past} set "${result.setId}": ${result.cards.length} card(s)`);
+        for (const line of formatLessonSummary(result.summary!)) out(`  ${line}`);
+        out(`open: ${result.url}`);
+      }
+      if (!result.ok) process.exitCode = 1;
+      return;
+    }
+
+    const result = await importAgentSet(rootFrom(homeOpt()), patch, {
+      agentName: opts.agent, dryRun: opts.dryRun,
+    });
+    if (!result.ok) {
+      if (wantsJson(opts)) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
+      else {
+        const lead = opts.dryRun ? `preview: ${noun} WOULD BE REJECTED` : `${noun} REJECTED`;
+        out(`${lead} (${result.errors.length} error(s)) — nothing written:`);
+        for (const error of result.errors) out(`  - ${error.code}: ${error.message}`);
+      }
+      process.exitCode = 1;
+      return;
+    }
+    const summary = summarizeLesson(patch, result.cards);
+    if (wantsJson(opts)) {
+      out(JSON.stringify({ ...result, dryRun: !!opts.dryRun, summary }, null, 2));
+      return;
+    }
+    const active = result.cards.filter((card) => card.status === 'active').length;
+    const flagged = result.cards.length - active;
+    const verb = opts.dryRun ? `would ${noun}` : past;
+    out(`${verb} set "${result.setId}": ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${result.tagIdsAdded.length} tags`);
+    for (const line of formatLessonSummary(summary)) out(`  ${line}`);
+    for (const card of result.cards.filter((card) => card.status !== 'active')) {
+      out(`  needs_review ${card.cardId}: ${card.reasons.join(', ')}`);
+    }
+    if (opts.dryRun) out('(dry run: nothing written — omit --dry-run to apply)');
+    else out('Run `mergelearn serve` to learn it, or pass `--open` next time.');
+  };
+
+  type BundleImportOptions = { file: string; asCopy?: boolean; dryRun?: boolean; json?: boolean };
+  const runBundleImport = async (opts: BundleImportOptions): Promise<void> => {
+    const result = await importLessonBundle(rootFrom(homeOpt()), opts.file, {
+      asCopy: opts.asCopy, dryRun: opts.dryRun,
+    });
+    if (wantsJson(opts)) out(JSON.stringify(result, null, 2));
+    else out(`${opts.dryRun ? 'would import' : 'imported'} ${result.cards.length} cards as ${result.setId}${opts.dryRun ? ' (dry run: nothing written)' : ''}`);
+  };
+
+  const runSkip = async (opts: { task: string; reason: string; json?: boolean }): Promise<void> => {
+    const event = await appendDogfoodEvent(rootFrom(homeOpt()), {
+      kind: 'skipped', task: opts.task, reason: opts.reason,
+    });
+    if (wantsJson(opts)) out(JSON.stringify(event, null, 2));
+    else out(`recorded skipped task at ${event.ts}`);
+  };
+
+  type ListOptions = {
+    set?: string; query?: string; archived?: boolean; tag?: string; folder?: string;
+    limit?: string; strategy?: string; json?: boolean;
+  };
+  const listSets = async (opts: ListOptions = {}): Promise<void> => {
+    const summaries = await listSetSummaries(rootFrom(homeOpt()));
+    if (wantsJson(opts)) return out(JSON.stringify(summaries, null, 2));
+    if (summaries.length === 0) return out('(no sets yet — ask your agent to create a lesson)');
+    for (const set of summaries) {
+      out(`${set.id}  ${set.title}  [${set.cardCount} cards]${set.folderPath ? `  ${set.folderPath}` : ''}`);
+    }
+  };
+
+  const listCards = async (opts: ListOptions = {}): Promise<void> => {
+    const hits = await searchCards(rootFrom(homeOpt()), opts.query ?? '', {
+      setIds: opts.set ? [opts.set] : undefined, includeArchived: opts.archived,
+    });
+    if (wantsJson(opts)) return out(JSON.stringify(hits, null, 2));
+    for (const hit of hits) out(`${hit.status.padEnd(10)} ${formatCardRef(hit.setId, hit.cardId)}  ${hit.prompt}`);
+  };
+
+  const listDue = async (opts: ListOptions = {}): Promise<void> => {
+    const root = rootFrom(homeOpt());
+    const prefs = await loadUserPreferences(root);
+    const limit = opts.limit === undefined ? prefs.reviewSessionCap : Number(opts.limit);
+    const strategy = (opts.strategy ?? prefs.queueStrategy) as QueueStrategy;
+    if (!Number.isInteger(limit) || limit < 0 || !['overdue', 'interleaved'].includes(strategy)) {
+      out('limit must be non-negative and strategy must be overdue or interleaved');
+      process.exitCode = 1;
+      return;
+    }
+    const all = await getDueCards(root, new Date(), {
+      setIds: opts.set ? [opts.set] : undefined,
+      tagIds: opts.tag ? [opts.tag] : undefined,
+      folderPaths: opts.folder ? [opts.folder] : undefined,
+    });
+    const queueOptions = { strategy, seed: new Date().toISOString().slice(0, 10) };
+    const prioritized = orderDueQueue(all, queueOptions);
+    const cards = orderDueQueue(selectDueCards(prioritized, limit), queueOptions);
+    if (wantsJson(opts)) {
+      out(JSON.stringify({ total: all.length, shown: cards.length, strategy, cards }, null, 2));
+      return;
+    }
+    out(`${cards.length} of ${all.length} card(s) due (${strategy})`);
+    for (const card of cards) out(`  ${formatCardRef(card.setId, card.id)}  ${card.front.prompt}`);
+  };
 
   // Step 1 of the manual authoring path: print the library state an agent
   // authors against. Your agent normally runs this for you.
@@ -116,23 +281,40 @@ Manual/advanced: author a lesson yourself.
     });
 
   program
-    .command('sets')
-    .description('list card sets')
-    .action(async () => {
-      const summaries = await listSetSummaries(rootFrom(homeOpt()));
-      if (summaries.length === 0) return out('(no sets yet — author one with `context` then `import`)');
-      for (const s of summaries) {
-        out(`${s.id}  ${s.title}  [${s.cardCount} cards]${s.folderPath ? `  ${s.folderPath}` : ''}`);
-      }
+    .command('list <kind>')
+    .description('list sets, cards, or cards due now')
+    .option('--set <id>', 'only this set')
+    .option('--query <text>', 'search set title, prompt, and short answer', '')
+    .option('--archived', 'include archived cards')
+    .option('--tag <id>', 'only due cards with this tag')
+    .option('--folder <path>', 'only due cards in this folder subtree')
+    .option('--limit <n>', 'override the configured review cap')
+    .option('--strategy <name>', 'override due ordering: interleaved or overdue')
+    .action(async (kind: string, opts: ListOptions) => {
+      if (kind === 'sets') return listSets(opts);
+      if (kind === 'cards') return listCards(opts);
+      if (kind === 'due') return listDue(opts);
+      out('kind must be sets, cards, or due');
+      process.exitCode = 1;
     });
+
+  program
+    .command('sets', { hidden: true })
+    .description('deprecated alias for `list sets`')
+    .action(async () => { deprecation('sets', 'list sets'); await listSets(); });
 
   // Opt-in sample lesson so a fresh install has something to learn immediately.
   program
     .command('sample')
     .description('install the built-in sample lesson so you can try MergeLearn right away')
     .option('--dry-run', 'show what would happen, write nothing')
-    .action(async (opts: { dryRun?: boolean }) => {
+    .action(async (opts: { dryRun?: boolean; json?: boolean }) => {
       const res = await installSampleLesson(rootFrom(homeOpt()), { dryRun: opts.dryRun });
+      if (wantsJson(opts)) {
+        out(JSON.stringify({ ...res, dryRun: !!opts.dryRun }, null, 2));
+        if (!res.ok) process.exitCode = 1;
+        return;
+      }
       if (!res.ok) {
         out(`sample install failed (${res.errors?.length ?? 0} error(s)):`);
         for (const e of res.errors ?? []) out(`  - ${e.code}: ${e.message}`);
@@ -154,10 +336,9 @@ Manual/advanced: author a lesson yourself.
   program
     .command('doctor')
     .description('diagnose local setup (read-only, offline)')
-    .option('--json', 'emit machine-readable JSON for agents and issue reports')
     .action(async (opts: { json?: boolean }) => {
       const result = await runDoctor(rootFrom(homeOpt()));
-      if (opts.json) out(JSON.stringify(result, null, 2));
+      if (wantsJson(opts)) out(JSON.stringify(result, null, 2));
       else {
         for (const c of result.checks) out(`${c.status.padEnd(4)} ${c.id.padEnd(12)} ${c.message}`);
         out(result.ok ? '\nSetup is usable.' : '\nSetup has blocking failures. Fix FAIL items, then rerun doctor.');
@@ -165,125 +346,109 @@ Manual/advanced: author a lesson yourself.
       if (!result.ok) process.exitCode = 1;
     });
 
-  // handshake step 2: agent -> tutor
+  // Agent -> library: one storage primitive, optionally followed by opening the GUI.
   program
-    .command('import')
-    .description('apply an AgentSetPatch JSON file (the only card-creation path)')
-    .requiredOption('--file <path>', 'path to the AgentSetPatch JSON')
+    .command('apply')
+    .description('apply an AgentSetPatch; optionally open the imported lesson')
+    .requiredOption('--file <path>', 'AgentSetPatch JSON path')
     .option('--agent <name>', 'authoring agent name (provenance)')
-    .option('--dry-run', 'validate and preview the outcome, write nothing')
-    .option('--json', 'emit machine-readable import result + lesson summary')
-    .action(async (opts: { file: string; agent?: string; dryRun?: boolean; json?: boolean }) => {
-      const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
-      const res = await importAgentSet(rootFrom(homeOpt()), patch, { agentName: opts.agent, dryRun: opts.dryRun });
-      if (!res.ok) {
-        if (opts.json) out(JSON.stringify({ ...res, dryRun: !!opts.dryRun }, null, 2));
-        else {
-          const lead = opts.dryRun ? 'preview: import WOULD BE REJECTED' : 'import REJECTED';
-          out(`${lead} (${res.errors.length} error(s)) — nothing written:`);
-          for (const e of res.errors) out(`  - ${e.code}: ${e.message}`);
-        }
-        process.exitCode = 1;
-        return;
-      }
-      const summary = summarizeLesson(patch, res.cards);
-      if (opts.json) {
-        out(JSON.stringify({ ...res, dryRun: !!opts.dryRun, summary }, null, 2));
-        return;
-      }
-      const active = res.cards.filter((c) => c.status === 'active').length;
-      const flagged = res.cards.length - active;
-      const verb = opts.dryRun ? 'would import' : 'imported';
-      out(`${verb} set "${res.setId}": ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${res.tagIdsAdded.length} tags`);
-      for (const line of formatLessonSummary(summary)) out(`  ${line}`);
-      for (const c of res.cards.filter((c) => c.status !== 'active')) {
-        out(`  needs_review ${c.cardId}: ${c.reasons.join(', ')}`);
-      }
-      if (opts.dryRun) out('(dry run: nothing written — omit --dry-run to apply)');
-      else out('Run `mergelearn serve` and open the printed URL to learn it.');
-    });
+    .option('--dry-run', 'validate and preview, write nothing')
+    .option('--open', 'start/reuse the GUI and open the imported lesson')
+    .action(runApply);
 
   program
-    .command('create-and-open')
-    .description('import an agent-authored lesson, start/reuse the local GUI, and open that lesson')
-    .requiredOption('--file <path>', 'path to the AgentSetPatch JSON')
+    .command('create-and-open', { hidden: true })
+    .description('deprecated alias for `apply --open`')
+    .requiredOption('--file <path>', 'AgentSetPatch JSON path')
     .option('--agent <name>', 'authoring agent name (provenance)')
-    .option('--dry-run', 'validate and preview the outcome, write nothing')
-    .option('--json', 'emit machine-readable workflow result')
-    .option('--no-open', 'start/reuse the GUI and print the URL without launching a browser')
-    .action(async (opts: { file: string; agent?: string; dryRun?: boolean; json?: boolean; open?: boolean }) => {
-      const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
-      const result = await createAndOpen(rootFrom(homeOpt()), patch, {
-        agentName: opts.agent,
-        dryRun: opts.dryRun,
-        noOpen: opts.open === false,
-        openUrl: requestBrowserOpen,
-      });
-      if (opts.json) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
-      else if (!result.imported) {
-        out(`import REJECTED (${result.errors.length} error(s)) — nothing written:`);
-        for (const error of result.errors) out(`  - ${error.code}: ${error.message}`);
-      } else if (!result.ok) {
-        out(`lesson imported as ${result.setId}, but the local GUI did not start: ${result.errors[0]?.message}`);
-        out('Run `mergelearn serve` to open the stored lesson.');
-      } else {
-        out(`imported set "${result.setId}": ${result.cards.length} card(s)`);
-        for (const line of formatLessonSummary(result.summary!)) out(`  ${line}`);
-        out(`open: ${result.url}`);
+    .option('--dry-run', 'validate and preview, write nothing')
+    .option('--no-open', 'apply and start the GUI without launching a browser')
+    .action(async (opts: ApplyOptions & { open?: boolean }) => {
+      deprecation('create-and-open', 'apply --open');
+      if (opts.open === false) {
+        const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
+        const result = await createAndOpen(rootFrom(homeOpt()), patch, {
+          agentName: opts.agent, dryRun: opts.dryRun, noOpen: true, openUrl: requestBrowserOpen,
+        });
+        if (wantsJson(opts)) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
+        else if (result.url) out(`open: ${result.url}`);
+        if (!result.ok) process.exitCode = 1;
+        return;
       }
-      if (!result.ok) process.exitCode = 1;
+      await runApply({ ...opts, open: true });
     });
 
   program.command('export')
     .description('export one lesson as a shareable, state-free bundle')
     .requiredOption('--set <id>', 'set id')
     .requiredOption('--output <path>', 'output .mergelearn.zip path')
-    .option('--json', 'emit machine-readable result')
     .action(async (opts: { set: string; output: string; json?: boolean }) => {
       const manifest = await exportLessonBundle(rootFrom(homeOpt()), opts.set, opts.output);
-      if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
+      if (wantsJson(opts)) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
       else out(`exported ${manifest.cardCount} cards to ${opts.output}`);
     });
 
   program
-    .command('skipped')
+    .command('skip')
     .description('record a meaningful task for which no lesson was created')
     .requiredOption('--task <text>', 'completed task')
     .requiredOption('--reason <text>', 'why no lesson was worthwhile')
-    .action(async (opts: { task: string; reason: string }) => {
-      const event = await appendDogfoodEvent(rootFrom(homeOpt()), { kind: 'skipped', task: opts.task, reason: opts.reason });
-      out(`recorded skipped task at ${event.ts}`);
+    .action(runSkip);
+
+  program
+    .command('skipped', { hidden: true })
+    .description('deprecated alias for `skip`')
+    .requiredOption('--task <text>', 'completed task')
+    .requiredOption('--reason <text>', 'why no lesson was worthwhile')
+    .action(async (opts: { task: string; reason: string; json?: boolean }) => {
+      deprecation('skipped', 'skip');
+      await runSkip(opts);
     });
 
   program
     .command('dogfood-summary')
     .description('summarize local dogfooding events')
-    .option('--json', 'emit machine-readable counts')
     .action(async (opts: { json?: boolean }) => {
       const counts = await dogfoodEventCounts(rootFrom(homeOpt()));
-      if (opts.json) out(JSON.stringify(counts, null, 2));
+      if (wantsJson(opts)) out(JSON.stringify(counts, null, 2));
       else out(`opened=${counts.opened}\nfeedback=${counts.feedback}\ndeferred=${counts.deferred}\nskipped=${counts.skipped}`);
     });
 
-  program.command('import-bundle')
-    .description('import a shareable lesson bundle with fresh review state')
+  program.command('import')
+    .description('import a shared lesson bundle; legacy JSON patches route to `apply`')
     .requiredOption('--file <path>', 'bundle .mergelearn.zip path')
     .option('--as-copy', 'allocate a new set and card ids if the set already exists')
     .option('--dry-run', 'validate without writing')
-    .option('--json', 'emit machine-readable result')
-    .action(async (opts: { file: string; asCopy?: boolean; dryRun?: boolean; json?: boolean }) => {
-      const result = await importLessonBundle(rootFrom(homeOpt()), opts.file, { asCopy: opts.asCopy, dryRun: opts.dryRun });
-      if (opts.json) out(JSON.stringify(result, null, 2));
-      else out(`${opts.dryRun ? 'would import' : 'imported'} ${result.cards.length} cards as ${result.setId}${opts.dryRun ? ' (dry run: nothing written)' : ''}`);
+    .option('--agent <name>', 'legacy JSON patch authoring agent name')
+    .option('--open', 'legacy JSON patch: open after applying')
+    .action(async (opts: BundleImportOptions & { agent?: string; open?: boolean }) => {
+      if (opts.file.toLowerCase().endsWith('.json')) {
+        deprecation('import --file <patch.json>', 'apply --file <patch.json>');
+        await runApply({
+          file: opts.file, agent: opts.agent, dryRun: opts.dryRun, open: opts.open,
+          legacyImportWording: true,
+        });
+        return;
+      }
+      await runBundleImport(opts);
+    });
+
+  program.command('import-bundle', { hidden: true })
+    .description('deprecated alias for `import`')
+    .requiredOption('--file <path>', 'bundle .mergelearn.zip path')
+    .option('--as-copy', 'allocate new set and card ids on collision')
+    .option('--dry-run', 'validate without writing')
+    .action(async (opts: BundleImportOptions) => {
+      deprecation('import-bundle', 'import');
+      await runBundleImport(opts);
     });
 
   program.command('backup')
     .description('create a private backup containing learning state and history')
     .requiredOption('--output <path>', 'output .mergelearn-backup.zip path')
-    .option('--json', 'emit machine-readable result')
     .action(async (opts: { output: string; json?: boolean }) => {
       const manifest = await exportProfileBackup(rootFrom(homeOpt()), opts.output);
-      if (opts.json) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
+      if (wantsJson(opts)) out(JSON.stringify({ ok: true, output: opts.output, manifest }, null, 2));
       else out(`private unencrypted backup written to ${opts.output} (${manifest.entryCount} files); store it securely`);
     });
 
@@ -292,10 +457,9 @@ Manual/advanced: author a lesson yourself.
     .requiredOption('--file <path>', 'backup .mergelearn-backup.zip path')
     .option('--force', 'replace a non-empty profile after validated staging')
     .option('--dry-run', 'validate without writing')
-    .option('--json', 'emit machine-readable result')
     .action(async (opts: { file: string; force?: boolean; dryRun?: boolean; json?: boolean }) => {
       const manifest = await restoreProfileBackup(rootFrom(homeOpt()), opts.file, { force: opts.force, dryRun: opts.dryRun });
-      if (opts.json) out(JSON.stringify({ ok: true, restored: !opts.dryRun, manifest }, null, 2));
+      if (wantsJson(opts)) out(JSON.stringify({ ok: true, restored: !opts.dryRun, manifest }, null, 2));
       else out(opts.dryRun ? `backup valid (${manifest.entryCount} files; dry run: nothing written)` : `restored ${manifest.entryCount} files from private backup`);
     });
 
@@ -304,7 +468,6 @@ Manual/advanced: author a lesson yourself.
     .description('show or update review settings')
     .option('--review-session-cap <n>', 'maximum distinct cards per review sitting; 0 means uncapped')
     .option('--queue-strategy <name>', 'interleaved (default) or overdue')
-    .option('--json', 'emit machine-readable settings')
     .action(async (opts: { reviewSessionCap?: string; queueStrategy?: string; json?: boolean }) => {
       const root = rootFrom(homeOpt());
       const current = await loadUserPreferences(root);
@@ -315,140 +478,238 @@ Manual/advanced: author a lesson yourself.
       }
       const next = { reviewSessionCap: cap, queueStrategy: (opts.queueStrategy ?? current.queueStrategy) as QueueStrategy };
       if (opts.reviewSessionCap !== undefined || opts.queueStrategy !== undefined) await saveUserPreferences(root, next);
-      if (opts.json) out(JSON.stringify(next, null, 2));
+      if (wantsJson(opts)) out(JSON.stringify(next, null, 2));
       else out(`reviewSessionCap=${next.reviewSessionCap}\nqueueStrategy=${next.queueStrategy}`);
     });
 
   program
-    .command('cards')
-    .description('list or search cards')
+    .command('cards', { hidden: true })
+    .description('deprecated alias for `list cards`')
     .option('--set <id>', 'only this set')
     .option('--query <text>', 'search set title, prompt, and short answer', '')
     .option('--archived', 'include archived cards')
-    .option('--json', 'emit machine-readable results')
-    .action(async (opts: { set?: string; query: string; archived?: boolean; json?: boolean }) => {
-      const hits = await searchCards(rootFrom(homeOpt()), opts.query, {
-        setIds: opts.set ? [opts.set] : undefined, includeArchived: opts.archived,
-      });
-      if (opts.json) out(JSON.stringify(hits, null, 2));
-      else for (const hit of hits) out(`${hit.status.padEnd(10)} ${hit.setId}/${hit.cardId}  ${hit.prompt}`);
-    });
+    .action(async (opts: ListOptions) => { deprecation('cards', 'list cards'); await listCards(opts); });
 
   for (const action of ['archive', 'unarchive'] as const) {
-    program.command(action)
-      .description(`${action} one card`)
-      .requiredOption('--set <id>', 'set id')
-      .requiredOption('--card <id>', 'card id')
-      .action(async (opts: { set: string; card: string }) => {
+    program.command(`${action} [ref]`)
+      .description(`${action} one card; ref is setId/cardId`)
+      .option('--set <id>', 'deprecated: set id')
+      .option('--card <id>', 'deprecated: card id')
+      .action(async (ref: string | undefined, opts: { set?: string; card?: string; json?: boolean }) => {
+        const target = resolveCardRef(ref, opts);
         const card = action === 'archive'
-          ? await archiveCard(rootFrom(homeOpt()), opts.set, opts.card)
-          : await unarchiveCard(rootFrom(homeOpt()), opts.set, opts.card);
-        out(`${action}d ${card.setId}/${card.id}`);
+          ? await archiveCard(rootFrom(homeOpt()), target.setId, target.cardId)
+          : await unarchiveCard(rootFrom(homeOpt()), target.setId, target.cardId);
+        if (wantsJson(opts)) out(JSON.stringify(card, null, 2));
+        else out(`${action}d ${formatCardRef(card.setId, card.id)}`);
       });
   }
 
-  program.command('edit')
-    .description('edit teaching text on one card without resetting its schedule')
-    .requiredOption('--set <id>', 'set id')
-    .requiredOption('--card <id>', 'card id')
+  program.command('edit [ref]')
+    .description('edit teaching text without resetting the schedule; ref is setId/cardId')
+    .option('--set <id>', 'deprecated: set id')
+    .option('--card <id>', 'deprecated: card id')
     .option('--prompt <text>', 'new prompt')
     .option('--short-answer <text>', 'new short answer')
     .option('--explanation <text>', 'new explanation markdown')
-    .action(async (opts: { set: string; card: string; prompt?: string; shortAnswer?: string; explanation?: string }) => {
-      const card = await editCard(rootFrom(homeOpt()), opts.set, opts.card, {
+    .action(async (ref: string | undefined, opts: {
+      set?: string; card?: string; prompt?: string; shortAnswer?: string;
+      explanation?: string; json?: boolean;
+    }) => {
+      const target = resolveCardRef(ref, opts);
+      const card = await editCard(rootFrom(homeOpt()), target.setId, target.cardId, {
         ...(opts.prompt !== undefined ? { front: { prompt: opts.prompt } } : {}),
         ...(opts.shortAnswer !== undefined || opts.explanation !== undefined ? { back: {
           ...(opts.shortAnswer !== undefined ? { shortAnswer: opts.shortAnswer } : {}),
           ...(opts.explanation !== undefined ? { explanationMarkdown: opts.explanation } : {}),
         } } : {}),
       });
-      out(`edited ${card.setId}/${card.id}`);
+      if (wantsJson(opts)) out(JSON.stringify(card, null, 2));
+      else out(`edited ${formatCardRef(card.setId, card.id)}`);
     });
 
-  program.command('delete')
-    .description('permanently delete one card or set (archive is safer)')
-    .requiredOption('--set <id>', 'set id')
-    .option('--card <id>', 'card id; omit to delete the set')
+  program.command('delete [ref]')
+    .description('permanently delete a set or card; ref is setId or setId/cardId')
+    .option('--set <id>', 'deprecated: set id')
+    .option('--card <id>', 'deprecated: card id')
     .option('--yes', 'confirm permanent deletion')
     .option('--force', 'allow set deletion when review history exists')
-    .action(async (opts: { set: string; card?: string; yes?: boolean; force?: boolean }) => {
-      if (!opts.yes) { out('refusing permanent deletion without --yes; use archive for reversible removal'); process.exitCode = 1; return; }
-      if (opts.card) { await deleteCard(rootFrom(homeOpt()), opts.set, opts.card); out(`deleted ${opts.set}/${opts.card}`); }
-      else { await deleteSet(rootFrom(homeOpt()), opts.set, { force: opts.force }); out(`deleted set ${opts.set}`); }
+    .action(async (ref: string | undefined, opts: {
+      set?: string; card?: string; yes?: boolean; force?: boolean; json?: boolean;
+    }) => {
+      const target = resolveTargetRef(ref, opts);
+      if (!assumesYes(opts)) {
+        out('refusing permanent deletion without --yes; use archive for reversible removal');
+        process.exitCode = 1;
+        return;
+      }
+      if (target.cardId) {
+        const result = await deleteCard(rootFrom(homeOpt()), target.setId, target.cardId);
+        if (wantsJson(opts)) out(JSON.stringify(result, null, 2));
+        else out(`deleted ${formatCardRef(target.setId, target.cardId)}`);
+      } else {
+        const result = await deleteSet(rootFrom(homeOpt()), target.setId, { force: opts.force });
+        if (wantsJson(opts)) out(JSON.stringify(result, null, 2));
+        else out(`deleted set ${target.setId}`);
+      }
     });
 
   program
     .command('due')
-    .description('list cards due now')
+    .description('list cards due now (shortcut for `list due`)')
     .option('--set <id>', 'only this set')
     .option('--tag <id>', 'only cards with this tag')
     .option('--folder <path>', 'only this folder subtree')
     .option('--limit <n>', 'override the configured review cap')
     .option('--strategy <name>', 'override: interleaved or overdue')
-    .action(async (opts: { set?: string; tag?: string; folder?: string; limit?: string; strategy?: string }) => {
-      const root = rootFrom(homeOpt());
-      const filter = {
-        setIds: opts.set ? [opts.set] : undefined,
-        tagIds: opts.tag ? [opts.tag] : undefined,
-        folderPaths: opts.folder ? [opts.folder] : undefined,
-      };
-      const prefs = await loadUserPreferences(root);
-      const limit = opts.limit === undefined ? prefs.reviewSessionCap : Number(opts.limit);
-      const strategy = (opts.strategy ?? prefs.queueStrategy) as QueueStrategy;
-      if (!Number.isInteger(limit) || limit < 0 || !['overdue', 'interleaved'].includes(strategy)) {
-        out('limit must be non-negative and strategy must be overdue or interleaved'); process.exitCode = 1; return;
-      }
-      const all = await getDueCards(root, new Date(), filter);
-      const queueOptions = { strategy, seed: new Date().toISOString().slice(0, 10) };
-      const prioritized = orderDueQueue(all, queueOptions);
-      const due = orderDueQueue(selectDueCards(prioritized, limit), queueOptions);
-      out(`${due.length} of ${all.length} card(s) due (${strategy})`);
-      for (const c of due) out(`  ${c.setId}/${c.id}  ${c.front.prompt}`);
-    });
+    .action(listDue);
 
   program
-    .command('show')
-    .description('print a card front + back (learn by reading)')
-    .requiredOption('--set <id>', 'set id')
-    .requiredOption('--card <id>', 'card id')
-    .action(async (opts: { set: string; card: string }) => {
-      const card = await loadCard(rootFrom(homeOpt()), opts.set, opts.card);
+    .command('show [ref]')
+    .description('print a card front and back; ref is setId/cardId')
+    .option('--set <id>', 'deprecated: set id')
+    .option('--card <id>', 'deprecated: card id')
+    .action(async (ref: string | undefined, opts: { set?: string; card?: string; json?: boolean }) => {
+      const target = resolveCardRef(ref, opts);
+      const card = await loadCard(rootFrom(homeOpt()), target.setId, target.cardId);
       if (!card) { out('card not found'); process.exitCode = 1; return; }
+      if (wantsJson(opts)) return out(JSON.stringify(card, null, 2));
       out(`Q: ${card.front.prompt}`);
       if (card.front.contextMarkdown) out(`\n${card.front.contextMarkdown}`);
       out(`\nA: ${card.back.shortAnswer}`);
       out(`\n${card.back.explanationMarkdown}`);
-      for (const ref of card.sourceRefs ?? []) {
-        out(`\n[source ${ref.path}:${ref.startLine}-${ref.endLine} @ ${ref.commit.slice(0, 8)} (${ref.status})]`);
-        if (ref.frozenText) out(ref.frozenText);
+      for (const source of card.sourceRefs ?? []) {
+        out(`\n[source ${source.path}:${source.startLine}-${source.endLine} @ ${source.commit.slice(0, 8)} (${source.status})]`);
+        if (source.frozenText) out(source.frozenText);
       }
     });
 
   program
-    .command('grade')
-    .description('grade one due card (1 Again, 2 Hard, 3 Good, 4 Easy)')
-    .requiredOption('--card <id>', 'card id (must be due)')
-    .requiredOption('--rating <1-4>', 'FSRS rating')
-    .action(async (opts: { card: string; rating: string }) => {
+    .command('grade [ref] [rating]')
+    .description('grade a due card: 1 Again, 2 Hard, 3 Good, 4 Easy')
+    .option('--set <id>', 'deprecated: set id')
+    .option('--card <id>', 'deprecated: card id; without --set searches the due queue')
+    .option('--rating <1-4>', 'deprecated: FSRS rating')
+    .action(async (ref: string | undefined, ratingArg: string | undefined, opts: {
+      set?: string; card?: string; rating?: string; json?: boolean;
+    }) => {
       const root = rootFrom(homeOpt());
-      const rating = Number(opts.rating) as ReviewRating;
-      if (![1, 2, 3, 4].includes(rating)) { out('rating must be 1..4'); process.exitCode = 1; return; }
+      const rating = Number(ratingArg ?? opts.rating) as ReviewRating;
+      if (![1, 2, 3, 4].includes(rating)) {
+        out('rating must be 1..4'); process.exitCode = 1; return;
+      }
       const due = await getDueCards(root, new Date());
-      const card = due.find((c) => c.id === opts.card);
+      let card;
+      if (ref || opts.set) {
+        const target = resolveCardRef(ref, opts);
+        card = due.find((candidate) => candidate.setId === target.setId && candidate.id === target.cardId);
+      } else if (opts.card) {
+        // Pre-positional compatibility: card ids are stable and library-unique.
+        card = due.find((candidate) => candidate.id === opts.card);
+      }
       if (!card) { out('card not due (or not found)'); process.exitCode = 1; return; }
       const session = startSession('recommended');
       const updated = await gradeCard(root, session, card, rating);
       await endSession(root, session);
-      out(`graded ${card.id} (${rating}); next due ${updated.fsrs.due}`);
+      const result = { card: formatCardRef(updated.setId, updated.id), rating, due: updated.fsrs.due };
+      if (wantsJson(opts)) out(JSON.stringify(result, null, 2));
+      else {
+        const displayedRef = !ref && !opts.set && opts.card ? updated.id : result.card;
+        out(`graded ${displayedRef} (${rating}); next due ${result.due}`);
+      }
+    });
+
+  program
+    .command('mastery')
+    .description('show demonstrated mastery by tag and folder')
+    .action(async (opts: { json?: boolean }) => {
+      const report = await loadMasteryReport(rootFrom(homeOpt()));
+      if (wantsJson(opts)) return out(JSON.stringify(report, null, 2));
+      out('Skills (tags)');
+      if (report.tags.length === 0) out('  (no tagged cards yet)');
+      for (const tag of report.tags) {
+        out(`  ${String(tag.mastery).padStart(3)}%  ${tag.label}  [${tag.cardCount} card${tag.cardCount === 1 ? '' : 's'}]`);
+      }
+      out('\nFolders');
+      if (report.folders.length === 0) out('  (no foldered cards yet)');
+      for (const folder of report.folders) {
+        out(`  ${String(folder.mastery).padStart(3)}%  ${folder.path}  [${folder.cardCount} card${folder.cardCount === 1 ? '' : 's'}]`);
+      }
+    });
+
+  program
+    .command('check')
+    .description('find cards whose cited repository code is stale')
+    .option('--set <id>', 'only this set')
+    .option('--archived', 'also check archived cards')
+    .action(async (opts: { set?: string; archived?: boolean; json?: boolean }) => {
+      const report = await checkDrift(rootFrom(homeOpt()), {
+        setId: opts.set, includeArchived: opts.archived,
+      });
+      if (wantsJson(opts)) out(JSON.stringify(report, null, 2));
+      else printDrift(report);
+    });
+
+  program
+    .command('prune')
+    .description('archive cards whose cited repository code is stale')
+    .option('--set <id>', 'only this set')
+    .option('--yes', 'archive every matched active card')
+    .action(async (opts: { set?: string; yes?: boolean; json?: boolean }) => {
+      const root = rootFrom(homeOpt());
+      const report = await checkDrift(root, { setId: opts.set });
+      if (!assumesYes(opts)) {
+        const preview = { ...report, archived: [] as string[], dryRun: true };
+        if (wantsJson(opts)) out(JSON.stringify(preview, null, 2));
+        else {
+          printDrift(report);
+          if (report.stale.length > 0) out('\nDry run: pass --yes to archive these cards. Nothing changed.');
+        }
+        return;
+      }
+      const archived: string[] = [];
+      for (const stale of report.stale) {
+        await archiveCard(root, stale.setId, stale.cardId);
+        archived.push(formatCardRef(stale.setId, stale.cardId));
+      }
+      const result = { ...report, archived, dryRun: false };
+      if (wantsJson(opts)) out(JSON.stringify(result, null, 2));
+      else out(`Archived ${archived.length} stale card(s).`);
+    });
+
+  program
+    .command('status')
+    .description('show the managed local server state and installed version')
+    .action(async (opts: { json?: boolean }) => {
+      const root = rootFrom(homeOpt());
+      const lock = await readServerLock(root);
+      const healthy = lock ? await probeServer(lock) : false;
+      const result = {
+        version: packageVersion(), library: root, running: healthy,
+        ...(lock ? {
+          url: lock.url, pid: lock.pid, port: lock.port, startedAt: lock.startedAt,
+          managed: lock.managed, staleLock: !healthy,
+        } : {}),
+      };
+      if (wantsJson(opts)) return out(JSON.stringify(result, null, 2));
+      out(`MergeLearn ${result.version}`);
+      out(`Library: ${root}`);
+      if (healthy && lock) out(`Server: running at ${lock.url} (pid ${lock.pid})`);
+      else if (lock) out(`Server: not running (stale lock for pid ${lock.pid})`);
+      else out('Server: not running');
     });
 
   program
     .command('serve')
     .description('open the local review GUI (Home + Practice) in your browser')
     .option('--port <n>', 'port (default: random free port)', (v) => Number(v))
-    .action(async (opts: { port?: number }) => {
+    .action(async (opts: { port?: number; json?: boolean }) => {
       const root = rootFrom(homeOpt());
       const server = await ensureServer(root, { port: opts.port });
+      if (wantsJson(opts)) {
+        out(JSON.stringify({ ok: true, ...server }, null, 2));
+        return;
+      }
       out(`MergeLearn review GUI running at ${server.url}${server.reused ? ' (reused)' : ''}`);
       out(server.reused ? 'A local GUI is already running.' : 'Open it in your browser. It closes after inactivity.');
     });
@@ -473,7 +734,9 @@ Manual/advanced: author a lesson yourself.
     .option('--scope <scope>', 'global (default) or project', 'global')
     .option('--dry-run', 'show what would change, write nothing')
     .option('--uninstall', 'remove skills this tool installed (manifest-tracked only)')
-    .action(async (opts: { agent?: string; scope?: string; dryRun?: boolean; uninstall?: boolean }) => {
+    .action(async (opts: {
+      agent?: string; scope?: string; dryRun?: boolean; uninstall?: boolean; json?: boolean;
+    }) => {
       const root = rootFrom(homeOpt());
       const scope: Scope = opts.scope === 'project' ? 'project' : 'global';
       const known = Object.keys(AGENT_ADAPTERS);
@@ -489,6 +752,10 @@ Manual/advanced: author a lesson yourself.
 
       if (opts.uninstall) {
         const { removed, missing } = await uninstall(root, { agents, scope });
+        if (wantsJson(opts)) {
+          out(JSON.stringify({ ok: true, action: 'uninstall', scope, agents, removed, missing }, null, 2));
+          return;
+        }
         out(`uninstalled ${removed.length} skill copy(ies)${missing.length ? `, ${missing.length} already gone` : ''}`);
         for (const r of removed) out(`  removed ${r.agent}/${r.skill}: ${r.destPath}`);
         return;
@@ -496,12 +763,20 @@ Manual/advanced: author a lesson yourself.
 
       if (opts.dryRun) {
         const plan = await planInstall(root, { agents, scope });
+        if (wantsJson(opts)) {
+          out(JSON.stringify({ ok: true, action: 'install', scope, agents, dryRun: true, plan }, null, 2));
+          return;
+        }
         out(`Plan (${scope} scope) — dry run, nothing written:`);
         for (const a of plan) out(`  ${a.status.padEnd(16)} ${a.agent}/${a.skill} -> ${a.destDir}`);
         return;
       }
 
       const { copied, skipped } = await applyInstall(root, { agents, scope });
+      if (wantsJson(opts)) {
+        out(JSON.stringify({ ok: true, action: 'install', scope, agents, copied, skipped }, null, 2));
+        return;
+      }
       out(`Installed ${copied.length} skill copy(ies) into ${agents.length} agent dir(s):`);
       for (const a of copied) out(`  ${a.status.padEnd(10)} ${a.agent}/${a.skill} -> ${a.destDir} (${a.sourceChecksum.slice(0, 12)})`);
       for (const s of skipped) {
@@ -509,7 +784,7 @@ Manual/advanced: author a lesson yourself.
         out(`  skipped    ${s.agent}/${s.skill}: ${why}`);
       }
       out('\nNext: open your coding agent in a repo and ask, e.g. "Create a MergeLearn lesson from my last PR."');
-      out('Then run `mergelearn serve` to learn it in your browser. (The agent runs `context` and `import` for you.)');
+      out('Then run `mergelearn serve` to learn it in your browser. (The agent runs `context` and `apply` for you.)');
     });
 
   return program;

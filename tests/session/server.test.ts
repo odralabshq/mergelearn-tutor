@@ -185,7 +185,8 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('/api/session/undo');
     expect(text).toContain('Undo last answer');
     expect(text).toContain('Copy reference');
-    expect(text).toContain('mergelearn show --set');
+    expect(text).toContain("var inspectCommand='mergelearn show '+c.setId+'/'+c.id");
+    expect(text).not.toContain('mergelearn show --set');
     expect(text).toContain('data-copy-practice-card');
     expect(text).toContain('class="copy-reference copy-practice-card"');
     expect(text).toContain('aria-label="Copy reference"');
@@ -212,7 +213,8 @@ describe('review GUI server (functional)', () => {
     running = await startReviewServer(await seed());
     const text = await (await fetch(`${running.url}/set/server-deck`)).text();
     expect(text).toContain('Copy reference');
-    expect(text).toContain('mergelearn show --set');
+    expect(text).toContain('mergelearn show server-deck/');
+    expect(text).not.toContain('mergelearn show --set');
     expect(text).toContain('class="copy-reference copy-card"');
     expect(text).toContain('aria-label="Copy reference"');
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
