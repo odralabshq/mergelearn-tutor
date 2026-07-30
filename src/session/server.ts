@@ -647,7 +647,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     const inspectCommand = `mergelearn show --set ${shellQuote(setId)} --card ${shellQuote(card.id)}`;
     return `<details class="browse-card"><summary><span class="q">${promptPreview(v.prompt)}</span>${state}</summary>` +
       `<div class="browse-body">` +
-      `<button type="button" class="secondary-action copy-card" data-copy-command="${escapeHtml(inspectCommand)}">Copy card command</button>` +
+      `<button type="button" class="copy-reference copy-card" data-copy-command="${escapeHtml(inspectCommand)}" aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button>` +
       `<p class="label">Question</p><div class="prompt-full markdown-body">${v.promptHtml || inlineCode(v.prompt)}</div>` +
       `${ctx}${srcs}` +
       `<p class="label">Answer</p><p class="short">${inlineCode(v.shortAnswer)}</p>` +
@@ -685,7 +685,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
       `var defer=document.querySelector('[data-dogfood-defer]');if(defer)defer.onclick=function(){fetch('/api/dogfood/defer',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id})}).then(function(r){return r.json();}).then(function(j){if(j.ok){defer.textContent='Deferred';setTimeout(function(){defer.textContent='Not now';},1200);}});};`
     : '';
   const controlsScript = `<script>(function(){var id=${JSON.stringify(setId)};` +
-    `function copyText(text,b){var done=function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy card command';},1200);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done);return;}var a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();try{document.execCommand('copy');done();}finally{a.remove();}}` +
+    `function copyText(text,b){var label=b.querySelector('[data-copy-label]');var done=function(){b.classList.add('copied');b.setAttribute('aria-label','Reference copied');b.title='Copied';if(label)label.textContent='Copied';setTimeout(function(){b.classList.remove('copied');b.setAttribute('aria-label','Copy reference');b.title='Copy reference';if(label)label.textContent='Copy reference';},1200);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done);return;}var a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();try{document.execCommand('copy');done();}finally{a.remove();}}` +
     `document.querySelectorAll('[data-copy-command]').forEach(function(b){b.onclick=function(){copyText(b.getAttribute('data-copy-command'),b);};});` +
     dogfoodScript +
     `var sr=document.getElementById('spaced-repetition');if(sr)sr.onchange=function(){var enabled=sr.checked;sr.disabled=true;fetch('/api/set/spaced-repetition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,enabled:enabled})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)sr.checked=!enabled;}).finally(function(){sr.disabled=false;});};` +
@@ -693,8 +693,9 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
     `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'}${est} · ` +
     `<span class="progress-pill state-${progress.state}">${pillLabel}</span> · ${due.length} due</p>` +
-    `${objective}${actions}${scheduling}${dogfood}${controlsScript}` +
-    (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`);
+    `${objective}${actions}${scheduling}${dogfood}` +
+    (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`) +
+    controlsScript;
   return pageShell(`MergeLearn — ${set.title}`, 'set', body);
 }
 
@@ -1135,6 +1136,14 @@ var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
 var requeueCounts={};var requeueSeq=0;var lastGrade=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function shellArg(s){var q=String.fromCharCode(39);return q+String(s).split(q).join(q+'"'+q+'"'+q)+q;}
+function copyText(text,button){
+  var label=button.querySelector('[data-copy-label]');
+  var done=function(){button.classList.add('copied');button.setAttribute('aria-label','Reference copied');button.title='Copied';if(label)label.textContent='Copied';statusMsg('Reference copied');setTimeout(function(){button.classList.remove('copied');button.setAttribute('aria-label','Copy reference');button.title='Copy reference';if(label)label.textContent='Copy reference';},1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(function(){statusMsg('copy failed');});return;}
+  var area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();
+  try{document.execCommand('copy');done();}catch(e){statusMsg('copy failed');}area.remove();
+}
 function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}if(practiceMode==='lesson'){p.textContent='Activity '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';return;}var pending=queue.slice(pos).filter(function(c){return !!c.__requeueSeq;}).length;p.textContent=reviewed+' attempt'+(reviewed===1?'':'s')+' · '+Math.max(0,queue.length-pos)+' remaining'+(pending?' ('+pending+' to revisit)':'');}
 function syncUndo(){var b=document.getElementById('undo-grade');if(b)b.hidden=!lastGrade;}
 function render(){
@@ -1174,7 +1183,8 @@ function render(){
     attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><p class="p-hint">Click a block then use ↑/↓, drag it, or use the ▲▼ buttons.</p><ol class="p-list" id="p-list" role="listbox" aria-label="Order the code blocks">'+pitems+'</ol></div>';
   }
   var check=interactive?'<button class="primary check-answer" id="check-answer" aria-label="Check answer, shortcut Enter">Check answer <kbd aria-hidden="true">Enter</kbd></button>':'';
-  mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span></div>'+
+  var inspectCommand='mergelearn show --set '+shellArg(c.setId)+' --card '+shellArg(c.id);
+  mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span><button type="button" class="copy-reference copy-practice-card" data-copy-practice-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
     '<div class="confidence" id="confidence"><p class="label">Before reveal — how confident are you?</p><div class="conf-opts">'+confBtns+'</div></div>'+check+
     '<div class="reveal" id="reveal-panel"><div id="attempt-review"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
@@ -1184,6 +1194,7 @@ function render(){
     '<div class="actions grade"><button class="g1" data-r="1" aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
   var checkBtn=document.getElementById('check-answer');if(checkBtn)checkBtn.addEventListener('click',reveal);
+  var copyBtn=document.querySelector('[data-copy-practice-card]');if(copyBtn)copyBtn.addEventListener('click',function(){copyText(inspectCommand,copyBtn);});
   wireParsons();
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
   var deep=document.getElementById('deep');
@@ -1519,7 +1530,13 @@ button.cta:disabled{opacity:.6;cursor:default}
 .badge{padding:2px 8px;border-radius:var(--radius-sm);font-size:12px;font-weight:600}
 .badge.due{background:rgba(99,102,241,0.15);color:var(--accent-hover)}
 .pcard{background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-top:16px}
-.pcard .topline{display:flex;gap:10px;color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:12px}
+.pcard .topline{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:12px;font-family:var(--mono);margin-bottom:12px}
+.copy-reference{box-sizing:border-box;height:28px;min-height:28px;max-height:28px;padding:0 8px;display:inline-flex;align-items:center;gap:5px;color:var(--muted);background:transparent;font-size:11px;font-weight:500;line-height:1;white-space:nowrap}
+.copy-reference:hover{color:var(--text)}
+.copy-reference:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.copy-reference.copied{color:var(--success);border-color:var(--success)}
+.copy-reference svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none;flex:none}
+.copy-practice-card{margin-left:auto}
 .prompt{font-size:1.25rem;font-weight:600;margin:0 0 16px}
 .prompt.markdown-body pre,.prompt.markdown-body pre code,.prompt-full pre code{font-weight:400;font-size:13px}
 .prompt.markdown-body p{font-size:1.25rem;font-weight:600}
