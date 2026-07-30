@@ -34,7 +34,7 @@ describe('createAndOpen', () => {
     });
 
     expect(result).toMatchObject({ ok: true, imported: true, setId: 'workflow-deck', reused: false, openRequested: true });
-    expect(result.url).toBe('http://127.0.0.1:4321/set/workflow-deck?source=create-and-open');
+    expect(result.url).toBe('http://127.0.0.1:4321/set/workflow-deck?source=apply-open');
     expect(opened).toEqual([result.url]);
   });
 
@@ -70,6 +70,6 @@ describe('createAndOpen', () => {
     });
 
     expect(result).toMatchObject({ ok: true, openRequested: false, reused: true });
-    expect(result.url).toContain('/set/workflow-deck?source=create-and-open');
+    expect(result.url).toContain('/set/workflow-deck?source=apply-open');
   });
 });
