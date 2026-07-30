@@ -192,7 +192,7 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text).toContain('<svg viewBox="0 0 24 24" aria-hidden="true">');
     expect(text).toContain("button.classList.add('copied')");
-    const practiceScript = text.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    const practiceScript = text.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     expect(practiceScript).toBeTruthy();
     expect(() => new Function(practiceScript!)).not.toThrow();
     expect(text).toContain("c.interaction.type==='flashcard'||n===1");
@@ -218,7 +218,7 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text.indexOf("document.querySelectorAll('[data-copy-command]')"))
       .toBeGreaterThan(text.indexOf('data-copy-command='));
-    const scripts = [...text.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((match) => match[1]);
+    const scripts = [...text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
     expect(scripts.length).toBeGreaterThan(0);
     expect(() => scripts.forEach((script) => new Function(script))).not.toThrow();
     expect(text).toContain('id="spaced-repetition" checked');
