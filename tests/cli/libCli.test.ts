@@ -34,7 +34,7 @@ const patch: AgentSetPatch = {
 
 describe('library CLI (functional, end-to-end)', () => {
   it('reports the package version', () => {
-    expect(buildProgram().version()).toBe('0.1.1');
+    expect(buildProgram().version()).toBe('1.2.0');
   });
 
   it('drives context -> import -> sets -> due -> show -> grade against a real library', async () => {

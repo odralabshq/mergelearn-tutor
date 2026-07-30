@@ -133,7 +133,7 @@ describe('refined CLI command surface', () => {
     const status = JSON.parse(await run(root, 'status', '--json')) as {
       version: string; library: string; running: boolean;
     };
-    expect(status).toMatchObject({ version: '0.1.1', library: root, running: false });
+    expect(status).toMatchObject({ version: '1.2.0', library: root, running: false });
 
     const mastery = JSON.parse(await run(root, 'mastery', '--json')) as {
       tags: { label: string; cardCount: number; mastery: number }[];
