@@ -184,6 +184,17 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('function planRequeue');
     expect(text).toContain('/api/session/undo');
     expect(text).toContain('Undo last answer');
+    expect(text).toContain('Copy reference');
+    expect(text).toContain('mergelearn show --set');
+    expect(text).toContain('data-copy-practice-card');
+    expect(text).toContain('class="copy-reference copy-practice-card"');
+    expect(text).toContain('aria-label="Copy reference"');
+    expect(text).toContain('<span data-copy-label>Copy reference</span>');
+    expect(text).toContain('<svg viewBox="0 0 24 24" aria-hidden="true">');
+    expect(text).toContain("button.classList.add('copied')");
+    const practiceScript = text.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
+    expect(practiceScript).toBeTruthy();
+    expect(() => new Function(practiceScript!)).not.toThrow();
     expect(text).toContain("c.interaction.type==='flashcard'||n===1");
     expect(text).toContain("responseText:''");
     expect(text).toContain("/^[1-4]$/.test(e.key)&&isRevealed()");
@@ -200,8 +211,16 @@ describe('review GUI server (functional)', () => {
   it('renders copy commands, reversible feedback, and default-on scheduling on a lesson', async () => {
     running = await startReviewServer(await seed());
     const text = await (await fetch(`${running.url}/set/server-deck`)).text();
-    expect(text).toContain('Copy card command');
+    expect(text).toContain('Copy reference');
     expect(text).toContain('mergelearn show --set');
+    expect(text).toContain('class="copy-reference copy-card"');
+    expect(text).toContain('aria-label="Copy reference"');
+    expect(text).toContain('<span data-copy-label>Copy reference</span>');
+    expect(text.indexOf("document.querySelectorAll('[data-copy-command]')"))
+      .toBeGreaterThan(text.indexOf('data-copy-command='));
+    const scripts = [...text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+    expect(scripts.length).toBeGreaterThan(0);
+    expect(() => scripts.forEach((script) => new Function(script))).not.toThrow();
     expect(text).toContain('id="spaced-repetition" checked');
     expect(text).toContain('worthAnswering:value');
     expect(text).toContain('var value=on?null:');
