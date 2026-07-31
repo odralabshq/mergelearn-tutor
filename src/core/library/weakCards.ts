@@ -69,6 +69,11 @@ export type WeakCard = {
   cardId: string;
   prompt: string;
   tagIds: string[];
+  /** Resolved labels for `tagIds`, in the same order. Present so a card row can
+   * name its concepts: the tag rollup above the list says which concepts are
+   * weak, but without labels on each row you cannot tell WHICH cards are the
+   * `arrays` ones. */
+  tagLabels: string[];
   /** Attempts in the recent window (<= WEAK_WINDOW). */
   attempts: number;
   /** Unaided retrieval failures within those attempts. */
@@ -144,6 +149,7 @@ async function recentEventsByCard(root: string): Promise<Map<string, ReviewEvent
 export async function loadWeakReport(root: string, now = new Date()): Promise<WeakReport> {
   const eventsByCard = await recentEventsByCard(root);
   const setTitles = new Map((await listSetSummaries(root)).map((s) => [s.id, s.title]));
+  const tagLabels = new Map((await loadTags(root)).map((t) => [t.id, t.label]));
 
   const measure = (card: Card, events: ReviewEvent[]): WeakCard => {
     const failures = events.filter(isRetrievalFailure).length;
@@ -153,6 +159,7 @@ export async function loadWeakReport(root: string, now = new Date()): Promise<We
       cardId: card.id,
       prompt: card.front.prompt,
       tagIds: card.tagIds,
+      tagLabels: card.tagIds.map((id) => tagLabels.get(id) ?? id),
       attempts: events.length,
       failures,
       score: weakScore(failures, events.length),
@@ -200,7 +207,6 @@ export async function loadWeakReport(root: string, now = new Date()): Promise<We
   weak.sort((a, b) => b.score - a.score || b.failures - a.failures || a.cardId.localeCompare(b.cardId));
   watch.sort((a, b) => b.score - a.score || a.cardId.localeCompare(b.cardId));
 
-  const tagLabels = new Map((await loadTags(root)).map((t) => [t.id, t.label]));
   const tags: WeakTag[] = [...weakByTag.keys()]
     .map((id) => ({
       id,

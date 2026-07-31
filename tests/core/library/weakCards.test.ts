@@ -158,6 +158,31 @@ describe('loadWeakReport evidence bar', () => {
     expect(report.cards[0]!.failures).toBe(4);
   });
 
+  it('names each weak card\'s concepts, so the tag rollup can be joined to the list', async () => {
+    const { root, ids } = await seed();
+    await writeSession(root, '2026-07-01T10:00:00.000Z', attempts(ids[0]!, 3, 3));
+
+    const row = (await loadWeakReport(root)).cards[0]!;
+    // Resolved labels, not raw ids: `arrays: 3/8` at the top is unusable if the
+    // rows below cannot say which of them are the arrays cards.
+    expect(row.tagLabels).toEqual(['arrays']);
+    expect(row.tagIds).toHaveLength(1);
+    expect(row.tagIds[0]).not.toBe('arrays');
+  });
+
+  it('falls back to the tag id when a label cannot be resolved', async () => {
+    const { root, ids } = await seed();
+    await writeSession(root, '2026-07-01T10:00:00.000Z', attempts(ids[0]!, 3, 3));
+
+    // A card referencing a tag that no longer exists must still report a row
+    // rather than dropping the card or emitting undefined.
+    const card = (await loadCardsForSet(root, SET)).find((c) => c.id === ids[0]!)!;
+    await saveCard(root, { ...card, tagIds: ['tag_vanished'] });
+
+    const row = (await loadWeakReport(root)).cards[0]!;
+    expect(row.tagLabels).toEqual(['tag_vanished']);
+  });
+
   it('carries explanatory FSRS context without ranking on it', async () => {
     const { root, ids } = await seed();
     await writeSession(root, '2026-07-01T10:00:00.000Z', attempts(ids[0]!, 3, 3));

@@ -750,7 +750,8 @@ export function buildProgram(): Command {
       out('Weakest cards (most-failed first)');
       for (const card of report.cards) {
         out(`  ${card.failures}/${card.attempts} failed  ${formatCardRef(card.setId, card.cardId)}  ${card.prompt}`);
-        out(`      ${card.retention}% recall now, ${card.lapses} lifetime lapse(s), `
+        const concepts = card.tagLabels.length ? `${card.tagLabels.join(', ')}  |  ` : '';
+        out(`      ${concepts}${card.retention}% recall now, ${card.lapses} lifetime lapse(s), `
           + `${card.stability}d stability`);
       }
       if (report.watch.length) {

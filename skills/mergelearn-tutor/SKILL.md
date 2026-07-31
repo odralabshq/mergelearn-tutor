@@ -69,7 +69,9 @@ still work during migration but should not be authored into new scripts.
   are weakest first. Add `--json` when an agent should adapt explanations to known
   gaps.
 - `mergelearn weak`: the individual cards the learner keeps failing to recall,
-  from recorded review evidence, with a per-tag rollup as `weak/eligible`. A card
+  from recorded review evidence, with a per-tag rollup as `weak/eligible` above
+  the list and each card row naming its own concepts, so the two can be joined.
+  A card
   must have at least 3 recent attempts and 2 retrieval failures before it is
   called weak; below that bar it is reported as needing more evidence rather than
   ranked. When nothing qualifies the command says so instead of guessing, so an
