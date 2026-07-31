@@ -29,6 +29,15 @@ export async function readJson<T>(path: string): Promise<T | undefined> {
     return JSON.parse(await readFile(path, 'utf8')) as T;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    // A bare parser message ("Expected property name or '}' ...") names no
+    // file, so a user cannot tell WHICH file to recover. Attach the path and a
+    // next step; this fixes the error text for every command at once.
+    if (error instanceof SyntaxError) {
+      throw new Error(
+        `invalid JSON in ${path}: ${error.message}. `
+        + 'Run `mergelearn doctor` to locate damaged files, or restore from a backup.',
+      );
+    }
     throw error;
   }
 }

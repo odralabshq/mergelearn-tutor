@@ -416,7 +416,10 @@ export async function inspectProfileBackup(path: string): Promise<{ manifest: Pr
   return { manifest, entryNames: Object.keys(files).sort() };
 }
 
-async function directoryHasEntries(path: string): Promise<boolean> {
+/** Read-only: does this profile root already hold data? Exported because the
+ * CLI must warn that a successful dry run will still need --force, and a dry run
+ * deliberately returns before the force check. */
+export async function directoryHasEntries(path: string): Promise<boolean> {
   try { return (await readdir(path)).length > 0; }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
@@ -429,8 +432,12 @@ export async function restoreProfileBackup(
 ): Promise<ProfileBackupManifest> {
   const { manifest, files } = await readProfileBackup(backupPath);
   const target = resolve(root), nonEmpty = await directoryHasEntries(target);
-  if (nonEmpty && !opts.force) throw new BundleError('profile root is not empty; pass force to replace it');
+  // Order matters: a dry run writes NOTHING, so it must not demand --force.
+  // Checking force first made the safe rehearsal impossible on exactly the
+  // profiles where rehearsing matters, and pushed users straight to the
+  // destructive form to find out whether their backup was even valid.
   if (opts.dryRun) return manifest;
+  if (nonEmpty && !opts.force) throw new BundleError('profile root is not empty; pass force to replace it');
 
   const parent = dirname(target);
   await mkdir(parent, { recursive: true });

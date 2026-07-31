@@ -53,6 +53,13 @@ One JSON object per apply. `tagPatch.add` proposes NEW tags (referenced by
 `localId`); `tagPatch.reuse` lists existing tag ids you are reusing. `order`
 must cover exactly the cards in this patch (by `localId`).
 
+A card `localId` is an identity, not a position. An omitted card id is derived
+from it, and a re-apply preserves the learner's review history for any card id
+that already exists. Reusing a `localId` therefore claims "this is the same
+thing the learner already practised". Rewriting the prompt, answer, explanation
+or interaction of that same concept is exactly what reuse is for. If a card now
+teaches a DIFFERENT concept, give it a new `localId`.
+
 ```json
 {
   "version": 1,
@@ -240,22 +247,46 @@ structure; teaching quality is on you.
 
 ## Pitfalls
 
-- Off-by-one line ranges are the #1 provenance defect. Re-read and count.
+- Reusing a card `localId` for a different concept is silent damage. Review
+  history is preserved per card id, so the new material inherits an interval the
+  old material earned and can go unseen for weeks, with nothing in the output
+  saying so. A reset schedule only costs redundant reviews; an inherited one
+  hides material the learner does not know. When in doubt, use a new `localId`.
+- Off-by-one line ranges are the #1 provenance defect. Re-read and count. A range
+  that starts past end-of-file now fails loudly (the card lands in
+  `needs_review` with an unresolved source) and `status: 'fresh'` can never be
+  paired with an empty snippet, but an off-by-one *within* the file still freezes
+  the wrong lines silently. Only counting catches that.
+- Omitting `set.id` always means CREATE. The id is derived by slugifying the
+  title, so if that slug already holds a lesson the apply is rejected with
+  `set:id_collision` instead of merging into it. To UPDATE or APPEND to a lesson,
+  pass its `set.id` explicitly. `context` lists the id of every existing lesson,
+  so you already have it. Do not rely on the title matching: two lessons can
+  share a title, and a silent merge overwrites the first one's title,
+  folderPath, objective, lessonKind and estimatedMinutes.
 - One concept per card. If a range needs two questions, author two cards.
 - REUSE tags from the context handshake; don't invent `auth`/`authentication`
   synonyms — it fragments the learning graph.
 - Don't stuff the answer into the prompt to "help" — the anti-trivia gate
   rejects it, and it defeats retrieval practice.
 - A thin `explanationMarkdown` passes the (non-empty) gate but fails the learner.
-  Depth is on you; the gate won't catch shallowness. (But an over-long one buries
-  the mechanism — lead tight, defer depth to the fold.)
+  Depth is on you. Under ~80 characters now raises an advisory warning, but the
+  warning is a floor, not a standard: a 200-character restatement passes it and
+  still teaches nothing. (An over-long one buries the mechanism, so lead tight
+  and defer depth to the fold.)
 - A lesson of only `choice` cards drills recognition, not recall. Mix in
   `self_response` and end with a transfer card that applies the idea somewhere new.
 - A `parsons` card whose blocks have no dependency between them has multiple
   valid orders but grades on ONE — a correct learner gets marked wrong. Only use
   `parsons` when sequence is forced by data/control flow; otherwise use `choice`.
-- Don't front-load the answer in the prompt or `contextMarkdown` — the learner
-  must attempt first for the reveal to teach. The explanation is the payoff, not
-  the setup.
+  Adjacent blocks sharing no identifier now raise an advisory warning; treat it
+  as a prompt to re-check, since the heuristic is deliberately conservative.
+- Don't front-load the answer in the prompt or `contextMarkdown`. The learner
+  must attempt first for the reveal to teach, and the explanation is the payoff,
+  not the setup. Both fields are checked for the answer verbatim, and
+  `contextMarkdown` is checked because it renders WITH the question before the
+  attempt, which makes a leak there strictly worse than one in the prompt. A
+  paraphrased leak (most of the answer's words already in the prompt) raises an
+  advisory warning instead of a rejection, because the check cannot be exact.
 - Trivial distractors waste a `choice`. If the wrong options are obviously wrong,
   the learner pattern-matches instead of reasoning. Make each a real misconception.

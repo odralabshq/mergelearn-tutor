@@ -29,6 +29,10 @@ export type ImportResult = {
   setId?: string;
   cards: ImportCardResult[];
   tagIdsAdded: string[];
+  /** True when this applied INTO a lesson that already existed. A dry run that
+   * says only "would apply set X" cannot be distinguished from creating a new
+   * lesson, which is exactly how an accidental merge stays invisible. */
+  mergedIntoExisting?: boolean;
 };
 
 export type ImportOptions = {
@@ -82,6 +86,41 @@ export async function importAgentSet(
     return { ok: false, errors, cards: [], tagIdsAdded: [] };
   }
 
+  // Gate 3: identity. An omitted set.id is DERIVED by slugifying the title,
+  // which drops case and every punctuation run, so unrelated lessons collapse
+  // onto one id and the first lesson's title, folderPath, objective, lessonKind
+  // and estimatedMinutes get overwritten with no warning.
+  //
+  // The rule is deliberately absolute: an omitted id means CREATE, an explicit
+  // id means UPDATE. Comparing titles (or objectives, or folders) to guess at
+  // intent looked cheaper but has a false negative that matters - two agents
+  // independently authoring "Error Handling" produce identical titles, so a
+  // title check would wave the merge through and lose the first lesson exactly
+  // as before. Titles are evidence, not identity.
+  //
+  // Cost: an agent re-applying an unchanged lesson without its id is now
+  // rejected rather than quietly merging. That is the intended trade - the
+  // `context` handshake already hands an updating agent the set id, and a
+  // recoverable error beats silent data loss.
+  if (!patch.set.id) {
+    const derivedId = setIdFromTitle(patch.set.title);
+    const occupant = await readJson<CardSet>(libraryPaths(root).setFile(derivedId));
+    if (occupant) {
+      return {
+        ok: false,
+        errors: [{
+          code: 'set:id_collision',
+          message: `set id "${derivedId}" derived from this title already holds the lesson `
+            + `"${occupant.title}". To update or append to it, pass set.id "${derivedId}" `
+            + 'explicitly (the `context` handshake lists it). To create a separate lesson, '
+            + 'retitle this one so it derives a distinct id.',
+        }],
+        cards: [],
+        tagIdsAdded: [],
+      };
+    }
+  }
+
   return persist(root, patch, tagResult, iso, opts);
 }
 
@@ -97,6 +136,9 @@ async function persist(
   if (!opts.dryRun) await saveTags(root, tagResult.mergedTags);
 
   const setId = patch.set.id ?? setIdFromTitle(patch.set.title);
+  // Read BEFORE any write so a dry run and a real apply agree on whether this
+  // lands in an existing lesson.
+  const mergedIntoExisting = (await readJson<CardSet>(libraryPaths(root).setFile(setId))) !== undefined;
   const resolveTagRef = (ref: string): string => tagResult.localIdToTagId.get(ref) ?? ref;
 
   // Map each card's localId (and any pre-set id) to its real, stable cardId.
@@ -123,17 +165,29 @@ async function persist(
       status = 'needs_review';
       reasons.push('source:unresolved');
     }
-    cards.push(buildCard(setId, cardId, c, sourceRefs, status, iso, opts, resolveTagRef));
-    results.push({ localId: c.localId, cardId, status, reasons });
+    // A re-import refreshes AGENT-AUTHORED teaching content; it must never
+    // reset LEARNER-OWNED state. Load whatever is already stored at this card
+    // id so buildCard can carry the schedule forward. Same principle the set
+    // already applies to `spacedRepetition`: a learner preference is not
+    // agent-authored lesson metadata.
+    const existing = await readJson<Card>(libraryPaths(root).cardFile(setId, cardId));
+    // Archiving is a learner decision too, so a refresh must not silently
+    // resurrect a card into the review queue. Report the EFFECTIVE status so
+    // the import summary matches what is actually on disk.
+    const effectiveStatus: CardStatus = existing?.status === 'archived' ? 'archived' : status;
+    if (effectiveStatus !== status) reasons.push('kept:archived');
+    cards.push(buildCard(setId, cardId, c, sourceRefs, effectiveStatus, iso, opts, resolveTagRef, existing));
+    results.push({ localId: c.localId, cardId, status: effectiveStatus, reasons });
   }
 
   // Dry run: everything above is read-only (gates + freezeSourceRefs + status
   // computation). Return the preview without any set/card/order/record write.
   if (opts.dryRun) {
-    return { ok: true, errors: [], setId, cards: results, tagIdsAdded: tagResult.addedTagIds };
+    return { ok: true, errors: [], setId, cards: results, tagIdsAdded: tagResult.addedTagIds, mergedIntoExisting };
   }
 
-  return finalize(root, patch, setId, cards, cardIdOf, results, tagResult.addedTagIds, iso, opts, resolveTagRef);
+  const result = await finalize(root, patch, setId, cards, cardIdOf, results, tagResult.addedTagIds, iso, opts, resolveTagRef);
+  return { ...result, mergedIntoExisting };
 }
 
 function buildCard(
@@ -145,12 +199,15 @@ function buildCard(
   iso: string,
   opts: ImportOptions,
   resolveTagRef: (ref: string) => string,
+  existing?: Card,
 ): Card {
   return {
     id: cardId,
     setId,
     folderPath: draft.folderPath,
     tagIds: (draft.tagRefs ?? []).map(resolveTagRef),
+    // Everything above and below this line is agent-authored and IS replaced:
+    // refreshing teaching content is the whole point of a re-import.
     front: draft.front,
     back: draft.back,
     difficulty: draft.difficulty,
@@ -158,9 +215,14 @@ function buildCard(
     interaction: draft.interaction,
     sourceRefs: sourceRefs && sourceRefs.length > 0 ? sourceRefs : undefined,
     status,
-    fsrs: newFsrsState(new Date(iso)),
-    createdBy: { agentName: opts.agentName, agentModel: opts.agentModel, importedAt: iso },
-    createdAt: iso,
+    // Learner-owned and creation facts: preserved across a re-import. Losing
+    // `fsrs` silently discards weeks of review history and makes learned
+    // material due immediately, while the session records that produced it
+    // survive on disk and become orphaned.
+    fsrs: existing?.fsrs ?? newFsrsState(new Date(iso)),
+    createdBy: existing?.createdBy
+      ?? { agentName: opts.agentName, agentModel: opts.agentModel, importedAt: iso },
+    createdAt: existing?.createdAt ?? iso,
     updatedAt: iso,
   };
 }

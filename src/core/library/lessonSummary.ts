@@ -13,6 +13,53 @@ export type LessonSummary = {
   warnings: LessonWarning[];
 };
 
+/** Language keywords carry no topical meaning, so two blocks sharing only
+ * `const` are not genuinely related. Stripping them keeps the dependency check
+ * conservative: it prefers missing an ambiguity over crying wolf. */
+const COMMON_TOKENS = new Set([
+  'const', 'let', 'var', 'function', 'return', 'if', 'else', 'for', 'while', 'do', 'then', 'end',
+  'await', 'async', 'new', 'this', 'import', 'export', 'from', 'type', 'interface', 'class', 'def',
+  'public', 'private', 'static', 'true', 'false', 'null', 'undefined', 'void', 'try', 'catch',
+  'int', 'str', 'string', 'number', 'boolean', 'bool', 'self', 'in', 'of', 'not', 'and', 'or',
+]);
+
+/** Meaningful identifiers in a snippet, lowercased. */
+function identifiersOf(code: string): Set<string> {
+  const words = (code.match(/[A-Za-z_$][A-Za-z0-9_$]*/g) ?? [])
+    .map((w) => w.toLowerCase())
+    .filter((w) => w.length > 1 && !COMMON_TOKENS.has(w));
+  return new Set(words);
+}
+
+const CONTENT_WORD = /[A-Za-z][A-Za-z0-9'-]*/g;
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'it', 'its', 'this', 'that', 'these',
+  'those', 'to', 'of', 'in', 'on', 'at', 'by', 'for', 'with', 'and', 'or', 'but', 'if', 'then',
+  'than', 'so', 'as', 'not', 'no', 'do', 'does', 'did', 'you', 'your', 'we', 'they', 'what', 'why',
+  'how', 'when', 'which', 'who', 'will', 'would', 'can', 'could', 'should', 'from', 'into', 'has',
+]);
+
+function contentWords(text: string): string[] {
+  return (text.match(CONTENT_WORD) ?? [])
+    .map((w) => w.toLowerCase())
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
+}
+
+/** Share of the answer's content words that already appear in the prompt.
+ * Catches a PARAPHRASED leak, which the verbatim includes() check cannot see. */
+export function answerOverlapRatio(prompt: string, shortAnswer: string): number {
+  const answerWords = contentWords(shortAnswer);
+  if (answerWords.length < 3) return 0; // too short to judge
+  const promptWords = new Set(contentWords(prompt));
+  const shared = answerWords.filter((w) => promptWords.has(w)).length;
+  return shared / answerWords.length;
+}
+
+/** Below this, an explanation is a restatement rather than teaching. */
+const THIN_EXPLANATION_CHARS = 80;
+/** Above this, the prompt is largely giving the answer away in other words. */
+const OVERLAP_WARN_RATIO = 0.7;
+
 /** Pure, advisory summary. It never rejects or changes card status. */
 export function summarizeLesson(patch: AgentSetPatch, results: ImportCardResult[] = []): LessonSummary {
   const counts: Partial<Record<Interaction['type'], number>> = {};
@@ -26,6 +73,43 @@ export function summarizeLesson(patch: AgentSetPatch, results: ImportCardResult[
     if (card.interaction?.type === 'parsons') {
       const n = card.interaction.blocks.length;
       if (n < 3 || n > 8) warnings.push({ code: 'parsons:block_count', message: `Parsons activity has ${n} blocks; 3 to 8 is recommended`, cardLocalId: card.localId });
+      // Adjacent blocks that share no identifier can usually be swapped without
+      // changing behaviour, so the single `correctOrder` marks a correct learner
+      // wrong. That teaches the wrong thing, which is worse than teaching
+      // nothing, and no structural gate can see it.
+      const byId = new Map(card.interaction.blocks.map((b) => [b.id, b.code ?? '']));
+      const order = card.interaction.correctOrder ?? [];
+      for (let i = 1; i < order.length; i += 1) {
+        const previous = identifiersOf(byId.get(order[i - 1]!) ?? '');
+        const current = identifiersOf(byId.get(order[i]!) ?? '');
+        if (previous.size === 0 || current.size === 0) continue;
+        if ([...current].some((token) => previous.has(token))) continue;
+        warnings.push({
+          code: 'parsons:ambiguous_order',
+          message: `Parsons blocks ${i} and ${i + 1} share no identifier, so their order may be arbitrary; `
+            + 'a learner who swaps them would be marked wrong',
+          cardLocalId: card.localId,
+        });
+      }
+    }
+
+    const explanation = card.back?.explanationMarkdown?.trim() ?? '';
+    if (explanation.length > 0 && explanation.length < THIN_EXPLANATION_CHARS) {
+      warnings.push({
+        code: 'card:thin_explanation',
+        message: `Explanation is ${explanation.length} characters; too short to explain WHY`,
+        cardLocalId: card.localId,
+      });
+    }
+
+    const overlap = answerOverlapRatio(card.front?.prompt ?? '', card.back?.shortAnswer ?? '');
+    if (overlap >= OVERLAP_WARN_RATIO) {
+      warnings.push({
+        code: 'card:answer_overlap',
+        message: `${Math.round(overlap * 100)}% of the answer's words already appear in the prompt; `
+          + 'the card may be testing reading rather than recall',
+        cardLocalId: card.localId,
+      });
     }
   }
 

@@ -18,7 +18,7 @@ import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSessio
 import { listSetSummaries, loadSet, loadOrder, saveSet } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
-import { loadMasteryReport } from '../core/library/mastery.js';
+import { loadMasteryReport, type ProgressStats } from '../core/library/mastery.js';
 import {
   attemptedByLessonSet,
   attemptedCardIds,
@@ -706,6 +706,22 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
  * numbers from identical rules. */
 const loadManageData = loadMasteryReport;
 
+/** "88% still remembered", or plain language when nothing has been attempted.
+ * Never "0% remembered": that reads as total forgetting, when it really means
+ * the learner has not started. */
+function retentionLabel(s: ProgressStats): string {
+  return s.studied === 0 ? 'not studied yet' : `${s.retention}% still remembered`;
+}
+
+/** Tooltip text carrying BOTH measures. The bar and the visible number show
+ * coverage (how much has been learned); retention lives here because showing a
+ * second bar would need new CSS, and an honest label plus a tooltip is the
+ * smaller change that removes the misleading "100% mastery" reading. */
+function progressTitle(s: ProgressStats, noun: string): string {
+  return `${s.coverage}% learned, ${retentionLabel(s)} — `
+    + `${s.cardCount} card${s.cardCount === 1 ? '' : 's'} ${noun}, ${s.studied} studied`;
+}
+
 async function renderManage(root: string): Promise<string> {
   const { folders, tags, cards } = await loadManageData(root);
   // Embed card membership so match counts recompute client-side (no round-trip).
@@ -716,11 +732,11 @@ async function renderManage(root: string): Promise<string> {
   const tree = folders.length
     ? folders.map((f) =>
         `<li class="tree-node" data-folder="${escapeHtml(f.path)}">` +
-        `<div class="tree-row" role="button" tabindex="0" title="${f.mastery}% mastery — ${f.cardCount} card${f.cardCount === 1 ? '' : 's'} in this folder">` +
+        `<div class="tree-row" role="button" tabindex="0" title="${escapeHtml(progressTitle(f, 'in this folder'))}">` +
         `<span class="tree-name">${escapeHtml(f.path)}</span>` +
         `<span class="tree-count" title="${f.cardCount} card${f.cardCount === 1 ? '' : 's'}">${f.cardCount}</span>` +
-        `<span class="tree-bar" style="--pct:${f.mastery}%" aria-hidden="true"></span>` +
-        `<span class="tree-pct" aria-label="${f.mastery}% mastery">${f.mastery}%</span>` +
+        `<span class="tree-bar" style="--pct:${f.coverage}%" aria-hidden="true"></span>` +
+        `<span class="tree-pct" aria-label="${f.coverage}% learned, ${escapeHtml(retentionLabel(f))}">${f.coverage}%</span>` +
         `</div></li>`,
       ).join('')
     : `<li class="empty">No folders yet — author a set with a <code>folderPath</code>.</li>`;
@@ -728,11 +744,11 @@ async function renderManage(root: string): Promise<string> {
   // Tag chips. Empty library → friendly empty state.
   const tagChips = tags.length
     ? tags.map((t) =>
-        `<div class="tag-chip" data-tag="${escapeHtml(t.id)}" role="button" tabindex="0" title="${t.mastery}% mastery — ${t.cardCount} card${t.cardCount === 1 ? '' : 's'} tagged">` +
+        `<div class="tag-chip" data-tag="${escapeHtml(t.id)}" role="button" tabindex="0" title="${escapeHtml(progressTitle(t, 'tagged'))}">` +
         `<span class="tag-top"><span class="tag-label">${escapeHtml(t.label)}</span>` +
         `<span class="tag-count" title="${t.cardCount} card${t.cardCount === 1 ? '' : 's'}">${t.cardCount}</span></span>` +
-        `<span class="tag-bar" style="--pct:${t.mastery}%" aria-hidden="true"></span>` +
-        `<span class="tag-pct" aria-label="${t.mastery}% mastery">${t.mastery}%</span>` +
+        `<span class="tag-bar" style="--pct:${t.coverage}%" aria-hidden="true"></span>` +
+        `<span class="tag-pct" aria-label="${t.coverage}% learned, ${escapeHtml(retentionLabel(t))}">${t.coverage}%</span>` +
         `</div>`,
       ).join('')
     : `<div class="empty">No tags yet — author cards with <code>tagRefs</code>.</div>`;
@@ -1060,7 +1076,7 @@ function renderPractice(): string {
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
     `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" hidden>Undo last answer</button></div>` +
     `<div id="mount"></div>` +
-    `<div class="status" id="status"></div>` +
+    `<div class="status" id="status" aria-live="polite"></div>` +
     `<script>${practiceScript()}</script>`;
   return pageShell('MergeLearn — Practice', 'practice', body);
 }
@@ -1092,8 +1108,15 @@ function render(){
     var dueSummary=waitingBacklog?waitingBacklog+' more waiting.':'Nothing more due.';
     var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewSummary+'. '+dueSummary;
     var empty=practiceMode==='lesson'?'This lesson has no active activities.':'Nothing due right now. Come back later, or author more cards.';
-    var next=practiceMode==='review'&&waitingBacklog?'<div class="done-actions"><a class="secondary-action" href="/practice">Review next sitting</a></div>':'';
-    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>'+next:'<div class="empty">'+empty+'</div>';return;
+    // Finishing is the moment the learner is most receptive, so never leave
+    // them on a dead end. With a backlog, offer the next sitting; without one,
+    // offer the two things worth doing next instead of nothing at all.
+    var forward=practiceMode==='review'&&waitingBacklog
+      ?'<a class="secondary-action" href="/practice">Review next sitting</a>'
+      :'<a class="secondary-action" href="/">Back to lessons</a><a class="secondary-action" href="/manage">See your progress</a>';
+    var next='<div class="done-actions">'+forward+'</div>';
+    var emptyNext='<div class="done-actions"><a class="secondary-action" href="/">Back to lessons</a><a class="secondary-action" href="/manage">See your progress</a></div>';
+    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>'+next:'<div class="empty">'+empty+'</div>'+emptyNext;return;
   }
   var c=queue[pos];confidence=0;attempt=null;cardStartedAt=Date.now();
   var interaction=c.interaction||{type:'flashcard'};
@@ -1107,7 +1130,7 @@ function render(){
   var ctx=c.context?'<div class="ctx markdown-body">'+(c.contextHtml||fmt(c.context))+'</div>':'';
   var mistakes=(c.commonMistakes||[]).length?'<p class="label">Common mistakes</p><ul>'+c.commonMistakes.map(function(m){return '<li>'+fmt(m)+'</li>';}).join('')+'</ul>':'';
   var confLabels=[['1','Guessing'],['2','Low'],['3','Medium'],['4','High'],['5','Certain']];
-  var confBtns=confLabels.map(function(p){return '<button class="c'+p[0]+'" data-c="'+p[0]+'" aria-label="'+p[1]+', shortcut '+p[0]+'">'+p[1]+'<kbd aria-hidden="true">'+p[0]+'</kbd></button>';}).join('');
+  var confBtns=confLabels.map(function(p){return '<button type="button" role="radio" aria-checked="false" class="c'+p[0]+'" data-c="'+p[0]+'" aria-label="'+p[1]+', shortcut '+p[0]+'">'+p[1]+'<kbd aria-hidden="true">'+p[0]+'</kbd></button>';}).join('');
   var attemptUi='';
   if(interaction.type==='self_response'){
     attemptUi='<div class="attempt"><label class="label" for="attempt-text">Your answer</label><textarea id="attempt-text" rows="3" placeholder="'+esc(interaction.placeholder||'Write a short answer before revealing...')+'"></textarea></div>';
@@ -1123,8 +1146,8 @@ function render(){
   var inspectCommand='mergelearn show '+c.setId+'/'+c.id;
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span><button type="button" class="copy-reference copy-practice-card" data-copy-practice-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
-    '<div class="confidence" id="confidence"><p class="label">Before reveal — how confident are you?</p><div class="conf-opts">'+confBtns+'</div></div>'+check+
-    '<div class="reveal" id="reveal-panel"><div id="attempt-review"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
+    '<div class="confidence" id="confidence"><p class="label" id="conf-label">Before reveal — how confident are you?</p><div class="conf-opts" role="radiogroup" aria-labelledby="conf-label">'+confBtns+'</div></div>'+check+
+    '<div class="reveal" id="reveal-panel"><div id="attempt-review" aria-live="polite"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
@@ -1138,7 +1161,10 @@ function render(){
   if(deep)deep.addEventListener('toggle',function(){try{localStorage.setItem('ml-deep-open',deep.open?'1':'0');}catch(e){}});
 }
 function setConfidence(n){
-  confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.toggle('sel',Number(b.getAttribute('data-c'))===n);});
+  // aria-checked must track the .sel class: without it the selected confidence
+  // is conveyed by colour alone and a screen-reader user cannot tell which of
+  // the five options is active.
+  confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){var on=Number(b.getAttribute('data-c'))===n;b.classList.toggle('sel',on);b.setAttribute('aria-checked',on?'true':'false');});
   var c=queue[pos];if(!c||!c.interaction||c.interaction.type==='flashcard'||n===1)reveal();
 }
 // Present blocks in a non-solved order. Fisher-Yates, then if it landed on the
@@ -1237,7 +1263,10 @@ function reveal(){
   document.getElementById('reveal-panel').classList.add('show');
   var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');
   var area=document.querySelector('.attempt');if(area)area.classList.add('locked');
-  var check=document.getElementById('check-answer');if(check)check.disabled=true;
+  // Hide rather than disable: after the answer is revealed the control can
+  // never become usable again for this card, and a permanently greyed button
+  // reads as "something is broken" instead of "this step is finished".
+  var check=document.getElementById('check-answer');if(check){check.disabled=true;check.hidden=true;}
   if(window.__mlMermaid)window.__mlMermaid();
 }
 function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.classList.contains('show');}
@@ -1521,7 +1550,7 @@ button.primary:hover{background:var(--accent-hover)}
 .attempt textarea:focus{outline:2px solid var(--accent);outline-offset:1px}
 .attempt.locked{opacity:.65;pointer-events:none}
 .choices{display:grid;gap:8px;border-left:0;border-right:0;border-bottom:0}
-.choice{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay);cursor:pointer}
+.choice{display:flex;align-items:flex-start;gap:10px;padding:12px;min-height:44px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay);cursor:pointer}
 .choice:hover{background:var(--hover)}
 .choice input{margin-top:4px;accent-color:var(--accent)}
 .check-answer{margin-top:14px}.check-answer kbd{font-family:var(--mono);font-size:11px;opacity:.75;margin-left:5px}
