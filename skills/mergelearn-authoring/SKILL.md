@@ -53,6 +53,13 @@ One JSON object per apply. `tagPatch.add` proposes NEW tags (referenced by
 `localId`); `tagPatch.reuse` lists existing tag ids you are reusing. `order`
 must cover exactly the cards in this patch (by `localId`).
 
+A card `localId` is an identity, not a position. An omitted card id is derived
+from it, and a re-apply preserves the learner's review history for any card id
+that already exists. Reusing a `localId` therefore claims "this is the same
+thing the learner already practised". Rewriting the prompt, answer, explanation
+or interaction of that same concept is exactly what reuse is for. If a card now
+teaches a DIFFERENT concept, give it a new `localId`.
+
 ```json
 {
   "version": 1,
@@ -240,6 +247,11 @@ structure; teaching quality is on you.
 
 ## Pitfalls
 
+- Reusing a card `localId` for a different concept is silent damage. Review
+  history is preserved per card id, so the new material inherits an interval the
+  old material earned and can go unseen for weeks, with nothing in the output
+  saying so. A reset schedule only costs redundant reviews; an inherited one
+  hides material the learner does not know. When in doubt, use a new `localId`.
 - Off-by-one line ranges are the #1 provenance defect. Re-read and count. A range
   that starts past end-of-file now fails loudly (the card lands in
   `needs_review` with an unresolved source) and `status: 'fresh'` can never be
