@@ -137,8 +137,27 @@ function validateCards(
     if (!nonEmpty(c.front?.prompt)) errors.push({ code: 'prompt_empty', message: 'front.prompt is empty', cardLocalId: c.localId });
     if (!nonEmpty(c.back?.shortAnswer)) errors.push({ code: 'short_answer_empty', message: 'back.shortAnswer is empty', cardLocalId: c.localId });
     if (!nonEmpty(c.back?.explanationMarkdown)) errors.push({ code: 'explanation_empty', message: 'back.explanationMarkdown is empty', cardLocalId: c.localId });
-    if (nonEmpty(c.front?.prompt) && nonEmpty(c.back?.shortAnswer) && leaksAnswer(c.front.prompt, c.back.shortAnswer)) {
-      errors.push({ code: 'answer_leak', message: 'prompt contains the shortAnswer verbatim', cardLocalId: c.localId });
+    // Leak-check EVERY field rendered before the attempt, not just the prompt.
+    // contextMarkdown renders together with the question, so an answer placed
+    // there is strictly worse than one in the prompt: the learner reads it as
+    // setup material and the card measures reading, not recall.
+    const shortAnswer = c.back?.shortAnswer;
+    if (shortAnswer !== undefined && shortAnswer.trim().length > 0) {
+      const preAttempt: ReadonlyArray<readonly [string, string | undefined]> = [
+        ['prompt', c.front?.prompt],
+        ['front.contextMarkdown', c.front?.contextMarkdown],
+      ];
+      for (const [field, text] of preAttempt) {
+        if (text === undefined || text.trim().length === 0) continue;
+        if (!leaksAnswer(text, shortAnswer)) continue;
+        errors.push({
+          code: 'answer_leak',
+          message: field === 'prompt'
+            ? 'prompt contains the shortAnswer verbatim'
+            : 'front.contextMarkdown contains the shortAnswer verbatim (it renders before the attempt)',
+          cardLocalId: c.localId,
+        });
+      }
     }
     for (const ref of c.tagRefs ?? []) {
       if (!existingTagIds.has(ref) && !proposedLocalIds.has(ref)) {

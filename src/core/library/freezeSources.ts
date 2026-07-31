@@ -30,6 +30,17 @@ export async function freezeSourceRef(root: string, ref: DraftSourceRef): Promis
   }
   try {
     const range = await readRange(repoPath, ref.path, ref.startLine, ref.endLine);
+    // INVARIANT: status 'fresh' must imply frozenText !== ''. A citation that
+    // froze nothing is not verified provenance, however it got here (empty
+    // file, blank line range, a future reader change). Keep the range AS
+    // REQUESTED so the author can see what they asked for.
+    if (range.text.length === 0) {
+      return {
+        repoId: ref.repoId, path: ref.path,
+        startLine: ref.startLine, endLine: ref.endLine,
+        commit, status: 'missing',
+      };
+    }
     return {
       repoId: ref.repoId, path: ref.path,
       startLine: range.startLine, endLine: range.endLine,

@@ -51,7 +51,9 @@ describe('library CLI (functional, end-to-end)', () => {
     const patchFile = join(root, 'patch.json');
     await writeFile(patchFile, JSON.stringify(patch), 'utf8');
     const importOut = await run(root, 'import', '--file', patchFile, '--agent', 'tester');
-    expect(importOut).toContain('imported set "cli-deck": 1 active');
+    // The create-vs-merge disclosure is deliberate: "imported set X" alone reads
+    // identically whether X is new or already held a lesson.
+    expect(importOut).toContain('imported set "cli-deck" (new lesson): 1 active');
     expect(importOut).toContain('+1 tags');
 
     // context: recent lessons expose enough grounded metadata to deepen instead of repeat.
@@ -153,19 +155,25 @@ describe('library CLI (functional, end-to-end)', () => {
     const patchFile = join(root, 'patch.json');
     await writeFile(patchFile, JSON.stringify(patch), 'utf8');
     await run(root, 'import', '--file', patchFile);
-    const listed = JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'));
-    const cardId = listed[0].cardId;
+    // The deprecated `cards` alias runs the canonical handler, so it returns the
+    // same {cards,total,returned,truncated} envelope. One JSON contract for one
+    // piece of data; an alias that answered in a different shape would be worse
+    // than the changed shape.
+    const cardsOf = async (...args: string[]): Promise<{ cardId: string; status: string; prompt: string }[]> =>
+      JSON.parse(await run(root, 'cards', ...args, '--json')).cards;
+
+    const cardId = (await cardsOf('--set', 'cli-deck'))[0]!.cardId;
     await run(root, 'archive', '--set', 'cli-deck', '--card', cardId);
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))).toEqual([]);
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))[0].status).toBe('archived');
+    expect(await cardsOf('--set', 'cli-deck')).toEqual([]);
+    expect((await cardsOf('--set', 'cli-deck', '--archived'))[0]!.status).toBe('archived');
     await run(root, 'unarchive', '--set', 'cli-deck', '--card', cardId);
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))[0].status).toBe('active');
+    expect((await cardsOf('--set', 'cli-deck'))[0]!.status).toBe('active');
     expect(await run(root, 'delete', '--set', 'cli-deck', '--card', cardId)).toContain('refusing permanent deletion');
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))).toHaveLength(1);
+    expect(await cardsOf('--set', 'cli-deck')).toHaveLength(1);
     await run(root, 'edit', '--set', 'cli-deck', '--card', cardId, '--prompt', 'Fixed CLI prompt');
-    expect(JSON.parse(await run(root, 'cards', '--query', 'fixed cli', '--json'))[0].prompt).toBe('Fixed CLI prompt');
+    expect((await cardsOf('--query', 'fixed cli'))[0]!.prompt).toBe('Fixed CLI prompt');
     await run(root, 'delete', '--set', 'cli-deck', '--card', cardId, '--yes');
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))).toEqual([]);
+    expect(await cardsOf('--set', 'cli-deck', '--archived')).toEqual([]);
   });
 
   it('exports and imports a portable lesson bundle', async () => {

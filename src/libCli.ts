@@ -35,12 +35,17 @@ import { orderDueQueue } from './core/library/review/interleave.js';
 import { loadUserPreferences, saveUserPreferences, type QueueStrategy } from './core/library/userPreferences.js';
 import { archiveCard, deleteCard, deleteSet, editCard, unarchiveCard } from './core/library/cardLifecycle.js';
 import { searchCards } from './core/library/searchCards.js';
-import { exportLessonBundle, exportProfileBackup, importLessonBundle, restoreProfileBackup } from './core/library/bundle.js';
+import {
+  directoryHasEntries, exportLessonBundle, exportProfileBackup, importLessonBundle, restoreProfileBackup,
+} from './core/library/bundle.js';
 import { startSession, gradeCard, endSession } from './core/library/review/session.js';
 import { ensureServer, probeServer, readServerLock, startManagedServer } from './session/managedServer.js';
 import { createAndOpen } from './createAndOpen.js';
 import { appendDogfoodEvent, dogfoodEventCounts } from './core/library/dogfood.js';
-import { loadMasteryReport } from './core/library/mastery.js';
+import { loadMasteryReport, type ProgressStats } from './core/library/mastery.js';
+import {
+  loadWeakReport, WEAK_MIN_ATTEMPTS, WEAK_MIN_FAILURES, WEAK_WINDOW,
+} from './core/library/weakCards.js';
 import { checkDrift, type DriftReport } from './core/library/drift.js';
 import { formatCardRef, resolveCardRef, resolveTargetRef } from './core/library/cardRef.js';
 import { renderHelp } from './cliHelp.js';
@@ -58,6 +63,10 @@ const out = (s: string) => console.log(s);
 const note = (s: string) => console.error(s); // non-blocking hints; keeps stdout clean for piping
 
 type GlobalOptions = { home?: string; json?: boolean; yes?: boolean };
+
+/** Rows of `list cards` printed for a human before a truncation hint. The JSON
+ * path is deliberately uncapped; see listCards. */
+const HUMAN_CARD_PAGE = 100;
 
 function deprecation(oldName: string, replacement: string): void {
   note(`deprecated: \`mergelearn ${oldName}\`; use \`mergelearn ${replacement}\``);
@@ -190,13 +199,27 @@ export function buildProgram(): Command {
     const active = result.cards.filter((card) => card.status === 'active').length;
     const flagged = result.cards.length - active;
     const verb = opts.dryRun ? `would ${noun}` : past;
-    out(`${verb} set "${result.setId}": ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${result.tagIdsAdded.length} tags`);
+    // "would apply set X" alone reads identically whether X is new or already
+    // holds a lesson, which is how an unintended merge stays invisible until
+    // the original content is gone.
+    const into = result.mergedIntoExisting ? ' (into the EXISTING lesson)' : ' (new lesson)';
+    out(`${verb} set "${result.setId}"${into}: ${active} active${flagged ? `, ${flagged} needs_review` : ''}, +${result.tagIdsAdded.length} tags`);
     for (const line of formatLessonSummary(summary)) out(`  ${line}`);
     for (const card of result.cards.filter((card) => card.status !== 'active')) {
       out(`  needs_review ${card.cardId}: ${card.reasons.join(', ')}`);
     }
     if (opts.dryRun) out('(dry run: nothing written — omit --dry-run to apply)');
-    else out('Run `mergelearn serve` to learn it, or pass `--open` next time.');
+    else {
+      out('Run `mergelearn serve` to learn it, or pass `--open` next time.');
+      // Cheapest possible reminder: the developer is already in the terminal at
+      // the exact moment a lesson lands, so surface any backlog now rather than
+      // hoping they remember to check later. Exclude the lesson just applied:
+      // its cards are due immediately by definition, and echoing them back as a
+      // "backlog" would be noise rather than news.
+      const due = await getDueCards(rootFrom(homeOpt()), new Date());
+      const elsewhere = due.filter((card) => card.setId !== result.setId).length;
+      if (elsewhere) out(`${elsewhere} card(s) from other lessons also due for review.`);
+    }
   };
 
   type BundleImportOptions = { file: string; asCopy?: boolean; dryRun?: boolean; json?: boolean };
@@ -219,6 +242,10 @@ export function buildProgram(): Command {
   type ListOptions = {
     set?: string; query?: string; archived?: boolean; tag?: string; folder?: string;
     limit?: string; strategy?: string; json?: boolean;
+    /** Summary line only, no per-card list. */
+    quiet?: boolean;
+    /** Print nothing at all when nothing is due (for shell prompt hooks). */
+    ifAny?: boolean;
   };
   const listSets = async (opts: ListOptions = {}): Promise<void> => {
     const summaries = await listSetSummaries(rootFrom(homeOpt()));
@@ -230,11 +257,35 @@ export function buildProgram(): Command {
   };
 
   const listCards = async (opts: ListOptions = {}): Promise<void> => {
+    // Fetch the FULL result set, then decide presentation here. searchCards
+    // already walks every set and card before slicing, so asking for everything
+    // costs nothing and buys an accurate total.
     const hits = await searchCards(rootFrom(homeOpt()), opts.query ?? '', {
-      setIds: opts.set ? [opts.set] : undefined, includeArchived: opts.archived,
+      setIds: opts.set ? [opts.set] : undefined, includeArchived: opts.archived, limit: 0,
     });
-    if (wantsJson(opts)) return out(JSON.stringify(hits, null, 2));
-    for (const hit of hits) out(`${hit.status.padEnd(10)} ${formatCardRef(hit.setId, hit.cardId)}  ${hit.prompt}`);
+    const explicitLimit = opts.limit === undefined ? undefined : Math.max(0, Number(opts.limit));
+    // --json is COMPLETE by default. A machine consumer (the agent authoring
+    // lessons) that receives 100 of 400 cards concludes the learner has nothing
+    // on a topic they have 40 cards on, and re-teaches it. A wrong answer is
+    // worse than a long one, and the caller can still page with --limit.
+    if (wantsJson(opts)) {
+      const shown = explicitLimit && explicitLimit > 0 ? hits.slice(0, explicitLimit) : hits;
+      // Envelope, not a bare array: `returned` vs `total` is the only way a
+      // consumer can tell a small library from a paged result.
+      return out(JSON.stringify({
+        cards: shown,
+        total: hits.length,
+        returned: shown.length,
+        truncated: shown.length < hits.length,
+      }, null, 2));
+    }
+    const cap = explicitLimit === undefined ? HUMAN_CARD_PAGE : explicitLimit;
+    const shown = cap > 0 ? hits.slice(0, cap) : hits;
+    for (const hit of shown) out(`${hit.status.padEnd(10)} ${formatCardRef(hit.setId, hit.cardId)}  ${hit.prompt}`);
+    // Truncation must never be silent. stderr keeps stdout pipeable.
+    if (shown.length < hits.length) {
+      note(`showing ${shown.length} of ${hits.length} card(s); use --limit 0 for all, or --query to narrow`);
+    }
   };
 
   const listDue = async (opts: ListOptions = {}): Promise<void> => {
@@ -252,11 +303,21 @@ export function buildProgram(): Command {
       tagIds: opts.tag ? [opts.tag] : undefined,
       folderPaths: opts.folder ? [opts.folder] : undefined,
     });
+    // --if-any makes this safe to put in a shell prompt hook: silent when there
+    // is nothing to do, one line when there is. Spaced repetition only works if
+    // the review happens near its scheduled moment, and nothing else in the
+    // product ever tells the user that moment has arrived. Exit code stays 0 so
+    // a precmd hook never pollutes $?.
+    if (opts.ifAny && all.length === 0) return;
     const queueOptions = { strategy, seed: new Date().toISOString().slice(0, 10) };
     const prioritized = orderDueQueue(all, queueOptions);
     const cards = orderDueQueue(selectDueCards(prioritized, limit), queueOptions);
     if (wantsJson(opts)) {
       out(JSON.stringify({ total: all.length, shown: cards.length, strategy, cards }, null, 2));
+      return;
+    }
+    if (opts.quiet) {
+      out(`${all.length} card(s) due for review — run \`mergelearn serve\``);
       return;
     }
     out(`${cards.length} of ${all.length} card(s) due (${strategy})`);
@@ -288,8 +349,10 @@ export function buildProgram(): Command {
     .option('--archived', 'include archived cards')
     .option('--tag <id>', 'only due cards with this tag')
     .option('--folder <path>', 'only due cards in this folder subtree')
-    .option('--limit <n>', 'override the configured review cap')
+    .option('--limit <n>', 'cards: rows to print (0 = all; --json is always complete); due: override the review cap')
     .option('--strategy <name>', 'override due ordering: interleaved or overdue')
+    .option('--quiet', 'due: print only the summary line')
+    .option('--if-any', 'due: print nothing when nothing is due')
     .action(async (kind: string, opts: ListOptions) => {
       if (kind === 'sets') return listSets(opts);
       if (kind === 'cards') return listCards(opts);
@@ -458,9 +521,20 @@ export function buildProgram(): Command {
     .option('--force', 'replace a non-empty profile after validated staging')
     .option('--dry-run', 'validate without writing')
     .action(async (opts: { file: string; force?: boolean; dryRun?: boolean; json?: boolean }) => {
-      const manifest = await restoreProfileBackup(rootFrom(homeOpt()), opts.file, { force: opts.force, dryRun: opts.dryRun });
-      if (wantsJson(opts)) out(JSON.stringify({ ok: true, restored: !opts.dryRun, manifest }, null, 2));
-      else out(opts.dryRun ? `backup valid (${manifest.entryCount} files; dry run: nothing written)` : `restored ${manifest.entryCount} files from private backup`);
+      const root = rootFrom(homeOpt());
+      const manifest = await restoreProfileBackup(root, opts.file, { force: opts.force, dryRun: opts.dryRun });
+      // A dry run now succeeds against a non-empty profile, so it must say that
+      // the real restore will still need --force; otherwise "backup valid" reads
+      // as "restore will work".
+      const needsForce = !!opts.dryRun && !opts.force && await directoryHasEntries(root);
+      if (wantsJson(opts)) {
+        out(JSON.stringify({ ok: true, restored: !opts.dryRun, forceRequired: needsForce, manifest }, null, 2));
+      } else if (opts.dryRun) {
+        out(`backup valid (${manifest.entryCount} files; dry run: nothing written)`);
+        if (needsForce) out('This profile is not empty — the real restore needs --force to replace it.');
+      } else {
+        out(`restored ${manifest.entryCount} files from private backup`);
+      }
     });
 
   program
@@ -562,6 +636,8 @@ export function buildProgram(): Command {
     .option('--folder <path>', 'only this folder subtree')
     .option('--limit <n>', 'override the configured review cap')
     .option('--strategy <name>', 'override: interleaved or overdue')
+    .option('--quiet', 'print only the summary line, not each card')
+    .option('--if-any', 'print nothing when nothing is due (for shell prompt hooks)')
     .action(listDue);
 
   program
@@ -621,19 +697,64 @@ export function buildProgram(): Command {
 
   program
     .command('mastery')
-    .description('show demonstrated mastery by tag and folder')
+    .description('show what has been learned, and how much is still remembered')
     .action(async (opts: { json?: boolean }) => {
       const report = await loadMasteryReport(rootFrom(homeOpt()));
       if (wantsJson(opts)) return out(JSON.stringify(report, null, 2));
-      out('Skills (tags)');
+      // Weakest first. A progress report exists to answer "where should the
+      // next session go?", and a best-first list buries exactly that answer.
+      const weakestFirst = <T extends ProgressStats>(rows: readonly T[]): T[] =>
+        [...rows].sort((a, b) => a.coverage - b.coverage || a.retention - b.retention);
+      const row = (label: string, s: ProgressStats): string => {
+        // Never print "0% retained" for an unstudied topic: 0% reads as total
+        // forgetting when it actually means nothing has been attempted yet.
+        const retained = s.studied === 0 ? '—' : `${s.retention}%`;
+        return `  ${`${s.coverage}%`.padStart(7)}  ${retained.padStart(8)}  `
+          + `${`${s.studied}/${s.cardCount}`.padStart(7)}   ${label}`;
+      };
+      out('  learned  retained  studied   skill (tag)');
       if (report.tags.length === 0) out('  (no tagged cards yet)');
-      for (const tag of report.tags) {
-        out(`  ${String(tag.mastery).padStart(3)}%  ${tag.label}  [${tag.cardCount} card${tag.cardCount === 1 ? '' : 's'}]`);
-      }
-      out('\nFolders');
+      for (const tag of weakestFirst(report.tags)) out(row(tag.label, tag));
+      out('\n  learned  retained  studied   folder');
       if (report.folders.length === 0) out('  (no foldered cards yet)');
-      for (const folder of report.folders) {
-        out(`  ${String(folder.mastery).padStart(3)}%  ${folder.path}  [${folder.cardCount} card${folder.cardCount === 1 ? '' : 's'}]`);
+      for (const folder of weakestFirst(report.folders)) out(row(folder.path, folder));
+      out('\nlearned = reached review at least once; retained = recalled right now (of studied)');
+    });
+
+  program
+    .command('weak')
+    .description('cards you keep failing to recall, from real review evidence')
+    .action(async (opts: { json?: boolean }) => {
+      const report = await loadWeakReport(rootFrom(homeOpt()));
+      if (wantsJson(opts)) return out(JSON.stringify(report, null, 2));
+
+      if (report.cards.length === 0) {
+        // Never pad an empty result by ranking thin evidence: a command that
+        // confidently names noise teaches the user to distrust it.
+        out('No cards have enough evidence to call weak.');
+        out(`Weakness requires at least ${WEAK_MIN_ATTEMPTS} attempts with at least `
+          + `${WEAK_MIN_FAILURES} retrieval failures (last ${WEAK_WINDOW} attempts).`);
+        out(report.attemptedCards === 0
+          ? 'No cards have been reviewed yet — run `mergelearn serve` to start.'
+          : `${report.attemptedCards} card(s) attempted; ${report.watch.length} need more evidence.`);
+        return;
+      }
+
+      if (report.tags.length) {
+        out('Weakest skills');
+        // `weak/eligible` keeps the denominator visible: 3/4 and 3/40 are very
+        // different situations and a bare count hides which one you are in.
+        for (const tag of report.tags) out(`  ${tag.weak}/${tag.eligible}  ${tag.label}`);
+        out('');
+      }
+      out('Weakest cards (most-failed first)');
+      for (const card of report.cards) {
+        out(`  ${card.failures}/${card.attempts} failed  ${formatCardRef(card.setId, card.cardId)}  ${card.prompt}`);
+        out(`      ${card.retention}% recall now, ${card.lapses} lifetime lapse(s), `
+          + `${card.stability}d stability`);
+      }
+      if (report.watch.length) {
+        note(`${report.watch.length} more card(s) attempted but below the evidence bar`);
       }
     });
 
@@ -684,8 +805,13 @@ export function buildProgram(): Command {
       const root = rootFrom(homeOpt());
       const lock = await readServerLock(root);
       const healthy = lock ? await probeServer(lock) : false;
+      // The due count belongs here because `status` is the one command a user
+      // runs to ask "is there anything to do?". Without it, the only ways to
+      // find out are `due` or opening the browser, both of which require
+      // already remembering the tool exists.
+      const due = await getDueCards(root, new Date());
       const result = {
-        version: packageVersion(), library: root, running: healthy,
+        version: packageVersion(), library: root, running: healthy, due: due.length,
         ...(lock ? {
           url: lock.url, pid: lock.pid, port: lock.port, startedAt: lock.startedAt,
           managed: lock.managed, staleLock: !healthy,
@@ -694,6 +820,9 @@ export function buildProgram(): Command {
       if (wantsJson(opts)) return out(JSON.stringify(result, null, 2));
       out(`MergeLearn ${result.version}`);
       out(`Library: ${root}`);
+      out(result.due
+        ? `Due: ${result.due} card(s) for review — run \`mergelearn serve\``
+        : 'Due: nothing right now');
       if (healthy && lock) out(`Server: running at ${lock.url} (pid ${lock.pid})`);
       else if (lock) out(`Server: not running (stale lock for pid ${lock.pid})`);
       else out('Server: not running');

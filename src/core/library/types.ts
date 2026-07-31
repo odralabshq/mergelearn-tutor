@@ -268,9 +268,20 @@ export type RecentLesson = {
   createdAt: string;
   tagIds: string[];
   citedPaths: string[];
+  /** Cited paths WITH line ranges (`src/foo.ts:104-108`). `citedPaths` alone
+   * cannot tell an author which lines are already taught, so it prevents
+   * duplicate files but not duplicate content. */
+  citedRanges: string[];
+  /** Distinct altitudes already covered. Altitude is the schema's explicit axis
+   * for climbing a concept from syntax to architecture, so an author deciding
+   * whether to deepen needs it; without it, avoiding overlap is guesswork. */
+  altitudes: Altitude[];
   questionSummaries: string[];
   reviewState: { cards: number; due: number; lapses: number };
 };
+
+/** A task the agent previously decided was not worth a lesson. */
+export type RecentSkip = { ts: string; task: string; reason: string };
 
 export type AuthoringContext = {
   goal?: string;
@@ -280,6 +291,10 @@ export type AuthoringContext = {
   folderTree: string[];
   targetSetId?: string;
   recentLessons: RecentLesson[];
+  /** Recent `skip` decisions, newest first. Without these the next agent
+   * re-evaluates work already judged not worth teaching, and "author no lesson"
+   * stops being a decision the tool remembers. */
+  recentSkips: RecentSkip[];
 };
 
 /** A NEW tag proposed within a patch; referenced by cards via localId. */

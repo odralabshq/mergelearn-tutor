@@ -92,6 +92,9 @@ describe('importAgentSet — the only card-creation path', () => {
 
     const patch = conceptualPatch();
     const tagId = (await loadTags(r)).find((tag) => tag.label === 'unions')!.id;
+    // Updating an existing lesson is an explicit-id operation: an omitted id
+    // always means "create", so a refresh must name the set it is refreshing.
+    patch.set.id = first.setId!;
     patch.set.description = 'Updated by the agent';
     patch.tagPatch = { reuse: [tagId], add: [] };
     patch.cards.forEach((card) => { card.tagRefs = [tagId]; });

@@ -46,5 +46,9 @@ export async function searchCards(root: string, query: string, opts: SearchOptio
     }
   }
   hits.sort((a, b) => a.setTitle.localeCompare(b.setTitle) || a.prompt.localeCompare(b.prompt));
-  return hits.slice(0, opts.limit ?? 100);
+  // limit 0 (or negative) means "no cap". The default page exists for human
+  // output only; a caller that needs completeness must be able to ask for it,
+  // because a silently truncated result is indistinguishable from "no matches".
+  const cap = opts.limit ?? 100;
+  return cap > 0 ? hits.slice(0, cap) : hits;
 }
