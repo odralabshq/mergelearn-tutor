@@ -1,7 +1,7 @@
 ---
 type: review
-reviewer: pending
-review_cycles: 0
+reviewer: "Opus 5 via Kiro, source-grounded by Hermes"
+review_cycles: 3
 title: "Iteration 01: Local Server Reliability Review"
 description: "Independent review record and source-grounded adjudication."
 resource: docs/iterations/iteration-01-local-server-reliability/REVIEW.md
