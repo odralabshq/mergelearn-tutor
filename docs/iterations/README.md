@@ -37,4 +37,4 @@ These are approved delivery boundaries, not implementation specifications. Every
 - External implementation-attempt ledger.
 - Aggregate mastery, readiness, or confidence scores.
 
-See [Roadmap Review](ROADMAP_REVIEW.md), [Orchestration](ORCHESTRATION.md), and [Program Status](STATUS.md).
+See [Roadmap Review](ROADMAP_REVIEW.md), [Orchestration](ORCHESTRATION.md), [Worker Contract](WORKER.md), and [Program Status](STATUS.md).
