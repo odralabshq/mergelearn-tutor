@@ -32,4 +32,4 @@ An open MergeLearn page clearly reports when its local server has stopped, prese
 ## Excluded
 
 - Fixed-port architecture, service workers, background daemons, or automatic process restart.
-- Retrying non-idempotent mutations automatically. That belongs to Iteration 04.
+- Retrying non-idempotent mutations automatically. That belongs to Iteration 03.
