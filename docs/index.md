@@ -30,6 +30,10 @@ markdown files, each carrying YAML frontmatter (`type`, `title`, `description`, 
 - [Lexicon](LEXICON.md) - shared vocabulary.
 - [Roadmap](ROADMAP.md) - planned direction.
 
+## Proposed iterations
+
+- [Iteration scopes](iterations/README.md) - sequential, independently shippable work covering reliability, scalable management, focused practice, learning evidence, and interview preparation.
+
 ## Simplified platform (2026-07 redesign)
 
 The **north-star** design after the 2026-07 simplification pivot: a model-free
