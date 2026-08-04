@@ -801,20 +801,20 @@ try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function cardStatus(t){var n=document.getElementById('card-status');if(n)n.textContent=t;}
 function copyText(text,button){
-  var done=function(){button.textContent='Copied';setTimeout(function(){button.textContent='Copy card command';},1200);};
+  var label=button.querySelector('[data-copy-label]');
+  var done=function(){button.classList.add('copied');button.setAttribute('aria-label','Reference copied');button.title='Copied';if(label)label.textContent='Copied';setTimeout(function(){button.classList.remove('copied');button.setAttribute('aria-label','Copy reference');button.title='Copy reference';if(label)label.textContent='Copy reference';},1200);};
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done).catch(function(){cardStatus('Copy failed');});return;}
   var area=document.createElement('textarea');area.value=text;document.body.appendChild(area);area.select();try{document.execCommand('copy');done();}catch(e){cardStatus('Copy failed');}area.remove();
 }
 function cardHtml(c){
   var action=c.status==='archived'?'unarchive':'archive';
   return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
-    '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><span class="badge next">'+esc(c.status)+'</span></div>'+
-    '<div class="muted small">'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</div><p>'+esc(c.shortAnswer)+'</p>'+
-    '<div class="curation-actions"><button type="button" data-copy-card>Copy card command</button><button type="button" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button>'+
-    '<details><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
+    '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><div class="curation-head-actions"><button type="button" class="copy-reference" data-copy-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button><button type="button" class="copy-reference" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button></div></div>'+
+    '<div class="curation-meta muted small"><span>'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</span><span class="badge next">'+esc(c.status)+'</span></div><p>'+esc(c.shortAnswer)+'</p>'+
+    '<details class="curation-edit"><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
     '<label>Short answer<textarea data-edit="shortAnswer" rows="2">'+esc(c.shortAnswer)+'</textarea></label>'+
     '<label>Explanation<textarea data-edit="explanation" rows="4">'+esc(c.explanation)+'</textarea></label>'+
-    '<button type="button" class="primary" data-card-action="edit">Save changes</button></details></div></article>';
+    '<button type="button" class="primary" data-card-action="edit">Save changes</button></details></article>';
 }
 async function loadCardResults(){
   var q=document.getElementById('card-search').value||'';var archived=document.getElementById('show-archived').checked;
@@ -1120,7 +1120,7 @@ function render(){
   }
   var c=queue[pos];confidence=0;attempt=null;cardStartedAt=Date.now();
   var interaction=c.interaction||{type:'flashcard'};
-  var interactive=interaction.type!=='flashcard';
+
   // Sticky progressive disclosure: default collapsed, but remember the choice
   // so a learner who wants depth isn't re-collapsing it every card.
   var deepOpen=false;try{deepOpen=localStorage.getItem('ml-deep-open')==='1';}catch(e){}
@@ -1142,18 +1142,17 @@ function render(){
     var pitems=pblocks.map(function(b){var lbl=b.label?'<span class="p-label">'+esc(b.label)+'</span>':'';return '<li class="p-block" data-bid="'+esc(b.id)+'" tabindex="0" draggable="true" role="option" aria-selected="false"><span class="p-move"><button type="button" class="p-up" aria-label="Move block up" tabindex="-1">▲</button><button type="button" class="p-down" aria-label="Move block down" tabindex="-1">▼</button></span><span class="p-body">'+lbl+'<pre><code>'+esc(b.code)+'</code></pre></span></li>';}).join('');
     attemptUi='<div class="attempt parsons"><p class="label">Put the code blocks in the correct order</p><p class="p-hint">Click a block then use ↑/↓, drag it, or use the ▲▼ buttons.</p><ol class="p-list" id="p-list" role="listbox" aria-label="Order the code blocks">'+pitems+'</ol></div>';
   }
-  var check=interactive?'<button class="primary check-answer" id="check-answer" aria-label="Check answer, shortcut Enter">Check answer <kbd aria-hidden="true">Enter</kbd></button>':'';
   var inspectCommand='mergelearn show '+c.setId+'/'+c.id;
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span><button type="button" class="copy-reference copy-practice-card" data-copy-practice-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
-    '<div class="confidence" id="confidence"><p class="label" id="conf-label">Before reveal — how confident are you?</p><div class="conf-opts" role="radiogroup" aria-labelledby="conf-label">'+confBtns+'</div></div>'+check+
+    '<div class="confidence" id="confidence"><p class="label" id="conf-label">Submit and reveal: how confident are you?</p><div class="conf-opts" role="radiogroup" aria-labelledby="conf-label">'+confBtns+'</div></div>'+
     '<div class="reveal" id="reveal-panel"><div id="attempt-review" aria-live="polite"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
     '<div class="actions grade"><button class="g1" data-r="1" aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
-  var checkBtn=document.getElementById('check-answer');if(checkBtn)checkBtn.addEventListener('click',reveal);
+
   var copyBtn=document.querySelector('[data-copy-practice-card]');if(copyBtn)copyBtn.addEventListener('click',function(){copyText(inspectCommand,copyBtn);});
   wireParsons();
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
@@ -1161,11 +1160,12 @@ function render(){
   if(deep)deep.addEventListener('toggle',function(){try{localStorage.setItem('ml-deep-open',deep.open?'1':'0');}catch(e){}});
 }
 function setConfidence(n){
-  // aria-checked must track the .sel class: without it the selected confidence
-  // is conveyed by colour alone and a screen-reader user cannot tell which of
-  // the five options is active.
+  // Confidence is the single submit/reveal action. This keeps Guessing and the
+  // other levels consistent while collectAttempt still prevents a non-Guessing
+  // submit until the authored interaction has an answer.
+  // aria-checked must track the .sel class so the selection is not colour-only.
   confidence=n;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){var on=Number(b.getAttribute('data-c'))===n;b.classList.toggle('sel',on);b.setAttribute('aria-checked',on?'true':'false');});
-  var c=queue[pos];if(!c||!c.interaction||c.interaction.type==='flashcard'||n===1)reveal();
+  if(!reveal()){confidence=0;[].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.classList.remove('sel');b.setAttribute('aria-checked','false');});}
 }
 // Present blocks in a non-solved order. Fisher-Yates, then if it landed on the
 // exact solution (likely for tiny sets) rotate once so the task never starts done.
@@ -1256,18 +1256,14 @@ function attemptReviewHtml(c,a){
   return '<p class="result '+(a.correct?'correct':'incorrect')+'">'+(a.correct?'Correct':'Not quite')+'</p><p class="label">Feedback on your choice</p><ul class="choice-feedback">'+feedback+'</ul>';
 }
 function reveal(){
-  if(!confidence){statusMsg('Rate confidence (1-5) first.');return;}
-  if(isRevealed())return;
-  attempt=collectAttempt();if(!attempt)return;
+  if(!confidence){statusMsg('Rate confidence (1-5) first.');return false;}
+  if(isRevealed())return true;
+  attempt=collectAttempt();if(!attempt)return false;
   var c=queue[pos];document.getElementById('attempt-review').innerHTML=attemptReviewHtml(c,attempt);
   document.getElementById('reveal-panel').classList.add('show');
   var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');
   var area=document.querySelector('.attempt');if(area)area.classList.add('locked');
-  // Hide rather than disable: after the answer is revealed the control can
-  // never become usable again for this card, and a permanently greyed button
-  // reads as "something is broken" instead of "this step is finished".
-  var check=document.getElementById('check-answer');if(check){check.disabled=true;check.hidden=true;}
-  if(window.__mlMermaid)window.__mlMermaid();
+  if(window.__mlMermaid)window.__mlMermaid();return true;
 }
 function isRevealed(){var p=document.getElementById('reveal-panel');return p&&p.classList.contains('show');}
 async function grade(r){
@@ -1306,8 +1302,7 @@ async function undoGrade(){
 function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
 var undoBtn=document.getElementById('undo-grade');if(undoBtn)undoBtn.addEventListener('click',undoGrade);
 document.addEventListener('keydown',function(e){
-  if(['INPUT','TEXTAREA','SELECT'].indexOf(e.target.tagName)>=0)return;
-  if(e.key===' '||e.key==='Enter'){e.preventDefault();if(!isRevealed())reveal();return;}
+  if(['INPUT','TEXTAREA','SELECT','BUTTON'].indexOf(e.target.tagName)>=0)return;
   if(/^[1-5]$/.test(e.key)&&!isRevealed()){setConfidence(Number(e.key));return;}
   if(/^[1-4]$/.test(e.key)&&isRevealed())grade(Number(e.key));
 });
@@ -1553,8 +1548,7 @@ button.primary:hover{background:var(--accent-hover)}
 .choice{display:flex;align-items:flex-start;gap:10px;padding:12px;min-height:44px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--overlay);cursor:pointer}
 .choice:hover{background:var(--hover)}
 .choice input{margin-top:4px;accent-color:var(--accent)}
-.check-answer{margin-top:14px}.check-answer kbd{font-family:var(--mono);font-size:11px;opacity:.75;margin-left:5px}
-.check-answer:disabled{opacity:.55;cursor:default}
+
 .learner-answer{padding:10px 12px;background:var(--overlay);border-left:3px solid var(--accent);border-radius:var(--radius-sm);white-space:pre-wrap}
 .result{font-weight:700;margin:0 0 12px}.result.correct{color:var(--success)}.result.incorrect{color:var(--warning)}
 .choice-feedback{margin:6px 0 16px;padding-left:20px}
@@ -1641,11 +1635,14 @@ button.primary:hover{background:var(--accent-hover)}
 .card-tools input[type="search"]{flex:1;min-width:240px;padding:9px 11px;background:var(--raised);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)}
 .curation-list{display:grid;gap:10px}
 .curation-card{padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
-.curation-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.curation-actions{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
-.curation-actions details{flex:1;min-width:260px}
-.curation-actions label{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--muted)}
-.curation-actions textarea{width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit}
+.curation-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.curation-head>strong{flex:1;min-width:0}
+.curation-head-actions{display:flex;align-items:center;gap:6px;flex:none}
+.curation-meta{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
+.curation-edit{display:block;width:100%;margin-top:12px;border-top:1px solid var(--border-soft);padding-top:10px}
+.curation-edit>summary{cursor:pointer;color:var(--link);font-size:13px}
+.curation-edit label{display:grid;gap:4px;margin:8px 0;font-size:12px;color:var(--muted)}
+.curation-edit textarea{box-sizing:border-box;width:100%;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit}
 .active-filter #match-count{flex:1;min-width:120px}
 .active-filter .clear{background:transparent;border:1px solid var(--border)}
 .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:var(--overlay);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px}

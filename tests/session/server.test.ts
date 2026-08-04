@@ -172,6 +172,13 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('data-card-action');
     expect(text).toContain('data-copy-card');
     expect(text).toContain('Edit teaching text');
+    expect(text).toContain('class="curation-head-actions"');
+    expect(text).toContain('class="copy-reference" data-copy-card');
+    expect(text).toContain('class="copy-reference" data-card-action=');
+    expect(text).toContain('class="curation-edit"');
+    expect(text).not.toContain('class="curation-actions"');
+    expect(text.indexOf('class="curation-head-actions"')).toBeLessThan(text.indexOf('class="curation-edit"'));
+    expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text.indexOf('Practice filters')).toBeLessThan(text.indexOf('id="card-search"'));
   });
 
@@ -196,7 +203,13 @@ describe('review GUI server (functional)', () => {
     const practiceScript = text.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     expect(practiceScript).toBeTruthy();
     expect(() => new Function(practiceScript!)).not.toThrow();
-    expect(text).toContain("c.interaction.type==='flashcard'||n===1");
+    expect(text).toContain('Submit and reveal: how confident are you?');
+    expect(text).toContain('function setConfidence(n)');
+    expect(text).toContain('confidence=n;');
+    expect(text).toContain('if(!reveal()){confidence=0;');
+    expect(text).not.toContain('id="check-answer"');
+    expect(text).not.toContain('Check answer');
+    expect(text).toContain("['INPUT','TEXTAREA','SELECT','BUTTON'].indexOf(e.target.tagName)>=0");
     expect(text).toContain("responseText:''");
     expect(text).toContain("/^[1-4]$/.test(e.key)&&isRevealed()");
     expect(text).toContain('MAX_REQUEUE=2');
