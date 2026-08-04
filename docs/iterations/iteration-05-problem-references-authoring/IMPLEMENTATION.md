@@ -21,7 +21,7 @@ Import builds Set and Card values from normalized refs. Absence on re-import rem
 
 ## Authoring and reveal contract
 
-Authoring context adds compact case-fold-deduplicated `{ sourceName, sourceId }` summaries to recent lessons so an agent can avoid duplicate coverage without receiving statements or URLs. Lesson summary adds only a deterministic advisory for canonical URLs containing queries; faded guidance and tradeoffs remain documented authoring guidance.
+Authoring context adds compact case-fold-deduplicated `{ sourceName, sourceId }` summaries to recent lessons so an agent can avoid duplicate coverage without receiving statements or URLs. No new lesson-summary heuristic is added; faded guidance, privacy, and tradeoffs remain documented authoring guidance.
 
 `cardView` forms a Card-wins deduplicated union of Set and Card refs for a reveal-only field. Practice creates their DOM only after commitment. It revalidates HTTPS at render time, escapes text, displays the ASCII hostname, and applies safe link attributes. It never places refs in prompt HTML, context, hidden pre-reveal markup, document title, or live regions.
 

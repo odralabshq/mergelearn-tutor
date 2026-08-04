@@ -23,6 +23,8 @@ Proposed `connectionController.ts` exports one self-contained `createConnectionC
 
 Each mutable request first persists its payload through the draft adapter, then registers success and failure with that controller. A successful response removes that action's one pending slot. On transport failure it preserves the payload, offers copyable recovery text only while pending, and shows recovery guidance. On ordinary server rejection it retains the existing validation feedback path instead of showing a false disconnected state. A matching successful health response is the only transition back to connected.
 
+For Iteration 03 grades, the pending slot stores the complete original body byte-for-byte, including request id, revision, and entry id. Explicit retry resends that body unchanged. Library or session-revision mismatch degrades to copyable text without submission. This shared adapter does not replace Manage's `updatedAt`-fenced unsaved teaching draft.
+
 ## Server and CLI contract
 
 `GET /health` remains a read-only identity check. No new recovery endpoint is needed. The shared shell may embed connection-controller code, but page-specific clients must call its public registration functions rather than duplicate polling loops. Detection is event-driven, not polling: it can lag until visibility returns or a request is attempted.

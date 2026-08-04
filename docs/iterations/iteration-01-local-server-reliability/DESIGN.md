@@ -23,6 +23,7 @@ The server already owns a per-library `server.json` lock, validates its PID plus
 - D4: Store unfinished Practice answers and Manage teaching-text edits in namespaced browser `localStorage`, keyed by the server-rendered card identity. Draft storage is advisory and never sent until the learner deliberately submits. It survives reload and same-process navigation, not a random-port server restart.
 - D5: Successful server acknowledgement clears only the confirmed draft. A recovered connection does not replay a mutation automatically.
 - D6: Every `serve` invocation without `--json` opens its returned local URL once, whether reused or newly started, through an injected platform opener seam. A failed opener writes a non-fatal stderr note while stdout still prints the URL. JSON output stays machine-readable and does not launch a browser.
+- D7: Iteration 03 session mutations reuse the same one-slot recovery behavior. The slot retains the byte-identical payload including request id, is fenced by library identity and session revision, and is sent only by an explicit learner retry. A fence mismatch exposes copyable recovery text and never submits. Manage draft fencing remains separate from Iteration 02 pagination snapshots because it protects unsent authored text.
 
 ## Draft and recovery model
 

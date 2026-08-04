@@ -19,9 +19,9 @@ Create `tests/core/library/prepareWorkflow.test.ts`; extend `tests/session/serve
 | --- | --- | --- |
 | Two lanes | pure projection tests | Weak cards and external refs appear only in their factual lanes with exact reason inputs; Home remains the Learn and Review destination. |
 | Honest absence | projection tests | Not-weak, watch-only, and no-ref items stay out; no transfer or implementation state is synthesized; empty reasons describe only applicable data. |
-| Deterministic order | projection tests | Weak order is preserved; dated External rows precede undated rows; both blocks use source/id/Set/Card tie-breaks; enumeration order cannot change output. |
+| Deterministic order | projection tests | Strengthen uses lapses descending then Set/Card ids and never composite weak score; dated External rows precede undated rows; both blocks use source/id/Set/Card tie-breaks; enumeration order cannot change output. |
 | Filter algebra | projection tests | OR within repeated values and AND across applicable dimensions; unknown values empty only the applicable lane; absent metadata does not match. |
-| Ignored dimensions | projection/server tests | Source/list/company affect only External; Strengthen row identity and order are byte-identical with and without them, and the page states that boundary. |
+| Ignored dimension | projection/server tests | Source affects only External; Strengthen row identity and order are byte-identical with and without it, and the page states that boundary. No list/company controls exist. |
 | Truthful empty copy | projection/server tests | No stored refs and refs excluded by filters produce distinct factual messages without relevance or readiness claims. |
 | Exact actions | server tests | One shared helper round-trips link fragment to element id for ordinary, space, `#`, and non-ASCII card ids; no practice route is used. |
 | Safe links | server tests | External links use blank, noopener, noreferrer, no-referrer; hand-edited unsafe, credential-bearing, or non-HTTPS URLs render as text. |

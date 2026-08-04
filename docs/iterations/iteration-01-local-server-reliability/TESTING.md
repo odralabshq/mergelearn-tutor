@@ -32,6 +32,7 @@ Tests are flat in `tests/`, not mirrored under the source tree. Extend `tests/se
 | Serving identity | `tests/session/server.test.ts` | A health 200 with a mismatched instance ID stays disconnected and leaves mutations disabled. |
 | Controller behavior | proposed new `tests/session/connectionController.test.ts` | Import the controller factory with injected fetch, storage, and minimal document stubs; assert status, controls, copied recovery payload, and transition behavior. |
 | Draft persistence | `tests/session/server.test.ts` plus disposable browser QA | Matching answer/edit drafts restore with notice; malformed, schema-mismatched, and stale drafts require explicit acceptance; success clears only its action slot. |
+| Session retry composition | Iteration 03 server/client tests | Unknown grade outcome retains one byte-identical body; explicit retry preserves request/revision/entry ids; a library or revision fence mismatch only exposes copyable recovery text. |
 | Accessible status | `tests/session/practiceAccessibility.test.ts` | `role=status` or equivalent polite live announcement, visible recovery copy and restored-draft discard action, keyboard controls not blocked. |
 | CLI opening | `tests/cli/libCli.test.ts` | Every non-JSON `serve` test injects an opener. Fresh and reused paths each call once; `false` produces a non-fatal stderr note with no retry; `--json` remains parseable and does not call it. |
 

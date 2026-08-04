@@ -15,7 +15,7 @@ Modify `src/core/library/types.ts`, `review/sessionHistory.ts`, `review/interlea
 
 ## Completion contract
 
-Replace `attemptedCardIds` and `attemptedByLessonSet` call sites with evidence readers over persisted lesson sessions for the same first Set filter. Keep a compatibility wrapper only if an existing external export requires it. A pure event classifier checks `attempt.correct` presence first: true plus non-Again or malformed missing rating is deterministic, false or Again is not passed, and absent correctness plus rating 2 through 4 is self-assessed. Per card, retain only the highest historical class, so deterministic and self-assessed counts are disjoint. Current card interaction is never consulted.
+Replace `attemptedCardIds` and `attemptedByLessonSet` call sites with evidence readers over persisted lesson sessions for the same first Set filter. New records must be scheduled lesson results whose request id is not tombstoned; evidence-only records and non-lesson modes are excluded before classification. Legacy events without result identity inherit scheduled lesson status only from their containing legacy lesson session. A pure classifier then checks `attempt.correct` presence: true plus non-Again or malformed missing rating is deterministic, false or Again is not passed, and absent correctness plus rating 2 through 4 is self-assessed. Per card, retain only the highest live historical class.
 
 `computeLessonProgress` accepts ordered active card ids plus the evidence map. It computes current counts and first unpassed card without mutating history. The API and rendered rows expose the separated counts. Existing session files need no migration.
 
