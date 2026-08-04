@@ -1,0 +1,71 @@
+---
+type: review
+reviewer: "Opus 5 via Kiro, source-grounded by Hermes"
+review_cycles: 2
+title: "Iteration 02: Scalable Manage Library Review"
+description: "Independent review record and source-grounded adjudication."
+resource: docs/iterations/iteration-02-scalable-manage-library/REVIEW.md
+tags: [iteration, manage, review]
+timestamp: 2026-08-04
+---
+
+# Iteration 02 Design Review
+
+## Review boundary
+
+This package is design-only. It covers truthful Manage completeness, deterministic pagination, filtering, grouping, and accessibility. It must not implement a database, an in-memory index, virtualization, infinite scrolling, saved searches, a query language, new learner entities, or any deferred graph, catalog, ledger, or readiness feature.
+
+## Independent review request
+
+The required Opus 5 review receives a bounded, tool-free numbered brief based on this package. Every numbered recommendation is recorded below as adopted, modified, deferred, or rejected with a source-grounded reason. At most three review cycles are permitted.
+
+## Initial source checks
+
+- `searchCards.ts:25-54` scans all sets and cards, filters tags as OR, defaults to a 100-card cap, and sorts only by visible strings.
+- `server.ts:240-247` clamps `/api/cards` to 1 through 500 and emits no completeness metadata.
+- `server.ts:725-837` renders Manage with search and archive inclusion but no selector, paged state, grouping, or Manage filters.
+- `cardLifecycle.ts:60-82` preserves FSRS during an edit, while lines 26-45 archive and restore reversibly with `updatedAt` checks.
+- `libCli.ts:259-289` already proves why a bare card array cannot signal completeness.
+
+## Review criteria
+
+The reviewer must challenge pagination correctness under equal visible sort keys and filter changes, metadata semantics at boundaries, archive and FSRS-state interactions, client stale-response handling, UI accessibility, and whether the design accidentally duplicates the CLI or adds premature infrastructure.
+
+## Adjudication ledger: Opus cycle 1
+
+The first review is `/tmp/mergelearn-iteration-02-opus-review-cycle-1.md`. It returned BLOCKED on underspecified contracts, not architecture. The revised package resolves the blockers as follows.
+
+- R1 adopted: learning state is exactly stored `Card.fsrs.state` values 0 through 3; new cards are state 0.
+- R2 adopted: due and overdue are excluded, so state filtering is not time-relative.
+- R3 adopted: `nextOffset` is `offset + returned` only while `hasMore`; terminal responses omit it.
+- R4 adopted: browser defaults and malformed, negative, zero, non-integer, and beyond-total pagination behavior are specified exactly.
+- R5 adopted: a stable digest over every ordered match detects changed cards, additions, removals, archives, and FSRS-state changes between pages. Snapshot mismatch returns 409 and never appends.
+- R6 modified: the existing complete-list function and new paged function share collection and ordering but remain deliberate interfaces. The CLI contract does not migrate to browser pagination.
+- R7 adopted by pruning: Set grouping is removed, so no partial group count can mislead.
+- R8 adopted: one in-flight guard plus generation, expected-offset, and snapshot checks prevent duplicate or stale appends.
+- R9 adopted: Set grouping is deferred.
+- R10 adopted: removable chips are deferred.
+- R11 modified: the redundant 250-card boundary is removed, but built-script parsing remains required because the inline Manage client is opaque to TypeScript.
+- R12 adopted: tags remain multi-select; learning state is one selector, reducing the combination surface.
+- R13 adopted through R1 and R2.
+- R14 adopted through the exact D2 and D3 envelope contract.
+- R15 adopted through the D4 snapshot contract.
+- R16 adopted through the D7 append guards.
+- R17 adopted: grouping and chips are cut.
+- R18 adopted: existing array callers, CLI `limit: 0`, and CLI metadata remain unchanged.
+
+## Adjudication ledger: Opus cycle 2
+
+The focused review is `/tmp/mergelearn-iteration-02-opus-review-cycle-2.md`. It returned NOT BLOCKED. Its seven findings are accounted for below.
+
+- R19 adopted: malformed missing or out-of-range FSRS state remains visible without a state filter but matches no selected state. Imported cards continue requiring valid FSRS.
+- R20 adopted: snapshot mismatch has exact HTTP 409 body `{ ok: false, code: "snapshot_mismatch", snapshot, total }`.
+- R21 adopted: ordering uses deterministic Unicode code-unit comparison rather than locale-dependent collation.
+- R22 adopted: Set is single-select defaulting to All, state defaults to All, archive inclusion defaults off and is a boolean visibility option.
+- R23 adopted: snapshot composition is sufficient; total is included in the digest as cheap explicit coverage.
+- R24 adopted: real browser QA remains the final gate after deterministic tests, not a prerequisite for landing each TDD slice.
+- R25 confirmed: all cycle 1 blockers are resolved.
+
+## Final verdict
+
+Opus 5 returned NOT BLOCKED after two cycles. The design is ready for implementation after all six iteration packages and the cross-design review pass.
