@@ -17,7 +17,8 @@ timestamp: 2026-08-04
 - Current phase: design
 - Current iteration: 01
 - Program base commit: `44f94cd`
-- Active worker: none
+- Latest pushed checkpoint: `629db76`
+- Active worker: cron job `29ddd97918b5` every 30 minutes, local delivery
 
 ## Completed
 
