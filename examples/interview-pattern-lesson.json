@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "set": {
+    "id": "interview-pattern-example",
+    "title": "Transfer practice: matching pairs",
+    "description": "Original practice for choosing an approach from constraints.",
+    "folderPath": "examples/interview-patterns",
+    "objective": "Recognize when indexed lookup beats repeated scanning, including near-misses and tradeoffs.",
+    "lessonKind": "general",
+    "estimatedMinutes": 8,
+    "tagIds": [],
+    "problemRefs": [{"sourceName":"Example Archive","sourceId":"matching-pairs-17","canonicalUrl":"https://example.org/problems/matching-pairs-17?edition=original","title":"Matching Pairs 17","attributions":[{"kind":"list","label":"Original practice collection","observedOn":"2026-08-05"}]}]
+  },
+  "tagPatch": {"reuse":[],"add":[{"localId":"lookup","label":"indexed-lookup","kind":"pattern"}]},
+  "order": ["worked", "complete", "near-miss", "tradeoff", "transfer"],
+  "cards": [
+    {"localId":"worked","siblingGroupId":"matching-pairs","tagRefs":["lookup"],"front":{"prompt":"A sensor emits one integer at a time. How can you report the first pair whose values total a fixed threshold without rescanning every earlier value?"},"back":{"shortAnswer":"Track prior values by the counterpart each new value needs.","explanationMarkdown":"Keep an indexed set of values already observed. For each new value, test whether its required counterpart is present, then store the new value. This changes repeated linear scans into expected constant-time lookups while preserving arrival order."},"interaction":{"type":"self_response","placeholder":"State the stored information and lookup step."}},
+    {"localId":"complete","siblingGroupId":"matching-pairs","tagRefs":["lookup"],"front":{"prompt":"Complete the missing operation so each reading is processed once.\n\n```js\nfor (const value of readings) {\n  if (seen.has(limit - value)) return [limit - value, value];\n  // missing operation\n}\n```"},"back":{"shortAnswer":"Add the current value to seen after checking its counterpart.","explanationMarkdown":"The lookup must happen before insertion when one reading cannot pair with itself unless it appeared earlier. After the check, `seen.add(value)` makes this value available to later readings."},"interaction":{"type":"choice","options":[{"id":"add","text":"seen.add(value)","feedback":"Yes. Later readings can now find this value."},{"id":"clear","text":"seen.clear()","feedback":"No. Clearing removes the history needed for lookup."}],"correctOptionIds":["add"]}},
+    {"localId":"near-miss","siblingGroupId":"matching-pairs","tagRefs":["lookup"],"front":{"prompt":"An implementation stores only required future counterparts, but duplicate readings are allowed. Which case should you test before trusting it?"},"back":{"shortAnswer":"Test a valid pair made from two equal values arriving at different positions.","explanationMarkdown":"A useful near-miss is threshold 12 with readings 6 and 6 at separate positions. The check-before-store order must distinguish two occurrences from reusing one occurrence."},"interaction":{"type":"flashcard"}},
+    {"localId":"tradeoff","tagRefs":["lookup"],"front":{"prompt":"Memory is capped at ten entries, input is already sorted, and only existence matters. What approach competes with indexed storage, and why?"},"back":{"shortAnswer":"Use two moving boundaries because sorted order makes direction informative.","explanationMarkdown":"With sorted input, compare the boundary sum and move the low or high boundary accordingly. This uses constant extra memory. Indexed lookup is preferable for streaming unsorted input, while the boundary method fits the stated memory and ordering constraints."},"interaction":{"type":"self_response","placeholder":"Name the competing approach and the enabling constraint."}},
+    {"localId":"transfer","tagRefs":["lookup"],"problemRefs":[{"sourceName":"Example Archive","sourceId":"transfer-queue-9","canonicalUrl":"https://example.org/problems/transfer-queue-9"}],"front":{"prompt":"Requests arrive with an account ID. Return the first request whose ID has appeared before, while preserving the original queue order. Describe a one-pass solution."},"back":{"shortAnswer":"Keep previously observed IDs in a set and stop at the first repeated ID.","explanationMarkdown":"This is the same lookup structure under different surface details. The prompt does not name the pattern: the transferable clue is a one-pass stream plus a membership question about prior observations."},"interaction":{"type":"self_response","placeholder":"Describe state, check, update, and stopping condition."}}
+  ]
+}

@@ -177,6 +177,140 @@ describe('importAgentSet — the only card-creation path', () => {
 });
 
 describe('importAgentSet — lessons and interactions (first learning loop)', () => {
+  it('normalizes and persists a Set problem reference', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch() as AgentSetPatch & { set: AgentSetPatch['set'] & { problemRefs: unknown[] } };
+    patch.set.problemRefs = [{
+      sourceName: '  Cafe\u0301 Problems  ', sourceId: '  two-sum  ',
+      canonicalUrl: 'https://example.org:443/problems/two-sum?view=full',
+      title: '  Pair Sum  ',
+      attributions: [{ kind: 'list', label: '  Core practice  ', observedOn: '2026-08-05' }],
+    }];
+
+    const res = await importAgentSet(r, patch, { now: new Date('2026-08-05T12:00:00Z') });
+    expect(res.ok).toBe(true);
+    expect((await loadSet(r, res.setId!))?.problemRefs).toEqual([{
+      sourceName: 'Café Problems', sourceId: 'two-sum',
+      canonicalUrl: 'https://example.org/problems/two-sum?view=full', title: 'Pair Sum',
+      attributions: [{ kind: 'list', label: 'Core practice', observedOn: '2026-08-05' }],
+    }]);
+  });
+
+  it('rejects an overlong problem URL without writing', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.set.problemRefs = [{
+      sourceName: 'Example', sourceId: 'too-long',
+      canonicalUrl: `https://example.org/${'x'.repeat(2030)}`,
+    }];
+    const res = await importAgentSet(r, patch, { now: new Date('2026-08-05T12:00:00Z') });
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual(expect.objectContaining({ code: 'problem_ref:canonicalUrl' }));
+    expect(await listSetIds(r)).toEqual([]);
+  });
+
+  it('rejects control characters in a problem URL without writing', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.set.problemRefs = [{
+      sourceName: 'Example', sourceId: 'controlled',
+      canonicalUrl: 'https://example.org/problem\n',
+    }];
+    const res = await importAgentSet(r, patch, { now: new Date('2026-08-05T12:00:00Z') });
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual(expect.objectContaining({ code: 'problem_ref:canonicalUrl' }));
+    expect(await listSetIds(r)).toEqual([]);
+  });
+
+  it('rejects case-folded duplicate problem keys without writing', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    patch.set.problemRefs = [
+      { sourceName: 'Example', sourceId: 'Two-Sum', canonicalUrl: 'https://example.org/a' },
+      { sourceName: ' example ', sourceId: 'two-sum', canonicalUrl: 'https://example.org/b' },
+    ];
+    const res = await importAgentSet(r, patch, { now: new Date('2026-08-05T12:00:00Z') });
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual(expect.objectContaining({ code: 'problem_ref:duplicate' }));
+    expect(await listSetIds(r)).toEqual([]);
+  });
+
+  it('validates attribution dates against the injected UTC date', async () => {
+    for (const observedOn of [
+      '2025-02-29', '1969-12-31', '2026-08-06', '2026-8-5',
+      '2026-13-01', '2026-00-05', '2026-01-00', '2026-01-32',
+    ]) {
+      const r = await freshRoot();
+      const patch = conceptualPatch();
+      patch.cards[0].problemRefs = [{
+        sourceName: 'Example', sourceId: observedOn, canonicalUrl: 'https://example.org/problem',
+        attributions: [{ kind: 'list', label: 'Practice', observedOn }],
+      }];
+      const res = await importAgentSet(r, patch, { now: new Date('2026-08-05T23:59:59Z') });
+      expect(res.ok).toBe(false);
+      expect(res.errors).toContainEqual(expect.objectContaining({
+        code: 'problem_ref:observedOn', cardLocalId: 'c1',
+      }));
+      expect(await listSetIds(r)).toEqual([]);
+    }
+
+    const valid = conceptualPatch();
+    valid.cards[0].problemRefs = [{
+      sourceName: 'Example', sourceId: 'leap', canonicalUrl: 'https://example.org/problem',
+      attributions: [{ kind: 'list', label: 'Practice', observedOn: '2024-02-29' }],
+    }];
+    expect((await importAgentSet(await freshRoot(), valid, {
+      now: new Date('2026-08-05T00:00:00Z'),
+    })).ok).toBe(true);
+  });
+
+  it('accepts exact problem metadata limits', async () => {
+    const patch = conceptualPatch();
+    patch.set.problemRefs = Array.from({ length: 20 }, (_, index) => ({
+      sourceName: 'n'.repeat(100), sourceId: `${index}`.padStart(100, 'i'),
+      title: 't'.repeat(200), canonicalUrl: 'https://example.org/'.padEnd(2048, 'x'),
+      attributions: Array.from({ length: 50 }, () => ({
+        kind: 'list' as const, label: 'l'.repeat(100), observedOn: '2026-08-05',
+      })),
+    }));
+    const result = await importAgentSet(await freshRoot(), patch, {
+      now: new Date('2026-08-05T23:59:59Z'),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects sparse in-process problem reference arrays without writing', async () => {
+    const root = await freshRoot();
+    const patch = conceptualPatch();
+    patch.set.problemRefs = new Array(1) as NonNullable<typeof patch.set.problemRefs>;
+    const result = await importAgentSet(root, patch, { now: new Date('2026-08-05T23:59:59Z') });
+    expect(result.ok).toBe(false);
+    expect(result.errors).toContainEqual(expect.objectContaining({ code: 'problem_ref:count' }));
+    expect(await listSetIds(root)).toEqual([]);
+  });
+
+  it('rejects one-over counts, unsafe text, credentials, and fragments atomically', async () => {
+    const cases = [
+      Array.from({ length: 21 }, (_, i) => ({ sourceName: 'E', sourceId: `${i}`, canonicalUrl: `https://example.org/${i}` })),
+      [{ sourceName: `E\u202e`, sourceId: 'bidi', canonicalUrl: 'https://example.org/bidi' }],
+      [{ sourceName: 'E', sourceId: 'credentials', canonicalUrl: 'https://user:pass@example.org/a' }],
+      [{ sourceName: 'E', sourceId: 'fragment', canonicalUrl: 'https://example.org/a#part' }],
+      [{ sourceName: 'E', sourceId: 'kind', canonicalUrl: 'https://example.org/a',
+        attributions: [{ kind: 'unknown' as 'list', label: 'L', observedOn: '2026-08-05' }] }],
+      [{ sourceName: 'E', sourceId: 'blank-title', title: '', canonicalUrl: 'https://example.org/a' }],
+      [{ sourceName: 'E', sourceId: 'long-title', title: 't'.repeat(201), canonicalUrl: 'https://example.org/a' }],
+      [{ sourceName: 'E', sourceId: 'attrs', canonicalUrl: 'https://example.org/a',
+        attributions: Array.from({ length: 51 }, () => ({ kind: 'list' as const, label: 'L', observedOn: '2026-08-05' })) }],
+    ];
+    for (const problemRefs of cases) {
+      const root = await freshRoot();
+      const patch = conceptualPatch();
+      patch.set.problemRefs = problemRefs;
+      expect((await importAgentSet(root, patch, { now: new Date('2026-08-05T23:59:59Z') })).ok).toBe(false);
+      expect(await listSetIds(root)).toEqual([]);
+    }
+  });
+
   it('trims and persists an authored sibling group id', async () => {
     const r = await freshRoot();
     const patch = conceptualPatch();

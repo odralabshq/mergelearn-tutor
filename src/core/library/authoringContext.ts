@@ -3,6 +3,7 @@ import { listDogfoodEvents } from './dogfood.js';
 import { loadTags } from './tagStore.js';
 import { listFolderPaths, listSetSummaries, loadSet } from './setStore.js';
 import { loadCardsForSet } from './cardStore.js';
+import { problemRefIdentity } from './problemRefs.js';
 
 export type BuildContextOptions = {
   goal?: string;
@@ -23,6 +24,16 @@ function compactQuestion(text: string): string {
   const budget = QUESTION_LIMIT - 3;
   const head = Math.floor(budget * 0.6);
   return `${flat.slice(0, head)}...${flat.slice(-(budget - head))}`;
+}
+
+function problemIdsOf(setRefs: Card['problemRefs'], cards: readonly Card[]): RecentLesson['problemRefs'] {
+  const seen = new Set<string>();
+  return [...(setRefs ?? []), ...cards.flatMap((card) => card.problemRefs ?? [])].flatMap((ref) => {
+    const identity = problemRefIdentity(ref);
+    if (!identity || seen.has(identity.key)) return [];
+    seen.add(identity.key);
+    return [{ sourceName: identity.sourceName, sourceId: identity.sourceId }];
+  });
 }
 
 /** `path:start-end` per cited range, deduped and stable-sorted. */
@@ -48,6 +59,7 @@ async function recentLessons(root: string, limit: number): Promise<RecentLesson[
       citedPaths,
       citedRanges: citedRangesOf(cards),
       altitudes: Array.from(new Set(cards.flatMap((card) => (card.altitude ? [card.altitude] : [])))).sort(),
+      problemRefs: problemIdsOf(set.problemRefs, cards),
       questionSummaries: cards.map((card) => compactQuestion(card.front.prompt)),
       reviewState: { cards: cards.length, due, lapses: cards.reduce((sum, card) => sum + card.fsrs.lapses, 0) },
     } satisfies RecentLesson;

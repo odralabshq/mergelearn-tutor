@@ -11,6 +11,7 @@
  */
 
 import type { AgentSetPatch, Interaction, LessonKind, ParsonsBlock } from './types.js';
+import { normalizeProblemRefs } from './problemRefs.js';
 
 export type PatchValidationError = { code: string; message: string; cardLocalId?: string };
 
@@ -95,8 +96,9 @@ export function validateSetPatchStructure(
   patch: AgentSetPatch,
   existingTagIds: Set<string>,
   proposedLocalIds: Set<string>,
+  now: Date = new Date(),
 ): { ok: boolean; errors: PatchValidationError[] } {
-  const errors: PatchValidationError[] = [];
+  const errors: PatchValidationError[] = normalizeProblemRefs(patch.set?.problemRefs, now).errors;
   if (patch.version !== 1) errors.push({ code: 'bad_version', message: `unsupported patch version: ${patch.version}` });
   if (!nonEmpty(patch.set?.title)) errors.push({ code: 'set_title_empty', message: 'set.title is required' });
   if (patch.set?.lessonKind !== undefined && !LESSON_KINDS.has(patch.set.lessonKind)) {
@@ -109,7 +111,7 @@ export function validateSetPatchStructure(
   // Combine top-level + card-level errors, THEN derive ok. (Deriving ok from
   // the top-level array alone would ignore every card error — the bug the
   // reject-case tests caught.)
-  const all = [...errors, ...validateCards(patch, existingTagIds, proposedLocalIds)];
+  const all = [...errors, ...validateCards(patch, existingTagIds, proposedLocalIds, now)];
   return { ok: all.length === 0, errors: all };
 }
 
@@ -117,6 +119,7 @@ function validateCards(
   patch: AgentSetPatch,
   existingTagIds: Set<string>,
   proposedLocalIds: Set<string>,
+  now: Date,
 ): PatchValidationError[] {
   const errors: PatchValidationError[] = [];
   const seen = new Set<string>();
@@ -133,6 +136,10 @@ function validateCards(
     seen.add(c.localId);
     cardKeys.add(c.localId);
     if (c.id) cardKeys.add(c.id);
+
+    errors.push(...normalizeProblemRefs(c.problemRefs, now).errors.map((error) => ({
+      ...error, cardLocalId: c.localId,
+    })));
 
     if (c.siblingGroupId !== undefined) {
       if (typeof c.siblingGroupId !== 'string') {

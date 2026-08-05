@@ -24,6 +24,9 @@ import {
 import { listSetSummaries, loadSet, loadOrder, saveSet } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
+import {
+  problemRefIdentity, safeStoredObservedOn, safeStoredProblemText,
+} from '../core/library/problemRefs.js';
 import { loadMasteryReport, type ProgressStats } from '../core/library/mastery.js';
 import {
   lessonEvidenceBySet,
@@ -32,8 +35,8 @@ import {
   type LessonEvidence, type LessonProgress,
 } from '../core/library/review/sessionHistory.js';
 import type {
-  Card, Confidence, Interaction, PlannedSessionState, ReviewAttempt, ReviewRating,
-  ReviewSession, SetOrder, SetSummary,
+  Card, CardSet, Confidence, ExternalProblemRef, Interaction, PlannedSessionState,
+  ReviewAttempt, ReviewRating, ReviewSession, SetOrder, SetSummary,
 } from '../core/library/types.js';
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
@@ -334,16 +337,17 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
   const prioritized = orderDueQueue(due, queueOptions);
   const selected = selectDueCards(prioritized, prefs.reviewSessionCap);
   const ordered = spaceSiblingCards(orderDueQueue(selected, queueOptions));
-  const setTitles = new Map<string, string>();
+  const sets = new Map<string, CardSet>();
   await Promise.all([...new Set(ordered.map((card) => card.setId))].map(async (setId) => {
-    setTitles.set(setId, (await loadSet(root, setId))?.title ?? setId);
+    const set = await loadSet(root, setId);
+    if (set) sets.set(setId, set);
   }));
   return sendJson(res, 200, {
     total: ordered.length,
     totalDue: due.length,
     remaining: Math.max(0, due.length - ordered.length),
     strategy: prefs.queueStrategy,
-    cards: ordered.map((card) => cardView(card, setTitles.get(card.setId))),
+    cards: ordered.map((card) => cardView(card, sets.get(card.setId))),
   });
 }
 
@@ -436,7 +440,7 @@ async function lessonData(root: string, res: ServerResponse, url: URL): Promise<
     lesson: { id: set.id, title: set.title, objective: set.objective ?? null, lessonKind: set.lessonKind ?? null },
     total: ordered.length,
     progress,
-    cards: ordered.map((card) => cardView(card, set.title)),
+    cards: ordered.map((card) => cardView(card, set)),
   });
 }
 
@@ -502,7 +506,9 @@ async function plannedSessionView(root: string, session: ReviewSession) {
   let current = null;
   if (entry) {
     const card = await loadCard(root, entry.setId, entry.cardId);
-    if (card?.status === 'active') current = { entryId: entry.id, pass: entry.pass, card: cardView(card, (await loadSet(root, card.setId))?.title) };
+    if (card?.status === 'active') current = {
+      entryId: entry.id, pass: entry.pass, card: cardView(card, await loadSet(root, card.setId)),
+    };
   }
   return {
     ok: true,
@@ -813,13 +819,49 @@ async function listSessionFiles(root: string): Promise<string[]> {
   return out;
 }
 
+type ProblemRefView = Pick<ExternalProblemRef, 'sourceName' | 'sourceId' | 'title' | 'attributions'> & {
+  href: string | null;
+  hostname: string | null;
+};
+
+function problemRefView(card: Card, set?: CardSet): ProblemRefView[] {
+  const seen = new Set<string>();
+  return [...(card.problemRefs ?? []), ...(set?.problemRefs ?? [])].flatMap((ref) => {
+    const identity = problemRefIdentity(ref);
+    if (!identity || seen.has(identity.key)) return [];
+    seen.add(identity.key);
+    let href: string | null = null;
+    let hostname: string | null = null;
+    try {
+      const url = new URL(ref.canonicalUrl);
+      if (url.protocol !== 'https:' || url.username || url.password || url.hash) throw new Error();
+      href = url.toString();
+      hostname = url.hostname;
+    } catch { /* Hand-edited unsafe storage remains identifiable, never linkable. */ }
+    const title = safeStoredProblemText(ref.title, 200);
+    const attributions = Array.isArray(ref.attributions) ? ref.attributions.slice(0, 50).flatMap((item) => {
+      const label = safeStoredProblemText(item?.label, 100);
+      const observedOn = safeStoredObservedOn(item?.observedOn);
+      return item && (item.kind === 'list' || item.kind === 'company') && label && observedOn
+        ? [{ kind: item.kind, label, observedOn }] : [];
+    }) : undefined;
+    return [{
+      sourceName: identity.sourceName, sourceId: identity.sourceId,
+      ...(title ? { title } : {}),
+      ...(attributions ? { attributions } : {}),
+      href, hostname,
+    }];
+  });
+}
+
 /** Trim a card to what the Practice UI renders, with server-pre-rendered HTML
  * for code (diff-snippet widget) and explanations (markdown → HTML). */
-function cardView(card: Card, setTitle?: string) {
+function cardView(card: Card, set?: CardSet) {
   return {
     id: card.id,
     setId: card.setId,
-    setTitle: setTitle ?? card.setId,
+    setTitle: set?.title ?? card.setId,
+    problemRefs: problemRefView(card, set),
     prompt: card.front.prompt,
     // Pre-rendered so a fenced code block / multi-line prompt shows as a real
     // <pre><code> block (not mangled inline). Mirrors explanationHtml.
@@ -1527,6 +1569,20 @@ function copyText(text,button){
   var area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();
   try{document.execCommand('copy');done();}catch(e){statusMsg('copy failed');}area.remove();
 }
+function problemRefsHtml(c){
+  var refs=c.problemRefs||[];if(!refs.length)return '';
+  var items=refs.map(function(ref){
+    var identity=(ref.title?'<strong>'+esc(ref.title)+'</strong> · ':'')+esc(ref.sourceName)+' '+esc(ref.sourceId);
+    var linkLabel=ref.sourceName+' '+ref.sourceId+' at '+ref.hostname+' (opens in a new tab)';
+    var link=ref.href&&ref.hostname?'<a href="'+esc(ref.href)+'" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-label="'+esc(linkLabel)+'">'+esc(ref.hostname)+'</a>':'<span class="muted">Link unavailable</span>';
+    var attrs=(ref.attributions||[]).map(function(a){
+      var label=a.kind==='company'?'Reported by '+esc(ref.sourceName)+': '+esc(a.label):esc(a.label);
+      return '<li>'+label+', as of '+esc(a.observedOn)+'</li>';
+    }).join('');
+    return '<li><div>'+identity+' · '+link+'</div>'+(attrs?'<ul class="problem-attributions">'+attrs+'</ul>':'')+'</li>';
+  }).join('');
+  return '<section class="problem-refs" aria-labelledby="problem-refs-label"><p class="label" id="problem-refs-label">Problem references</p><ul>'+items+'</ul></section>';
+}
 function progress(){var p=document.getElementById('progress');var n=Number(sessionSummary.reviewedCount)||0;var distinct=Number(sessionSummary.distinctCardCount)||0;if(!queue.length){p.textContent=n?n+' attempt'+(n===1?'':'s')+' · '+distinct+' card'+(distinct===1?'':'s')+' reviewed':'';return;}var position=Math.max(1,plannedCount-planRemaining+1);var reviewWork=planRemaining+' card'+(planRemaining===1?'':'s')+' remaining'+(revisitRemaining?' · '+revisitRemaining+' revisit'+(revisitRemaining===1?'':'s'):'');p.textContent=n+' attempt'+(n===1?'':'s')+' · '+(practiceMode==='lesson'?'Activity '+position+' of '+plannedCount:reviewWork);}
 function syncUndo(){var b=document.getElementById('undo-grade');if(b)b.hidden=!lastGrade;}
 function syncEnd(){var b=document.getElementById('end-session');if(b)b.disabled=!sessionId;}
@@ -1588,6 +1644,7 @@ function render(){
     '<div class="draft-notice" id="practice-draft-notice" hidden></div>'+
     '<div class="confidence" id="confidence"><p class="label" id="conf-label">Submit and reveal: how confident are you?</p><div class="conf-opts" role="radiogroup" aria-labelledby="conf-label">'+confBtns+'</div></div>'+
     '<div class="reveal" id="reveal-panel"><div id="attempt-review" aria-live="polite"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
+    '<div id="problem-refs"></div>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
@@ -1736,6 +1793,7 @@ function reveal(){
   if(isRevealed())return true;
   attempt=collectAttempt();if(!attempt)return false;
   var c=queue[pos];document.getElementById('attempt-review').innerHTML=attemptReviewHtml(c,attempt);
+  document.getElementById('problem-refs').innerHTML=problemRefsHtml(c);
   document.getElementById('reveal-panel').classList.add('show');
   var conf=document.getElementById('confidence');if(conf)conf.classList.add('locked');
   var area=document.querySelector('.attempt');if(area)area.classList.add('locked');
@@ -2052,6 +2110,9 @@ button.primary:hover{background:var(--accent-hover)}
 .choice:hover{background:var(--hover)}
 .choice input{margin-top:4px;accent-color:var(--accent)}
 
+.problem-refs{margin:16px 0;padding:12px 14px;border:1px solid var(--border-soft);border-radius:var(--radius-sm);background:var(--overlay)}
+.problem-refs>ul,.problem-attributions{margin:6px 0 0;padding-left:20px}
+.problem-refs li{margin:3px 0}
 .learner-answer{padding:10px 12px;background:var(--overlay);border-left:3px solid var(--accent);border-radius:var(--radius-sm);white-space:pre-wrap}
 .result{font-weight:700;margin:0 0 12px}.result.correct{color:var(--success)}.result.incorrect{color:var(--warning)}
 .choice-feedback{margin:6px 0 16px;padding-left:20px}

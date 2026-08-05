@@ -21,6 +21,7 @@ import { readJson, writeJson } from './io.js';
 import { libraryPaths } from './libraryStore.js';
 import { nowIso, stableId } from '../util.js';
 import { storageIdError } from './storageId.js';
+import { normalizeProblemRefs } from './problemRefs.js';
 
 export type ImportCardResult = { localId: string; cardId: string; status: CardStatus; reasons: string[] };
 export type ImportResult = {
@@ -82,7 +83,7 @@ export async function importAgentSet(
   // Gate 2: structure. Resolvable tagRefs = existing ids + proposed localIds.
   const existingTagIds = new Set(existingTags.map((t) => t.id));
   const proposedLocalIds = new Set((patch.tagPatch?.add ?? []).map((p) => p.localId));
-  const structure = validateSetPatchStructure(patch, existingTagIds, proposedLocalIds);
+  const structure = validateSetPatchStructure(patch, existingTagIds, proposedLocalIds, now);
 
   const errors = [
     ...tagResult.errors.map((e) => ({ code: `tag:${e.code}`, message: e.message })),
@@ -199,6 +200,12 @@ async function persist(
   return { ...result, mergedIntoExisting };
 }
 
+function validatedProblemRefs(value: unknown, iso: string) {
+  const result = normalizeProblemRefs(value, new Date(iso));
+  if (!result.ok) throw new Error('problem references changed after validation');
+  return result.refs;
+}
+
 function buildCard(
   setId: string,
   cardId: string,
@@ -214,6 +221,7 @@ function buildCard(
     id: cardId,
     setId,
     siblingGroupId: draft.siblingGroupId?.trim(),
+    problemRefs: validatedProblemRefs(draft.problemRefs, iso),
     folderPath: draft.folderPath,
     tagIds: (draft.tagRefs ?? []).map(resolveTagRef),
     // Everything above and below this line is agent-authored and IS replaced:
@@ -258,7 +266,9 @@ async function finalize(
     folderPath: patch.set.folderPath ?? existing?.folderPath,
     repoId: existing?.repoId,
     tagIds: (patch.set.tagIds ?? existing?.tagIds ?? []).map(resolveTagRef),
-    // Lesson metadata: a re-import can set it; unset fields keep prior values.
+    // Problem references are author-owned: absence removes them on re-import.
+    problemRefs: validatedProblemRefs(patch.set.problemRefs, iso),
+    // Other lesson metadata keeps the established merge behavior.
     objective: patch.set.objective ?? existing?.objective,
     lessonKind: patch.set.lessonKind ?? existing?.lessonKind,
     prerequisiteTagIds: (patch.set.prerequisiteTagIds ?? existing?.prerequisiteTagIds)?.map(resolveTagRef),

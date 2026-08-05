@@ -27,7 +27,7 @@ export class BundleError extends Error {
 }
 
 export type LessonBundleManifest = {
-  formatVersion: 1;
+  formatVersion: 1 | 2;
   kind: 'lesson';
   setId: string;
   title: string;
@@ -39,6 +39,7 @@ export type LessonBundleManifest = {
 type PortableSourceRef = Omit<SourceRef, 'repoId'>;
 type BundleCard = {
   id: string;
+  problemRefs?: Card['problemRefs'];
   folderPath?: string;
   tagIds: string[];
   front: CardFront;
@@ -50,7 +51,7 @@ type BundleCard = {
 };
 type BundleSet = Pick<CardSet,
   'id' | 'title' | 'description' | 'folderPath' | 'tagIds' | 'objective' |
-  'lessonKind' | 'prerequisiteTagIds' | 'estimatedMinutes' | 'defaultAltitude'>;
+  'lessonKind' | 'prerequisiteTagIds' | 'estimatedMinutes' | 'defaultAltitude' | 'problemRefs'>;
 type BundleOrder = { version: 1; cardIds: string[]; note?: string };
 type BundleTags = { version: 1; tags: CardTag[] };
 
@@ -93,6 +94,7 @@ function portableSource(ref: SourceRef): PortableSourceRef {
 function bundleCard(card: Card): BundleCard {
   return {
     id: card.id,
+    ...(card.problemRefs?.length ? { problemRefs: card.problemRefs } : {}),
     ...(card.folderPath ? { folderPath: card.folderPath } : {}),
     tagIds: card.tagIds,
     front: card.front,
@@ -142,6 +144,7 @@ export async function exportLessonBundle(
   }));
   const portableSet: BundleSet = {
     id: set.id, title: set.title, description: set.description, folderPath: set.folderPath,
+    problemRefs: set.problemRefs,
     tagIds: set.tagIds.filter((id) => usedTagIds.has(id)), objective: set.objective,
     lessonKind: set.lessonKind, prerequisiteTagIds: set.prerequisiteTagIds?.filter((id) => usedTagIds.has(id)),
     estimatedMinutes: set.estimatedMinutes, defaultAltitude: set.defaultAltitude,
@@ -154,7 +157,7 @@ export async function exportLessonBundle(
   };
   for (const card of ordered) entries[`cards/${card.id}.json`] = jsonBytes(bundleCard(card));
   const manifest: LessonBundleManifest = {
-    formatVersion: 1, kind: 'lesson', setId, title: set.title,
+    formatVersion: 2, kind: 'lesson', setId, title: set.title,
     createdAt: (opts.now ?? new Date()).toISOString(), cardCount: ordered.length,
     contentChecksum: checksum(entries),
   };
@@ -208,7 +211,7 @@ async function readBundle(path: string): Promise<{ manifest: LessonBundleManifes
     catch { throw new BundleError(`invalid JSON in ${name}`); }
   };
   const manifest = parse<LessonBundleManifest>('manifest.json');
-  if (manifest.formatVersion !== 1 || manifest.kind !== 'lesson') throw new BundleError('unsupported bundle manifest');
+  if (![1, 2].includes(manifest.formatVersion) || manifest.kind !== 'lesson') throw new BundleError('unsupported bundle manifest');
   if (storageIdError(manifest.setId)) throw new BundleError('invalid set id in manifest');
   const content = Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'manifest.json'));
   if (checksum(content) !== manifest.contentChecksum) throw new BundleError('bundle checksum mismatch');
@@ -281,6 +284,7 @@ export async function importLessonBundle(
       if (card.sourceRefs?.length) frozenSources.set(card.id, card.sourceRefs.map((ref) => ({ ...ref, repoId: `bundle:${setId}` })));
       return {
         localId: card.id, ...(opts.asCopy ? {} : { id: card.id }), folderPath: card.folderPath,
+        problemRefs: card.problemRefs,
         tagRefs: card.tagIds.map((id) => localTag.get(id)).filter((id): id is string => !!id),
         front: card.front, back: card.back, difficulty: card.difficulty,
         altitude: card.altitude, interaction: card.interaction,

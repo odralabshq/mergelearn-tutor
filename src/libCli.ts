@@ -165,7 +165,7 @@ export function buildProgram(deps: {
     const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
     if (opts.open) {
       const result = await createAndOpen(rootFrom(homeOpt()), patch, {
-        agentName: opts.agent, dryRun: opts.dryRun, openUrl,
+        agentName: opts.agent, dryRun: opts.dryRun, openUrl, ensure: ensureLocalServer,
       });
       if (wantsJson(opts)) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
       else if (!result.imported) {

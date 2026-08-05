@@ -25,13 +25,13 @@ Authoring context adds compact case-fold-deduplicated `{ sourceName, sourceId }`
 
 `cardView` forms a Card-wins deduplicated union of Set and Card refs for a reveal-only field. Practice creates their DOM only after commitment. It revalidates HTTPS at render time, escapes text, displays the ASCII hostname, and applies safe link attributes. It never places refs in prompt HTML, context, hidden pre-reveal markup, document title, or live regions.
 
-The original example lives under `examples/`, uses the normal AgentSetPatch schema, and is not auto-installed. Documentation shows `mergelearn import --file <path>` and explains faded guidance, near misses, unlabelled transfer, and constraint-dependent approaches.
+The original example lives under `examples/`, uses the normal AgentSetPatch schema, and is not auto-installed. Documentation shows `mergelearn apply --file <path> --open` and explains faded guidance, near misses, unlabelled transfer, and constraint-dependent approaches.
 
 ## Implementation sequence
 
 1. Add failing pure metadata validation tests, then define and normalize the optional types.
 2. Add failing import/re-import tests, then persist Set and Card refs.
-3. Add failing bundle round-trip tests, then preserve refs through format version 1.
+3. Add failing bundle round-trip tests, then preserve refs through new format version 2 while retaining format 1 import compatibility.
 4. Add authoring-context and advisory-summary tests, then implement concise guidance.
 5. Add reveal-only server/browser tests, then render safe links after commitment.
 6. Add and import-test the original example, documentation, and full regression gates.

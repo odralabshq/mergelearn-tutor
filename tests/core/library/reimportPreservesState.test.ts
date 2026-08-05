@@ -7,13 +7,15 @@ import { describe, expect, it } from 'vitest';
 import { importAgentSet } from '../../../src/core/library/importAgentSet.js';
 import { libraryPaths } from '../../../src/core/library/libraryStore.js';
 import { readJson, writeJson } from '../../../src/core/library/io.js';
-import type { AgentSetPatch, Card } from '../../../src/core/library/types.js';
+import { loadSet } from '../../../src/core/library/setStore.js';
+import type { AgentSetPatch, Card, ExternalProblemRef } from '../../../src/core/library/types.js';
 
 const freshRoot = () => mkdtemp(join(tmpdir(), 'ml-reimport-'));
 
 /** Untagged single-card lesson: keeps the tag graph out of this test. */
 function lesson(overrides: {
   prompt?: string; answer?: string; title?: string; siblingGroupId?: string;
+  problemRefs?: ExternalProblemRef[];
 } = {}): AgentSetPatch {
   return {
     version: 1,
@@ -23,12 +25,14 @@ function lesson(overrides: {
       folderPath: 'qa/reimport',
       tagIds: [],
       objective: 'Verify learner state survives an agent refresh',
+      problemRefs: overrides.problemRefs,
     },
     tagPatch: { reuse: [], add: [] },
     order: ['c1'],
     cards: [{
       localId: 'c1',
       siblingGroupId: overrides.siblingGroupId,
+      problemRefs: overrides.problemRefs,
       tagRefs: [],
       front: { prompt: overrides.prompt ?? 'Why does this behave this way?' },
       back: {
@@ -111,6 +115,23 @@ describe('re-importing a lesson preserves learner-owned state', () => {
 
     const after = (await readJson<Card>(cardPath(root, cardId)))!;
     expect(after.siblingGroupId).toBeUndefined();
+    expect(after.fsrs).toEqual(before.fsrs);
+  });
+
+  it('removes omitted Set and Card problem refs while keeping the schedule', async () => {
+    const root = await freshRoot();
+    const problemRefs: ExternalProblemRef[] = [{
+      sourceName: 'Example', sourceId: 'pair-sum', canonicalUrl: 'https://example.org/pair-sum',
+    }];
+    const first = await importAgentSet(root, lesson({ problemRefs }));
+    const cardId = first.cards[0].cardId;
+    const before = await mature(root, cardId);
+
+    await importAgentSet(root, lesson());
+
+    expect((await loadSet(root, 'reimport-fixture'))?.problemRefs).toBeUndefined();
+    const after = (await readJson<Card>(cardPath(root, cardId)))!;
+    expect(after.problemRefs).toBeUndefined();
     expect(after.fsrs).toEqual(before.fsrs);
   });
 

@@ -167,6 +167,33 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(again).toContain('already installed');
   });
 
+  it('runs the documented example through apply --file --open', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-example-'));
+    const opened: string[] = [];
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+      const program = buildProgram({
+        ensureLocalServer: async () => ({
+          url: 'http://127.0.0.1:43210', pid: 123, port: 43210,
+          startedAt: '2026-08-05T00:00:00.000Z', managed: true, reused: true,
+        }),
+        openUrl: (url) => { opened.push(url); return true; },
+      });
+      await program.parseAsync([
+        'node', 'libCli.js', '--home', root, 'apply', '--file',
+        join(process.cwd(), 'examples', 'interview-pattern-lesson.json'), '--open',
+      ]);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(lines.join('\n')).toContain('applied set "interview-pattern-example"');
+    expect(opened).toEqual([
+      'http://127.0.0.1:43210/set/interview-pattern-example?source=apply-open',
+    ]);
+  });
+
   it('doctor --json emits machine-readable setup checks', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-doctor-'));
     const result = JSON.parse(await run(root, 'doctor', '--json'));

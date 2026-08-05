@@ -8,6 +8,7 @@ import { startReviewServer, type ReviewServer } from '../../src/session/server.j
 import { importAgentSet } from '../../src/core/library/importAgentSet.js';
 import { archiveCard } from '../../src/core/library/cardLifecycle.js';
 import { loadCard } from '../../src/core/library/cardStore.js';
+import { loadSet, saveSet } from '../../src/core/library/setStore.js';
 import { getDueCards } from '../../src/core/library/review/dueQueue.js';
 import { gradePlannedSession, startPlannedSession } from '../../src/core/library/review/session.js';
 import { saveUserPreferences } from '../../src/core/library/userPreferences.js';
@@ -36,6 +37,39 @@ async function seed(): Promise<string> {
   };
   const res = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
   if (!res.ok) throw new Error('seed import failed');
+  return root;
+}
+
+async function seedProblemRefs(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'mlt-problem-refs-'));
+  const patch: AgentSetPatch = {
+    version: 1,
+    set: { id: 'problems', title: 'Problems', tagIds: [], problemRefs: [
+      { sourceName: 'exa"mple', sourceId: 'shared', canonicalUrl: 'https://set.example/shared' },
+      { sourceName: 'Unsafe', sourceId: 'stored', canonicalUrl: 'https://unsafe.example/stored' },
+    ] },
+    tagPatch: { reuse: [], add: [] }, order: ['c1'],
+    cards: [{
+      localId: 'c1', tagRefs: [],
+      problemRefs: [{
+        sourceName: 'EXA"MPLE', sourceId: 'SHARED', canonicalUrl: 'https://card.example/shared',
+        attributions: [{ kind: 'company', label: 'Practice collection', observedOn: '2026-08-05' }],
+      }],
+      front: { prompt: 'Which source wins?' },
+      back: { shortAnswer: 'The Card source.', explanationMarkdown: 'Card metadata is more specific.' },
+    }],
+  };
+  const result = await importAgentSet(root, patch, { now: new Date('2026-08-05T12:00:00Z') });
+  if (!result.ok) throw new Error('problem-ref seed failed');
+  const set = (await loadSet(root, 'problems'))!;
+  set.problemRefs![1]!.canonicalUrl = 'javascript:alert(1)';
+  set.problemRefs![1]!.title = 'Safe \u202Egninrut';
+  set.problemRefs![1]!.attributions = [
+    { kind: 'company', label: 'Bad \u202Elabel', observedOn: '2026-08-05' },
+    { kind: 'list', label: 'Bad date', observedOn: '2026-08-05 (verified)' },
+  ];
+  set.problemRefs!.push({ canonicalUrl: 'https://example.org/malformed' } as never);
+  await saveSet(root, set);
   return root;
 }
 
@@ -411,6 +445,15 @@ describe('review GUI server (functional)', () => {
     const practiceScript = text.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     expect(practiceScript).toBeTruthy();
     expect(() => new Function(practiceScript!)).not.toThrow();
+    expect(text).toContain('function problemRefsHtml(c)');
+    expect(text).toContain('<div id="problem-refs"></div>');
+    expect(text).toContain("document.getElementById('problem-refs').innerHTML=problemRefsHtml(c)");
+    expect(text).toContain('rel="noopener noreferrer" referrerpolicy="no-referrer"');
+    expect(text).toContain('Link unavailable');
+    expect(text).toContain("'Reported by '+esc(ref.sourceName)+': '");
+    expect(text.match(/problemRefsHtml\(c\)/g)).toHaveLength(2);
+    expect(text).toContain('aria-labelledby="problem-refs-label"');
+    expect(text).toContain('opens in a new tab');
     expect(text).toContain('Submit and reveal: how confident are you?');
     expect(text).toContain('function setConfidence(n)');
     expect(text).toContain('confidence=n;');
@@ -484,6 +527,20 @@ describe('review GUI server (functional)', () => {
     expect(j.cards[0].setTitle).toBe('Server Deck');
     expect(j.cards[0].shortAnswer).toBe('One of several types.');
     expect(j.cards[0].explanation).toContain('either A or B');
+  });
+
+  it('projects a Card-wins reveal union and makes unsafe stored URLs non-linkable', async () => {
+    running = await startReviewServer(await seedProblemRefs());
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    expect(due.cards[0].problemRefs).toEqual([
+      expect.objectContaining({ sourceName: 'EXA"MPLE', sourceId: 'SHARED', hostname: 'card.example', href: 'https://card.example/shared' }),
+      expect.objectContaining({ sourceName: 'Unsafe', sourceId: 'stored', hostname: null, href: null }),
+    ]);
+    expect(JSON.stringify(due.cards[0].problemRefs)).not.toContain('set.example');
+    expect(JSON.stringify(due.cards[0].problemRefs)).not.toContain('malformed');
+    expect(JSON.stringify(due.cards[0].problemRefs)).not.toContain('gninrut');
+    expect(JSON.stringify(due.cards[0].problemRefs)).not.toContain('verified');
+    expect(JSON.stringify(due.cards[0].problemRefs)).not.toContain('Bad date');
   });
 
   it('/api/due applies the user cap and reports the waiting backlog', async () => {

@@ -13,11 +13,26 @@ export type CardStatus = 'active' | 'needs_review' | 'blocked' | 'archived';
  * See docs/design/redesign-2026-07/08-FIRST-LEARNING-LOOP.md. */
 export type LessonKind = 'general' | 'repository' | 'bridge';
 
+export type ProblemAttribution = {
+  kind: 'list' | 'company';
+  label: string;
+  observedOn: string;
+};
+
+export type ExternalProblemRef = {
+  sourceName: string;
+  sourceId: string;
+  canonicalUrl: string;
+  title?: string;
+  attributions?: ProblemAttribution[];
+};
+
 /** Abstraction level a card teaches at (orthogonal to Difficulty). */
 export type Altitude = 'line' | 'function' | 'module' | 'service' | 'system';
 
 /** Optional lesson metadata shared by CardSet and the import patch's set. */
 export type LessonMeta = {
+  problemRefs?: ExternalProblemRef[];
   objective?: string;
   lessonKind?: LessonKind;
   prerequisiteTagIds?: string[];
@@ -116,6 +131,7 @@ export type Card = {
   setId: string;
   /** Author-owned, set-local grouping for activities derived from one source. */
   siblingGroupId?: string;
+  problemRefs?: ExternalProblemRef[];
   folderPath?: string;
   tagIds: string[];
   front: CardFront;
@@ -388,6 +404,8 @@ export type RecentLesson = {
    * for climbing a concept from syntax to architecture, so an author deciding
    * whether to deepen needs it; without it, avoiding overlap is guesswork. */
   altitudes: Altitude[];
+  /** Identifier-only problem summary. URLs, titles, and attribution stay out of authoring context. */
+  problemRefs: Pick<ExternalProblemRef, 'sourceName' | 'sourceId'>[];
   questionSummaries: string[];
   reviewState: { cards: number; due: number; lapses: number };
 };
@@ -425,6 +443,7 @@ export type AgentCardDraft = {
   localId: string;
   id?: string;
   siblingGroupId?: string;
+  problemRefs?: ExternalProblemRef[];
   folderPath?: string;
   tagRefs: string[]; // existing tag ids OR ProposedTag localIds
   front: CardFront;

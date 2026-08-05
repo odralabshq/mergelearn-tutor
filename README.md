@@ -45,6 +45,24 @@ mergelearn serve
 The sample is opt-in, offline, and demonstrates every question type. Running the
 command again does not create duplicates.
 
+### Try the interview-pattern example
+
+`examples/interview-pattern-lesson.json` is an original, opt-in lesson with only
+reserved `example.org` references. Import it through the normal authoring gate:
+
+```bash
+mergelearn apply --file examples/interview-pattern-lesson.json --open
+```
+
+When authoring transfer practice, fade guidance from a worked example to a
+completion task, then a near-miss and an unlabelled transfer prompt. Keep problem
+and pattern identity out of the prompt and context when those labels would reveal
+the approach. Put them in the explanation or post-reveal references instead.
+Include competing approaches when constraints change the right choice; state the
+tradeoff rather than presenting one pattern as universally best. Never copy a
+problem statement or claim a company asked it. Dated list or company labels are
+provenance only, not verification or frequency claims.
+
 ## Install details
 
 Requirements: Node.js 20 or newer. Git is needed only for lessons that cite

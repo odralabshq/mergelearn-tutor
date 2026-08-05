@@ -108,6 +108,40 @@ describe('context carries enough detail to deepen, not just avoid repeats', () =
     expect(ctx.recentLessons[0].questionSummaries[0]).toBe('Why does the reader clamp?');
   });
 
+  it('projects only deduplicated problem identifiers into recent lessons', async () => {
+    const root = await freshRoot();
+    await importAgentSet(root, {
+      version: 1,
+      set: {
+        id: 'problem-context', title: 'Private problem context', tagIds: [],
+        problemRefs: [{
+          sourceName: 'Cafe\u0301', sourceId: 'Pair-Sum', canonicalUrl: 'https://example.org/private/set',
+          attributions: [{ kind: 'list', label: 'Private List', observedOn: '2026-08-01' }],
+        }],
+      },
+      tagPatch: { reuse: [], add: [] },
+      order: ['c1'],
+      cards: [{
+        localId: 'c1', tagRefs: [],
+        problemRefs: [{
+          sourceName: 'Café', sourceId: 'pair-sum', canonicalUrl: 'https://example.org/private/card',
+        }],
+        front: { prompt: 'How should a pair sum be found?' },
+        back: { shortAnswer: 'Use a complement map.', explanationMarkdown: 'Track prior values and test each complement once.' },
+      }],
+    } as AgentSetPatch, { now: new Date('2026-08-05T12:00:00Z') });
+
+    const lesson = (await buildAuthoringContext(root, { recent: 5 })).recentLessons[0];
+    const projected = lesson as typeof lesson & {
+      problemRefs: { sourceName: string; sourceId: string }[];
+    };
+    expect(projected.problemRefs).toEqual([{ sourceName: 'Café', sourceId: 'Pair-Sum' }]);
+    const serialized = JSON.stringify(lesson);
+    expect(serialized).not.toContain('example.org');
+    expect(serialized).not.toContain('observedOn');
+    expect(serialized).not.toContain('license');
+  });
+
   it('leaves conceptual lessons with empty provenance fields', async () => {
     const root = await freshRoot();
     await importAgentSet(root, {
