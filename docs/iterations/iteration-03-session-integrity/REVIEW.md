@@ -74,3 +74,46 @@ The final iteration-specific review is `/tmp/mergelearn-iteration-03-opus-review
 - R23 adopted: all non-session card writes must change `updatedAt`; tests protect this recovery prerequisite.
 
 No fourth iteration-specific review is run because the process caps reviews at three cycles. These exact closure changes remain subject to the later cross-design Opus review before implementation begins. Iteration 03 is therefore design-complete but not implementation-approved until that cross-review returns NOT BLOCKED.
+
+## Implementation verdict
+
+`NOT BLOCKED`
+
+The reviewed implementation is commit `4c7146c500f9e38c63d4d55cdcaa727f03179c75`. The final independent Opus 5 review covered the exact tracked and untracked source bundle after all accepted hardening. Its verdict is saved at `/tmp/mlt-iteration03-opus-verdict-post-review-final.md`.
+
+## Implementation evidence
+
+- Full gate: 350 tests across 41 files.
+- TypeScript check, build, packaged smoke, and `git diff --check`: passed.
+- Packaged smoke inspected 148 files.
+- Comprehensive built-artifact Brave CDP lifecycle: passed for lost Start and Grade responses, exact replay, two-tab fencing, writer refusal, crash recovery, unavailable-card traversal, Undo, End, and Review/Learn intent isolation.
+- Capped continuation browser flow: passed. An exhausted sitting ended durably before a distinct sitting opened.
+- Default-cap early-End browser flow: passed. After one of four cards was graded, completion reported `3 more waiting`, and the next distinct sitting contained those three cards.
+
+## Final implementation adjudication
+
+- I1 deferred: independent cold-open tabs can create separate sessions over the same cards. This is session-local behavior permitted by the current design, not evidence corruption. A global learner queue remains out of scope.
+- I2 deferred: a parseable externally corrupted session without `events` can make Undo return a plain-text 500. Normal writers always persist `events`; read-side summary normalization was added, while a general corrupt-shape repair policy remains future work.
+- I3 deferred: `session_writer_unavailable` is currently returned as retryable by the shared writer error response. The server still refuses every write and preserves the correct recovery reason. Refining client retry classification is follow-up UX work.
+- I4 deferred: module-level session and lock maps are not root-qualified. Session ids are randomized and this behavior predates the iteration. Root-qualified caches should be handled as a separate multi-library process hardening change.
+- I5 deferred: lesson copy has a singular grammar issue and does not include unresolved counts. Review completion now reports unresolved cards; lesson-copy polish is not an integrity blocker.
+- I6 deferred: a state-less definitive Grade rejection clears the Grade request but can retain an unrelated Undo retry body. Undo replay is fenced and idempotent, so this is cosmetic bookkeeping rather than mutation risk.
+- I7 deferred: request-id Start replay scans persisted session history. This is acceptable at current local scale; indexing is a performance project, not Iteration 03 scope.
+
+## Accepted post-review hardening
+
+- State-less `card_unavailable` clears the stale draft and card, disables Undo, and presents an explicit reload state.
+- Completion copy includes the authoritative unresolved-card count.
+- The fixed 512 request budget counts Grade and Undo ledger entries while preserving replay-before-admission ordering.
+- Undo and End reference the persistent retry-guidance region.
+- Parseable historical sessions missing `summary` receive a derived read-only summary.
+- Explicit early End preserves truthful remaining-work copy and a working next-sitting action.
+- Unavailable writer claims preserve their original diagnostic after refused mutations.
+- Pending-card recovery compares card images structurally rather than by JSON key order.
+
+## Scope decisions
+
+- Reject for this iteration: global cross-tab queue ownership, persistence indexes, and multi-library cache redesign.
+- Defer: relocating `planRequeue` into a lower-level module and consolidating duplicate transition scaffolding.
+- Retain: direct API support for design-mandated `retry_missed` and non-lesson `study_once`, even though the shipped UI does not expose them yet.
+- Retain: defensive recovery and ownership checks even where HTTP callers currently perform an earlier recovery pass. Removing them requires a separately reviewed core-call contract.
