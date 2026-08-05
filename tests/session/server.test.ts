@@ -41,9 +41,9 @@ async function seedMany(count: number): Promise<string> {
     version: 1,
     set: { title: 'Many', tagIds: [] },
     tagPatch: { reuse: [], add: [] }, order: localIds,
-    cards: localIds.map((localId) => ({
-      localId, tagRefs: [], front: { prompt: localId },
-      back: { shortAnswer: localId, explanationMarkdown: localId },
+    cards: localIds.map((localId, index) => ({
+      localId, tagRefs: [], front: { prompt: `Question ${index}?` },
+      back: { shortAnswer: `Answer ${index}`, explanationMarkdown: `Explanation ${index}` },
     })),
   };
   const result = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
@@ -107,6 +107,50 @@ describe('review GUI server (functional)', () => {
     expect(runtime).toBeTruthy();
     expect(() => new Function(runtime!)).not.toThrow();
     expect(html).toContain('data-server-mutation');
+  });
+
+  it('serves complete paged card metadata and rejects a stale snapshot', async () => {
+    const root = await seedMany(101);
+    running = await startReviewServer(root);
+
+    const firstResponse = await fetch(`${running.url}/api/cards`);
+    const first = await firstResponse.json();
+    expect(firstResponse.status).toBe(200);
+    expect(first).toMatchObject({ ok: true, total: 101, returned: 100, hasMore: true, nextOffset: 100 });
+    expect(first.cards).toHaveLength(100);
+    expect(first.snapshot).toMatch(/^[0-9a-f]{64}$/);
+
+    const second = await (await fetch(
+      `${running.url}/api/cards?offset=100&limit=100&snapshot=${first.snapshot}`,
+    )).json();
+    expect(second).toMatchObject({ ok: true, total: 101, returned: 1, hasMore: false, snapshot: first.snapshot });
+    expect(second.nextOffset).toBeUndefined();
+
+    const malformed = await (await fetch(`${running.url}/api/cards?offset=-1&limit=0&state=0`)).json();
+    expect(malformed).toMatchObject({ total: 101, returned: 100, nextOffset: 100 });
+    const nonnumeric = await (await fetch(`${running.url}/api/cards?offset=bad&limit=bad`)).json();
+    expect(nonnumeric).toMatchObject({ total: 101, returned: 100, nextOffset: 100 });
+    const beyond = await (await fetch(`${running.url}/api/cards?offset=999&limit=2.5`)).json();
+    expect(beyond).toMatchObject({ cards: [], total: 101, returned: 0, hasMore: false });
+    expect(beyond.nextOffset).toBeUndefined();
+
+    const target = first.cards[0];
+    const edited = await fetch(`${running.url}/api/card/edit`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        setId: target.setId, cardId: target.cardId, expectedUpdatedAt: target.updatedAt,
+        edit: { front: { prompt: `${target.prompt} changed` } },
+      }),
+    });
+    expect(edited.status).toBe(200);
+
+    const stale = await fetch(`${running.url}/api/cards?offset=100&snapshot=${first.snapshot}`);
+    expect(stale.status).toBe(409);
+    const staleBody = await stale.json();
+    expect(staleBody).toEqual({
+      ok: false, code: 'snapshot_mismatch', snapshot: expect.stringMatching(/^[0-9a-f]{64}$/), total: 101,
+    });
+    expect(staleBody.snapshot).not.toBe(first.snapshot);
   });
 
   it('records explicit dogfood feedback and deferral locally', async () => {
@@ -187,7 +231,18 @@ describe('review GUI server (functional)', () => {
     const { status, text } = await get(`${running.url}/manage`);
     expect(status).toBe(200);
     expect(text).toContain('id="card-search"');
-    expect(text).toContain('/api/cards?q=');
+    expect(text).toContain('id="card-set"');
+    expect(text).toContain('id="card-tags" multiple');
+    expect(text).toContain('id="card-state"');
+    expect(text).toContain('id="card-status" role="status" aria-live="polite"');
+    expect(text).toContain('id="load-more-cards"');
+    expect(text).toContain('id="reload-cards"');
+    expect(text).toContain("params.set('offset',String(expectedOffset))");
+    expect(text).toContain("params.set('snapshot',cardPage.snapshot)");
+    expect(text).toContain('requestGeneration!==cardPage.generation');
+    expect(text).toContain('expectedOffset!==cardPage.offset');
+    expect(text).toContain('if(cardPage.inFlight)return;');
+    expect(text).toContain("cardStatus((cardPage.notice?cardPage.notice+' ':'')+cardPage.offset+' of '+cardPage.total)");
     expect(text).toContain('data-card-action');
     expect(text).toContain('data-copy-card');
     expect(text).toContain('Edit teaching text');
@@ -199,6 +254,9 @@ describe('review GUI server (functional)', () => {
     expect(text.indexOf('class="curation-head-actions"')).toBeLessThan(text.indexOf('class="curation-edit"'));
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text.indexOf('Practice filters')).toBeLessThan(text.indexOf('id="card-search"'));
+    const scripts = [...text.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+    expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
+      .forEach((script) => new Function(script))).not.toThrow();
   });
 
   it('serves the Practice shell', async () => {

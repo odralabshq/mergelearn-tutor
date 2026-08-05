@@ -14,7 +14,7 @@ import { getDueCards, selectDueCards, type DueFilter } from '../core/library/rev
 import { orderDueQueue } from '../core/library/review/interleave.js';
 import { loadUserPreferences } from '../core/library/userPreferences.js';
 import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
-import { searchCards } from '../core/library/searchCards.js';
+import { searchCardsPage } from '../core/library/searchCards.js';
 import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
 import { listSetSummaries, loadSet, loadOrder, saveSet } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
@@ -244,12 +244,27 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
 }
 
 async function cardsApi(root: string, res: ServerResponse, url: URL): Promise<void> {
-  const cards = await searchCards(root, url.searchParams.get('q') ?? '', {
+  const rawOffset = Number(url.searchParams.get('offset'));
+  const rawLimit = Number(url.searchParams.get('limit'));
+  const rawState = Number(url.searchParams.get('state'));
+  const offset = url.searchParams.has('offset') && Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+  const limit = url.searchParams.has('limit') && Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 100;
+  const state = url.searchParams.has('state') && Number.isInteger(rawState) && rawState >= 0 && rawState <= 3
+    ? rawState as 0 | 1 | 2 | 3
+    : undefined;
+  const page = await searchCardsPage(root, url.searchParams.get('q') ?? '', {
     setIds: url.searchParams.get('set') ? [url.searchParams.get('set')!] : undefined,
+    tagIds: url.searchParams.getAll('tag').filter(Boolean),
     includeArchived: url.searchParams.get('archived') === '1',
-    limit: Math.min(500, Math.max(1, Number(url.searchParams.get('limit')) || 100)),
+    state, offset, limit,
   });
-  return sendJson(res, 200, { ok: true, cards });
+  const expectedSnapshot = url.searchParams.get('snapshot');
+  if (expectedSnapshot && expectedSnapshot !== page.snapshot) {
+    return sendJson(res, 409, {
+      ok: false, code: 'snapshot_mismatch', snapshot: page.snapshot, total: page.total,
+    });
+  }
+  return sendJson(res, 200, { ok: true, ...page });
 }
 
 async function cardActionApi(root: string, req: IncomingMessage, res: ServerResponse, action: string): Promise<void> {
@@ -729,7 +744,7 @@ function progressTitle(s: ProgressStats, noun: string): string {
 }
 
 async function renderManage(root: string, instanceId: string): Promise<string> {
-  const { folders, tags, cards } = await loadManageData(root);
+  const [{ folders, tags, cards }, sets] = await Promise.all([loadManageData(root), listSetSummaries(root)]);
   // Embed card membership so match counts recompute client-side (no round-trip).
   // Escape '<' so a folderPath/tagId can never break out of the script tag.
   const cardsJson = JSON.stringify(cards).replace(/</g, '\\u003c');
@@ -758,6 +773,8 @@ async function renderManage(root: string, instanceId: string): Promise<string> {
         `</div>`,
       ).join('')
     : `<div class="empty">No tags yet — author cards with <code>tagRefs</code>.</div>`;
+  const setOptions = sets.map((set) => `<option value="${escapeHtml(set.id)}">${escapeHtml(set.title)}</option>`).join('');
+  const tagOptions = tags.map((tag) => `<option value="${escapeHtml(tag.id)}">${escapeHtml(tag.label)}</option>`).join('');
 
   // Combinator tiles sit between Folders and Tags — the seam where the
   // cross-dimension join is ambiguous. Labelled by meaning ("Match any" = OR =
@@ -790,10 +807,15 @@ async function renderManage(root: string, instanceId: string): Promise<string> {
     combinator +
     `<div class="section-head" style="margin-top:24px"><h2>Tags</h2>${masteryLegend}</div>` +
     `<div class="tag-grid">${tagChips}</div></section>` +
-    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status"></span></div>` +
-    `<div class="card-tools"><input id="card-search" type="search" placeholder="Search cards and lessons" aria-label="Search cards and lessons">` +
+    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status" role="status" aria-live="polite">0 of 0</span></div>` +
+    `<div class="card-tools"><label>Search<input id="card-search" type="search" placeholder="Search cards and lessons"></label>` +
+    `<label>Set<select id="card-set"><option value="">All sets</option>${setOptions}</select></label>` +
+    `<label>Tags<select id="card-tags" multiple>${tagOptions}</select></label>` +
+    `<label>Learning state<select id="card-state"><option value="">All states</option><option value="0">New</option><option value="1">Learning</option><option value="2">Review</option><option value="3">Relearning</option></select></label>` +
     `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
-    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div></section>` +
+    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div>` +
+    `<p><button type="button" id="load-more-cards" class="secondary-action" hidden>Load more</button> ` +
+    `<button type="button" id="reload-cards" class="secondary-action" hidden>Reload results</button></p></section>` +
     `<script type="application/json" id="ml-cards">${cardsJson}</script>`;
   return pageShell('MergeLearn — Manage', 'manage', body, instanceId) +
     `<script>${manageScript()}</script>`;
@@ -805,6 +827,7 @@ ${manageDraftKey.toString()}
 ${decideManageDraft.toString()}
 var selected={folderPaths:[],tagIds:[],combinator:'union'};
 var CARDS=[];
+var cardPage={generation:0,offset:0,total:0,snapshot:null,inFlight:false,reloadQueued:false,notice:''};
 try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function cardStatus(t){var n=document.getElementById('card-status');if(n)n.textContent=t;}
@@ -816,7 +839,7 @@ function copyText(text,button){
 }
 function cardHtml(c){
   var action=c.status==='archived'?'unarchive':'archive';
-  return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
+  return '<article class="curation-card" tabindex="-1" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
     '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><div class="curation-head-actions"><button type="button" class="copy-reference" data-copy-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button><button type="button" class="copy-reference" data-card-action="'+action+'" data-server-mutation>'+(action==='archive'?'Archive':'Restore')+'</button></div></div>'+
     '<div class="curation-meta muted small"><span>'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</span><span class="badge next">'+esc(c.status)+'</span></div><p>'+esc(c.shortAnswer)+'</p>'+
     '<details class="curation-edit"><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
@@ -842,19 +865,59 @@ function showManageDraft(row,decision,raw){
 }
 function restoreManageDrafts(){[].forEach.call(document.querySelectorAll('.curation-card'),function(row){var raw=null;try{raw=localStorage.getItem(manageDraftKey(row.getAttribute('data-set'),row.getAttribute('data-card')));}catch(e){}showManageDraft(row,decideManageDraft(raw,row.getAttribute('data-set'),row.getAttribute('data-card'),row.getAttribute('data-updated')),raw||'');});}
 function persistManageDraft(row){try{localStorage.setItem(manageDraftKey(row.getAttribute('data-set'),row.getAttribute('data-card')),JSON.stringify({version:1,setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card'),updatedAt:row.getAttribute('data-updated'),fields:manageDraftFields(row)}));}catch(e){}}
+function cardQuery(expectedOffset){
+  var params=new URLSearchParams();var q=document.getElementById('card-search').value||'';
+  if(q)params.set('q',q);var setId=document.getElementById('card-set').value;if(setId)params.set('set',setId);
+  [].forEach.call(document.getElementById('card-tags').selectedOptions,function(option){params.append('tag',option.value);});
+  var state=document.getElementById('card-state').value;if(state!=='')params.set('state',state);
+  if(document.getElementById('show-archived').checked)params.set('archived','1');
+  params.set('offset',String(expectedOffset));params.set('limit','100');
+  if(expectedOffset>0&&cardPage.snapshot)params.set('snapshot',cardPage.snapshot);
+  return params;
+}
+function updateCardPaging(hasMore){
+  var more=document.getElementById('load-more-cards');more.hidden=!hasMore;more.disabled=cardPage.inFlight;
+  document.getElementById('reload-cards').hidden=true;cardStatus((cardPage.notice?cardPage.notice+' ':'')+cardPage.offset+' of '+cardPage.total);cardPage.notice='';
+}
+function resetCardResults(notice){
+  cardPage.notice=typeof notice==='string'?notice:'';
+  cardPage.generation++;cardPage.offset=0;cardPage.total=0;cardPage.snapshot=null;
+  document.getElementById('card-results').innerHTML='<span class="muted">Loading cards…</span>';
+  document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=true;
+  if(cardPage.inFlight){cardPage.reloadQueued=true;return;}loadCardResults();
+}
 async function loadCardResults(){
-  var q=document.getElementById('card-search').value||'';var archived=document.getElementById('show-archived').checked;
-  try{var r=await fetch('/api/cards?q='+encodeURIComponent(q)+(archived?'&archived=1':''));var j=await r.json();var box=document.getElementById('card-results');box.innerHTML=(j.cards||[]).map(cardHtml).join('')||'<div class="empty">No cards match.</div>';restoreManageDrafts();if(window.__mlConnection)window.__mlConnection.refreshControls();cardStatus((j.cards||[]).length+' shown');}
-  catch(e){cardStatus('Could not load cards');}
+  if(cardPage.inFlight)return;
+  var requestGeneration=cardPage.generation,expectedOffset=cardPage.offset,box=document.getElementById('card-results');
+  cardPage.inFlight=true;document.getElementById('load-more-cards').disabled=true;
+  try{
+    var r=await fetch('/api/cards?'+cardQuery(expectedOffset).toString());var j=await r.json();
+    if(requestGeneration!==cardPage.generation||expectedOffset!==cardPage.offset)return;
+    if(r.status===409&&j.code==='snapshot_mismatch'){
+      cardStatus('Library changed. Reload results before continuing.');document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=false;document.getElementById('reload-cards').focus();return;
+    }
+    if(!r.ok||!j.ok)throw new Error(j.error||'card search failed');
+    if(expectedOffset===0){cardPage.snapshot=j.snapshot;box.innerHTML='';}
+    else if(j.snapshot!==cardPage.snapshot){cardStatus('Library changed. Reload results before continuing.');document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=false;return;}
+    var incoming=j.cards||[],beforeRows=box.querySelectorAll('.curation-card').length;box.insertAdjacentHTML('beforeend',incoming.map(cardHtml).join(''));
+    var newRows=[].slice.call(box.querySelectorAll('.curation-card'),beforeRows);
+    cardPage.offset=expectedOffset+incoming.length;cardPage.total=j.total;
+    if(cardPage.offset===0)box.innerHTML='<div class="empty">No cards match.</div>';
+    restoreManageDrafts();if(window.__mlConnection)window.__mlConnection.refreshControls();updateCardPaging(!!j.hasMore);
+    if(expectedOffset>0&&newRows.length)newRows[0].focus();
+  }catch(e){if(requestGeneration===cardPage.generation)cardStatus('Could not load cards');}
+  finally{cardPage.inFlight=false;document.getElementById('load-more-cards').disabled=false;if(cardPage.reloadQueued){cardPage.reloadQueued=false;loadCardResults();}}
 }
 async function cardAction(button){
   var row=button.closest('.curation-card'),action=button.getAttribute('data-card-action');if(!row||!action)return;
   var body={setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card'),expectedUpdatedAt:row.getAttribute('data-updated')};
   if(action==='edit')body.edit={front:{prompt:row.querySelector('[data-edit="prompt"]').value},back:{shortAnswer:row.querySelector('[data-edit="shortAnswer"]').value,explanationMarkdown:row.querySelector('[data-edit="explanation"]').value}};
-  button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')button.disabled=false;return;}if(action==='edit')discardManageDraft(row);cardStatus(action==='edit'?'Saved':'Card updated');await loadCardResults();}catch(e){cardStatus('Update failed. Draft kept.');if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')button.disabled=false;}
+  button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')button.disabled=false;return;}if(action==='edit')discardManageDraft(row);resetCardResults(action==='edit'?'Saved.':'Card updated.');}catch(e){cardStatus('Update failed. Draft kept.');if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')button.disabled=false;}
 }
-var searchTimer=null;document.getElementById('card-search').addEventListener('input',function(){clearTimeout(searchTimer);searchTimer=setTimeout(loadCardResults,180);});
-document.getElementById('show-archived').addEventListener('change',loadCardResults);
+var searchTimer=null;document.getElementById('card-search').addEventListener('input',function(){clearTimeout(searchTimer);searchTimer=setTimeout(resetCardResults,180);});
+['card-set','card-tags','card-state','show-archived'].forEach(function(id){document.getElementById(id).addEventListener('change',resetCardResults);});
+document.getElementById('load-more-cards').addEventListener('click',loadCardResults);
+document.getElementById('reload-cards').addEventListener('click',resetCardResults);
 document.getElementById('card-results').addEventListener('click',function(e){
   var copy=e.target.closest&&e.target.closest('[data-copy-card]');
   if(copy){var row=copy.closest('.curation-card');copyText('mergelearn show '+row.getAttribute('data-set')+'/'+row.getAttribute('data-card'),copy);return;}
