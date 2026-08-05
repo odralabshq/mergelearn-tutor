@@ -75,6 +75,31 @@ describe('connection controller', () => {
     expect(h.controls.every((control) => control.disabled)).toBe(true);
   });
 
+  it('keeps a verified read-only server visible and disables mutations', async () => {
+    const h = harness([{
+      ok: true, instanceId: 'expected', sessionWriter: 'read_only',
+      sessionWriterReason: 'session_writer_lost',
+    }]);
+    await h.controller.checkHealth();
+    expect(h.controller.state()).toBe('disconnected');
+    expect(h.status.hidden).toBe(false);
+    expect(h.status.textContent).toContain('read-only');
+    expect(h.status.textContent).toContain('Close the other server');
+    expect(h.controls.every((control) => control.disabled)).toBe(true);
+  });
+
+  it('gives recovery guidance when writer ownership cannot be verified', async () => {
+    const h = harness([{
+      ok: true, instanceId: 'expected', sessionWriter: 'read_only',
+      sessionWriterReason: 'session_writer_unavailable',
+    }]);
+    await h.controller.checkHealth();
+    expect(h.controller.state()).toBe('disconnected');
+    expect(h.status.textContent).toContain('cannot be verified');
+    expect(h.status.textContent).toContain('profile/session-writer.json');
+    expect(h.controls.every((control) => control.disabled)).toBe(true);
+  });
+
   it('checks health when a hidden page becomes visible', async () => {
     const h = harness([{ ok: true, instanceId: 'expected' }]);
     h.listeners.get('visibilitychange')?.();

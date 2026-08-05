@@ -98,7 +98,9 @@ export function createConnectionController(deps: {
   async function checkHealth(): Promise<ConnectionState> {
     try {
       var response = await deps.fetch('/health', { cache: 'no-store' });
-      var body = await response.json() as { ok?: boolean; instanceId?: string };
+      var body = await response.json() as {
+        ok?: boolean; instanceId?: string; sessionWriter?: string; sessionWriterReason?: string;
+      };
       if (!response.ok || body.ok !== true) {
         return render('disconnected', 'The local server cannot be reached. Your unsent work is still available.');
       }
@@ -106,6 +108,12 @@ export function createConnectionController(deps: {
       if (!body.instanceId) return render('disconnected', 'This tab cannot verify the current local server. Reload it from the current MergeLearn URL.');
       if (body.instanceId !== deps.instanceId) {
         return render('disconnected', 'This tab belongs to a different local server. Reload it from the current MergeLearn URL.');
+      }
+      if (body.sessionWriter === 'read_only') {
+        if (body.sessionWriterReason === 'session_writer_unavailable') {
+          return render('disconnected', 'MergeLearn is read-only because writer ownership cannot be verified. Inspect profile/session-writer.json, stop any stale process, then restart MergeLearn. Your saved work remains on disk.');
+        }
+        return render('disconnected', 'MergeLearn is read-only because another local server owns session writes. Close the other server, then reload this page. Your saved work remains on disk.');
       }
       return render('connected');
     } catch {

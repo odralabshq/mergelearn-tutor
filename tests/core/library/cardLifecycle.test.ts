@@ -69,6 +69,22 @@ describe('card lifecycle', () => {
     expect(await loadTags(r)).toEqual(tagsBefore);
   });
 
+  it('cannot resurrect a deleted card when ownership is lost before order cleanup', async () => {
+    const r = await root();
+    const order = await loadOrder(r, 'curation');
+    const deletedId = order!.cardIds[0];
+    let assertions = 0;
+    await expect(deleteCard(r, 'curation', deletedId, {
+      assertOwnership: async () => {
+        assertions += 1;
+        if (assertions === 2) throw new Error('writer lost');
+      },
+    })).rejects.toThrow('writer lost');
+    expect(await loadCard(r, 'curation', deletedId)).toBeUndefined();
+    expect((await loadOrder(r, 'curation'))?.cardIds).toContain(deletedId);
+    expect(await listCardIds(r, 'curation')).not.toContain(deletedId);
+  });
+
   it('refuses to delete a set with history unless force is explicit', async () => {
     const r = await root();
     const card = (await getDueCards(r, new Date('2026-07-16T12:00:00Z')))[0];

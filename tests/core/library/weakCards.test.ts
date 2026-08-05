@@ -136,6 +136,17 @@ describe('loadWeakReport evidence bar', () => {
     expect(report.attemptedCards).toBe(1);
   });
 
+  it('uses minimal evidence events without scheduling fields', async () => {
+    const { root, ids } = await seed();
+    const events = Array.from({ length: 3 }, (_, index): ReviewEvent => ({
+      cardId: ids[0]!, setId: SET, rating: 1,
+      reviewedAt: `2026-07-0${index + 1}T10:00:00.000Z`, resultClass: 'evidence',
+    }));
+    await writeSession(root, '2026-07-01T10:00:00.000Z', events);
+    const report = await loadWeakReport(root);
+    expect(report.cards).toMatchObject([{ cardId: ids[0], attempts: 3, failures: 3 }]);
+  });
+
   it(`requires ${WEAK_MIN_ATTEMPTS} attempts and ${WEAK_MIN_FAILURES} failures`, async () => {
     const { root, ids } = await seed();
     // 3 attempts but only 1 failure: below the bar.

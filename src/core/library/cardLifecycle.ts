@@ -11,6 +11,11 @@ export class CardLifecycleError extends Error {
   constructor(message: string) { super(message); this.name = 'CardLifecycleError'; }
 }
 
+type MutationOptions = {
+  expectedUpdatedAt?: string;
+  assertOwnership?: () => Promise<void>;
+};
+
 async function requireCard(root: string, setId: string, cardId: string): Promise<Card> {
   try { assertStorageId(setId, 'set id'); assertStorageId(cardId, 'card id'); }
   catch (error) { throw new CardLifecycleError(error instanceof Error ? error.message : String(error)); }
@@ -23,7 +28,7 @@ function assertCurrent(card: Card, expectedUpdatedAt?: string): void {
   if (expectedUpdatedAt && card.updatedAt !== expectedUpdatedAt) throw new CardLifecycleError('card changed; refresh and retry');
 }
 
-export async function archiveCard(root: string, setId: string, cardId: string, now = new Date(), opts: { expectedUpdatedAt?: string } = {}): Promise<Card> {
+export async function archiveCard(root: string, setId: string, cardId: string, now = new Date(), opts: MutationOptions = {}): Promise<Card> {
   const card = await requireCard(root, setId, cardId);
   assertCurrent(card, opts.expectedUpdatedAt);
   if (card.status === 'archived') return card;
@@ -31,16 +36,18 @@ export async function archiveCard(root: string, setId: string, cardId: string, n
     ...card, status: 'archived', statusBeforeArchive: card.status,
     archivedAt: now.toISOString(), updatedAt: now.toISOString(),
   };
+  await opts.assertOwnership?.();
   await saveCard(root, updated);
   return updated;
 }
 
-export async function unarchiveCard(root: string, setId: string, cardId: string, now = new Date(), opts: { expectedUpdatedAt?: string } = {}): Promise<Card> {
+export async function unarchiveCard(root: string, setId: string, cardId: string, now = new Date(), opts: MutationOptions = {}): Promise<Card> {
   const card = await requireCard(root, setId, cardId);
   assertCurrent(card, opts.expectedUpdatedAt);
   if (card.status !== 'archived') return card;
   const { archivedAt: _archivedAt, statusBeforeArchive, ...withoutArchived } = card;
   const updated: Card = { ...withoutArchived, status: statusBeforeArchive ?? 'active', updatedAt: now.toISOString() };
+  await opts.assertOwnership?.();
   await saveCard(root, updated);
   return updated;
 }
@@ -58,7 +65,7 @@ const FRONT_KEYS = new Set(['prompt', 'contextMarkdown']);
 const BACK_KEYS = new Set(['shortAnswer', 'explanationMarkdown', 'examples', 'commonMistakes', 'sourceNotes']);
 
 export async function editCard(
-  root: string, setId: string, cardId: string, edit: CardEdit, now = new Date(), opts: { expectedUpdatedAt?: string } = {},
+  root: string, setId: string, cardId: string, edit: CardEdit, now = new Date(), opts: MutationOptions = {},
 ): Promise<Card> {
   for (const key of Object.keys(edit)) if (!EDIT_KEYS.has(key)) throw new CardLifecycleError(`cannot edit ${key}`);
   for (const key of Object.keys(edit.front ?? {})) if (!FRONT_KEYS.has(key)) throw new CardLifecycleError(`cannot edit front.${key}`);
@@ -77,20 +84,23 @@ export async function editCard(
   if (!updated.front.prompt?.trim() || !updated.back.shortAnswer?.trim() || !updated.back.explanationMarkdown?.trim()) {
     throw new CardLifecycleError('prompt, short answer, and explanation cannot be empty');
   }
+  await opts.assertOwnership?.();
   await saveCard(root, updated);
   return updated;
 }
 
 export type DeleteResult = { deleted: boolean; setId: string; cardId: string };
 
-export async function deleteCard(root: string, setId: string, cardId: string, opts: { expectedUpdatedAt?: string } = {}): Promise<DeleteResult> {
+export async function deleteCard(root: string, setId: string, cardId: string, opts: MutationOptions = {}): Promise<DeleteResult> {
   const card = await requireCard(root, setId, cardId);
   assertCurrent(card, opts.expectedUpdatedAt);
   const order = await loadOrder(root, setId);
+  await opts.assertOwnership?.();
+  await rm(libraryPaths(root).cardFile(setId, cardId), { force: true });
   if (order?.cardIds.includes(cardId)) {
+    await opts.assertOwnership?.();
     await saveOrder(root, setId, { ...order, cardIds: order.cardIds.filter((id) => id !== cardId) });
   }
-  await rm(libraryPaths(root).cardFile(setId, cardId), { force: true });
   return { deleted: true, setId, cardId };
 }
 

@@ -42,7 +42,13 @@ export type ImportOptions = {
   dryRun?: boolean;
   /** Internal trust seam for validated portable bundles. */
   frozenSourceRefsByLocalId?: ReadonlyMap<string, SourceRef[]>;
+  /** Optional writer fence for server-owned imports. Revalidated before every write. */
+  assertOwnership?: () => Promise<void>;
 };
+
+async function assertWriteOwnership(opts: ImportOptions): Promise<void> {
+  await opts.assertOwnership?.();
+}
 
 function setIdFromTitle(title: string): string {
   // Linear split/filter/join — no anchored-quantifier regex (ReDoS-safe,
@@ -133,7 +139,10 @@ async function persist(
 ): Promise<ImportResult> {
   // Commit the taxonomy first (validated pure result). Skipped on a dry run so
   // a preview never mutates the tag graph.
-  if (!opts.dryRun) await saveTags(root, tagResult.mergedTags);
+  if (!opts.dryRun) {
+    await assertWriteOwnership(opts);
+    await saveTags(root, tagResult.mergedTags);
+  }
 
   const setId = patch.set.id ?? setIdFromTitle(patch.set.title);
   // Read BEFORE any write so a dry run and a real apply agree on whether this
@@ -260,8 +269,12 @@ async function finalize(
     createdAt: existing?.createdAt ?? iso,
     updatedAt: iso,
   };
+  await assertWriteOwnership(opts);
   await saveSet(root, set);
-  for (const card of cards) await saveCard(root, card);
+  for (const card of cards) {
+    await assertWriteOwnership(opts);
+    await saveCard(root, card);
+  }
 
   // order.json: map the patch's order keys to real cardIds, then append any
   // pre-existing card ids not in this patch (so re-imports don't drop cards).
@@ -275,6 +288,7 @@ async function finalize(
     cardIds: merged,
     note: patch.orderNote ?? prevOrder?.note,
   };
+  await assertWriteOwnership(opts);
   await saveOrder(root, setId, order);
 
   const record: ImportRecord = {
@@ -288,6 +302,7 @@ async function finalize(
   };
   const importsPath = join(libraryPaths(root).setDir(setId), 'imports.json');
   const priorImports = (await readJson<ImportRecord[]>(importsPath)) ?? [];
+  await assertWriteOwnership(opts);
   await writeJson(importsPath, [...priorImports, record]);
 
   return { ok: true, errors: [], setId, cards: results, tagIdsAdded: addedTagIds };

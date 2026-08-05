@@ -75,6 +75,19 @@ describe('attemptedCardIds (reader)', () => {
     expect([...ids].sort()).toEqual(['c1', 'c2']);
   });
 
+  it('treats a minimal evidence event as authoritative lesson progress', async () => {
+    const root = await freshRoot();
+    await writeSession(root, {
+      id: 'evidence', startedAt: '2026-07-12T12:00:00.000Z', mode: 'lesson',
+      filter: { setIds: ['deck'] },
+      events: [{
+        cardId: 'c1', setId: 'deck', rating: 1, reviewedAt: '2026-07-12T12:00:00.000Z',
+        resultClass: 'evidence',
+      }],
+    });
+    expect([...await attemptedCardIds(root, 'deck')]).toEqual(['c1']);
+  });
+
   it('ignores non-lesson sessions and other sets', async () => {
     const root = await freshRoot();
     await writeSession(root, { id: 'r1', startedAt: '2026-07-12T09:00:00.000Z',

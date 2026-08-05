@@ -10,12 +10,17 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 
-import { getDueCards, selectDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
+import {
+  getActiveCardsInAuthoredOrder, getDueCards, selectDueCards, type DueFilter,
+} from '../core/library/review/dueQueue.js';
 import { orderDueQueue } from '../core/library/review/interleave.js';
 import { loadUserPreferences } from '../core/library/userPreferences.js';
 import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
 import { searchCardsPage } from '../core/library/searchCards.js';
-import { startSession, gradeCard, undoLastGrade, UndoUnavailableError, endSession } from '../core/library/review/session.js';
+import {
+  startPlannedSession, gradePlannedSession, undoPlannedGrade, advanceUnavailableEntries,
+  recoverPlannedSession, PlannedSessionError, endSession, recomputeSummary,
+} from '../core/library/review/session.js';
 import { listSetSummaries, loadSet, loadOrder, saveSet } from '../core/library/setStore.js';
 import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
@@ -26,16 +31,21 @@ import {
   computeLessonProgress,
   type LessonProgress,
 } from '../core/library/review/sessionHistory.js';
-import type { Card, Confidence, Interaction, ReviewAttempt, ReviewRating, ReviewSession, SetOrder, SetSummary } from '../core/library/types.js';
+import type {
+  Card, Confidence, Interaction, PlannedSessionState, ReviewAttempt, ReviewRating,
+  ReviewSession, SetOrder, SetSummary,
+} from '../core/library/types.js';
 import { libraryPaths } from '../core/library/libraryStore.js';
 import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
 import { appendDogfoodEvent, listDogfoodEvents } from '../core/library/dogfood.js';
 import { join } from 'node:path';
-import { MAX_REQUEUE, REQUEUE_GAP, planRequeue } from './requeue.js';
 import { createConnectionController } from './connectionController.js';
 import {
   decideManageDraft, decidePracticeDraft, manageDraftKey, practiceDraftKey,
 } from './draftRecovery.js';
+import {
+  acquireSessionWriter, SessionWriterError, type SessionWriterClaim,
+} from './writerClaim.js';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
@@ -45,10 +55,18 @@ export type ReviewServerOptions = {
   onActivity?: () => void;
   onLessonOpen?: (setId: string, source?: string) => void | Promise<void>;
   dogfoodControls?: boolean;
+  sessionWriter?: SessionWriterClaim;
+};
+
+type ResolvedReviewServerOptions = ReviewServerOptions & {
+  instanceId: string;
+  sessionWriter: SessionWriterClaim;
 };
 
 export async function startReviewServer(root: string, port = 0, options: ReviewServerOptions = {}): Promise<ReviewServer> {
-  const resolvedOptions: ReviewServerOptions = { ...options, instanceId: options.instanceId ?? randomUUID() };
+  const instanceId = options.instanceId ?? randomUUID();
+  const sessionWriter = options.sessionWriter ?? await acquireSessionWriter(root, instanceId);
+  const resolvedOptions: ResolvedReviewServerOptions = { ...options, instanceId, sessionWriter };
   const server = createServer(async (req, res) => {
     try {
       await handleRequest(root, req, res, resolvedOptions);
@@ -56,23 +74,36 @@ export async function startReviewServer(root: string, port = 0, options: ReviewS
       sendText(res, 500, `session error: ${error instanceof Error ? error.message : String(error)}\n`);
     }
   });
-  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+  try { await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve)); }
+  catch (error) { await sessionWriter.release(); throw error; }
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('could not determine server address');
   const url = `http://127.0.0.1:${address.port}`;
-  const close = (): Promise<void> => new Promise((resolve, reject) => {
-    server.closeIdleConnections?.();
-    server.closeAllConnections?.();
-    server.close((error) => (error ? reject(error) : resolve()));
-  });
+  const close = async (): Promise<void> => {
+    await new Promise<void>((resolve, reject) => {
+      server.closeIdleConnections?.();
+      server.closeAllConnections?.();
+      server.close((error) => (error ? reject(error) : resolve()));
+    });
+    await sessionWriter.release();
+  };
   return { server, url, close };
 }
 
-async function handleRequest(root: string, req: IncomingMessage, res: ServerResponse, options: ReviewServerOptions): Promise<void> {
+async function handleRequest(root: string, req: IncomingMessage, res: ServerResponse, options: ResolvedReviewServerOptions): Promise<void> {
   const method = req.method ?? 'GET';
   const url = new URL(req.url ?? '/', 'http://127.0.0.1');
   if (method === 'GET' && url.pathname === '/health') {
-    return sendJson(res, 200, { ok: true, instanceId: options.instanceId, managed: !!options.managed });
+    if (options.sessionWriter.owned) {
+      try { await options.sessionWriter.assertOwnership(); }
+      catch (error) { if (!(error instanceof SessionWriterError)) throw error; }
+    }
+    return sendJson(res, 200, {
+      ok: true, instanceId: options.instanceId, managed: !!options.managed,
+      sessionWriter: options.sessionWriter.owned ? 'owner' : 'read_only',
+      ...(!options.sessionWriter.owned && options.sessionWriter.reasonCode
+        ? { sessionWriterReason: options.sessionWriter.reasonCode } : {}),
+    });
   }
   if (method === 'GET' && url.pathname === '/api/keepalive') {
     options.onActivity?.();
@@ -99,20 +130,31 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (url.pathname === '/api/due') return dueData(root, req, res, url);
   if (method === 'GET' && url.pathname === '/api/cards') return cardsApi(root, res, url);
   if (method === 'POST' && url.pathname.startsWith('/api/card/')) {
-    return cardActionApi(root, req, res, url.pathname.slice('/api/card/'.length));
+    return cardActionApi(root, req, res, url.pathname.slice('/api/card/'.length), options.sessionWriter);
   }
   // Learn mode: every active card in one set, in authored order, independent of FSRS due state.
   if (method === 'GET' && url.pathname === '/api/lesson') return lessonData(root, res, url);
   // Per-sitting session lifecycle (doc 06 addendum A2): start -> grade* -> end.
-  if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res);
-  if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res);
-  if (method === 'POST' && url.pathname === '/api/session/undo') return sessionUndoApi(root, req, res);
-  if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/session/start') return sessionStartApi(root, req, res, options.sessionWriter);
+  if (method === 'GET' && url.pathname.startsWith('/api/session/')) {
+    return sessionGetApi(
+      root, res, decodeURIComponent(url.pathname.slice('/api/session/'.length)), options.sessionWriter,
+    );
+  }
+  if (method === 'POST' && url.pathname === '/api/session/grade') return sessionGradeApi(root, req, res, options.sessionWriter);
+  if (method === 'POST' && url.pathname === '/api/session/undo') return sessionUndoApi(root, req, res, options.sessionWriter);
+  if (method === 'POST' && url.pathname === '/api/session/end') return sessionEndApi(root, req, res, options.sessionWriter);
   // Opt-in sample lesson: the empty-state button POSTs here, then redirects.
-  if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res);
-  if (method === 'POST' && url.pathname === '/api/dogfood/feedback') return dogfoodFeedbackApi(root, req, res);
-  if (method === 'POST' && url.pathname === '/api/dogfood/defer') return dogfoodDeferApi(root, req, res);
-  if (method === 'POST' && url.pathname === '/api/set/spaced-repetition') return setSpacedRepetitionApi(root, req, res);
+  if (method === 'POST' && url.pathname === '/api/sample') return sampleApi(root, res, options.sessionWriter);
+  if (method === 'POST' && url.pathname === '/api/dogfood/feedback') {
+    return dogfoodFeedbackApi(root, req, res, options.sessionWriter);
+  }
+  if (method === 'POST' && url.pathname === '/api/dogfood/defer') {
+    return dogfoodDeferApi(root, req, res, options.sessionWriter);
+  }
+  if (method === 'POST' && url.pathname === '/api/set/spaced-repetition') {
+    return setSpacedRepetitionApi(root, req, res, options.sessionWriter);
+  }
   // Manage tab (doc 06): server-rendered; card membership is embedded in the
   // page so match counts recompute client-side (no per-keystroke round-trip).
   if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root, options.instanceId!));
@@ -125,6 +167,39 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
  * incrementally on each grade and explicitly on /api/session/end. See doc 06
  * addendum A2. */
 const activeSessions = new Map<string, ReviewSession>();
+const sessionLocks = new Map<string, Promise<void>>();
+const cardLocks = new Map<string, Promise<void>>();
+
+async function withLock<T>(locks: Map<string, Promise<void>>, key: string, work: () => Promise<T>): Promise<T> {
+  const previous = locks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  locks.set(key, queued);
+  await previous;
+  try { return await work(); }
+  finally {
+    release();
+    if (locks.get(key) === queued) locks.delete(key);
+  }
+}
+
+function withSessionLock<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+  return withLock(sessionLocks, sessionId, work);
+}
+
+function withCardLock<T>(setId: string, cardId: string, work: () => Promise<T>): Promise<T> {
+  return withLock(cardLocks, `${setId}/${cardId}`, work);
+}
+
+async function recoverSessionUnderCardLock(
+  root: string, session: ReviewSession, writer: SessionWriterClaim,
+): Promise<void> {
+  const pending = session.pendingTransition;
+  if (!pending) return;
+  await withCardLock(pending.beforeCard.setId, pending.beforeCard.id, () =>
+    recoverPlannedSession(root, session, writer.assertOwnership));
+}
 
 /** Validate that a value is a string[] (or undefined) — guard against the
  * client sending arbitrary JSON in the DueFilter body. */
@@ -144,6 +219,22 @@ function asFilter(v: unknown): DueFilter | undefined {
   // A combinator alone is not a constraint — require at least one dimension.
   const hasDimension = !!(f.setIds?.length || f.tagIds?.length || f.folderPaths?.length);
   return hasDimension ? f : undefined;
+}
+
+function startIntentKey(
+  planMode: PlannedSessionState['mode'], lessonSetId: string | undefined, filter: DueFilter | undefined,
+): string {
+  const sorted = (values?: string[]) => [...(values ?? [])].sort();
+  return JSON.stringify({
+    mode: planMode,
+    lesson: !!lessonSetId,
+    filter: {
+      setIds: sorted(lessonSetId ? [lessonSetId] : filter?.setIds),
+      folderPaths: sorted(filter?.folderPaths),
+      tagIds: sorted(filter?.tagIds),
+      combinator: filter?.combinator ?? 'union',
+    },
+  });
 }
 
 const INTERACTION_TYPES = new Set<Interaction['type']>(['flashcard', 'self_response', 'choice', 'parsons']);
@@ -169,28 +260,40 @@ function asAttempt(v: unknown): ReviewAttempt | undefined {
   return a;
 }
 
-async function dogfoodFeedbackApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function dogfoodFeedbackApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
   let body: Record<string, unknown>;
   try { body = await readJson(req) as Record<string, unknown>; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
   if (typeof body.setId !== 'string' || (typeof body.worthAnswering !== 'boolean' && body.worthAnswering !== null)) {
     return sendJson(res, 400, { ok: false, error: 'setId and worthAnswering (boolean or null) are required' });
   }
+  const worthAnswering = body.worthAnswering as boolean | null;
   const note = typeof body.note === 'string' ? body.note.slice(0, 1000) : undefined;
-  const event = await appendDogfoodEvent(root, { kind: 'feedback', setId: body.setId, worthAnswering: body.worthAnswering, ...(note ? { note } : {}) });
+  if (!await requireWriter(writer, res)) return;
+  const event = await appendDogfoodEvent(root, { kind: 'feedback', setId: body.setId, worthAnswering, ...(note ? { note } : {}) });
   return sendJson(res, 200, { ok: true, event });
 }
 
-async function dogfoodDeferApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function dogfoodDeferApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
   let body: Record<string, unknown>;
   try { body = await readJson(req) as Record<string, unknown>; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
   if (typeof body.setId !== 'string') return sendJson(res, 400, { ok: false, error: 'setId is required' });
+  if (!await requireWriter(writer, res)) return;
   const event = await appendDogfoodEvent(root, { kind: 'deferred', setId: body.setId });
   return sendJson(res, 200, { ok: true, event });
 }
 
-async function setSpacedRepetitionApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function setSpacedRepetitionApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
   let body: Record<string, unknown>;
   try { body = await readJson(req) as Record<string, unknown>; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
@@ -199,6 +302,7 @@ async function setSpacedRepetitionApi(root: string, req: IncomingMessage, res: S
   }
   const set = await loadSet(root, body.setId);
   if (!set) return sendJson(res, 404, { ok: false, error: 'set not found' });
+  if (!await requireWriter(writer, res)) return;
   await saveSet(root, { ...set, spacedRepetition: body.enabled, updatedAt: new Date().toISOString() });
   return sendJson(res, 200, { ok: true, enabled: body.enabled });
 }
@@ -267,29 +371,36 @@ async function cardsApi(root: string, res: ServerResponse, url: URL): Promise<vo
   return sendJson(res, 200, { ok: true, ...page });
 }
 
-async function cardActionApi(root: string, req: IncomingMessage, res: ServerResponse, action: string): Promise<void> {
+async function cardActionApi(
+  root: string, req: IncomingMessage, res: ServerResponse, action: string, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
   let body: { setId?: string; cardId?: string; edit?: unknown; confirm?: boolean; expectedUpdatedAt?: string };
   try { body = (await readJson(req)) as typeof body; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
   if (!body.setId || !body.cardId) return sendJson(res, 400, { ok: false, error: 'need setId and cardId' });
-  try {
-    if (action === 'archive') return sendJson(res, 200, { ok: true, card: await archiveCard(root, body.setId, body.cardId, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
-    if (action === 'unarchive') return sendJson(res, 200, { ok: true, card: await unarchiveCard(root, body.setId, body.cardId, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
-    if (action === 'edit' && body.edit && typeof body.edit === 'object') {
-      return sendJson(res, 200, { ok: true, card: await editCard(root, body.setId, body.cardId, body.edit as CardEdit, undefined, { expectedUpdatedAt: body.expectedUpdatedAt }) });
+  return withCardLock(body.setId, body.cardId, async () => {
+    try {
+      const guarded = { expectedUpdatedAt: body.expectedUpdatedAt, assertOwnership: writer.assertOwnership };
+      if (action === 'archive') return sendJson(res, 200, { ok: true, card: await archiveCard(root, body.setId!, body.cardId!, undefined, guarded) });
+      if (action === 'unarchive') return sendJson(res, 200, { ok: true, card: await unarchiveCard(root, body.setId!, body.cardId!, undefined, guarded) });
+      if (action === 'edit' && body.edit && typeof body.edit === 'object') {
+        return sendJson(res, 200, { ok: true, card: await editCard(root, body.setId!, body.cardId!, body.edit as CardEdit, undefined, guarded) });
+      }
+      if (action === 'delete') {
+        if (!body.confirm) return sendJson(res, 409, { ok: false, error: 'permanent deletion requires confirm=true' });
+        return sendJson(res, 200, { ok: true, result: await deleteCard(root, body.setId!, body.cardId!, guarded) });
+      }
+      return sendJson(res, 400, { ok: false, error: `unknown or incomplete card action: ${action}` });
+    } catch (error) {
+      if (error instanceof SessionWriterError) return writerError(res, error);
+      if (error instanceof CardLifecycleError) {
+        const status = error.message.startsWith('card not found') ? 404 : error.message.startsWith('card changed') ? 409 : 400;
+        return sendJson(res, status, { ok: false, error: error.message });
+      }
+      throw error;
     }
-    if (action === 'delete') {
-      if (!body.confirm) return sendJson(res, 409, { ok: false, error: 'permanent deletion requires confirm=true' });
-      return sendJson(res, 200, { ok: true, result: await deleteCard(root, body.setId, body.cardId, { expectedUpdatedAt: body.expectedUpdatedAt }) });
-    }
-    return sendJson(res, 400, { ok: false, error: `unknown or incomplete card action: ${action}` });
-  } catch (error) {
-    if (error instanceof CardLifecycleError) {
-      const status = error.message.startsWith('card not found') ? 404 : error.message.startsWith('card changed') ? 409 : 400;
-      return sendJson(res, status, { ok: false, error: error.message });
-    }
-    throw error;
-  }
+  });
 }
 
 /** GET /api/lesson?set=<id> returns all active cards in authored order.
@@ -339,128 +450,345 @@ function sessionFilePath(root: string, session: ReviewSession): string {
 
 /** Re-persist a session incrementally (after each grade) so the file is
  * crash-durable. Cheap at this scale — no DB. */
-async function persistSession(root: string, session: ReviewSession): Promise<void> {
+async function persistSession(
+  root: string,
+  session: ReviewSession,
+  assertOwnership: () => Promise<void>,
+): Promise<void> {
+  await assertOwnership();
   await writeJson(sessionFilePath(root, session), session);
 }
 
-/** /api/session/start — body: DueFilter. Creates a session, returns its id. */
-async function sessionStartApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let body: unknown;
-  try { body = await readJson(req); }
-  catch { return sendJson(res, 400, { error: 'invalid JSON body' }); }
-  let filter: DueFilter | undefined;
-  try { filter = asFilter(body); }
-  catch (e) { return sendJson(res, 400, { error: (e as Error).message }); }
-  const lessonSetId = body && typeof body === 'object' && typeof (body as Record<string, unknown>).lessonSetId === 'string'
-    ? (body as Record<string, string>).lessonSetId
-    : undefined;
-  if (lessonSetId) filter = { setIds: [lessonSetId] };
-  // Pick a mode that describes the filter so the session file is self-describing.
-  const mode: ReviewSession['mode'] = lessonSetId
-    ? 'lesson'
-    : filter?.folderPaths?.length
-    ? 'folder'
-    : filter?.tagIds?.length
-      ? 'tag_filter'
-      : filter?.setIds?.length
-        ? 'set'
-        : 'recommended';
-  const session = startSession(mode, filter);
-  activeSessions.set(session.id, session);
-  await persistSession(root, session);
-  return sendJson(res, 200, { ok: true, sessionId: session.id, mode, filter: filter ?? null });
+function writerError(res: ServerResponse, error: SessionWriterError): void {
+  sendJson(res, 409, {
+    ok: false, code: error.code, error: error.message, retryable: true,
+  });
 }
 
-/** /api/session/grade — body: { sessionId, cardId, setId, rating, confidence? }. */
-async function sessionGradeApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let body: { sessionId?: string; cardId?: string; setId?: string; rating?: number; confidence?: number; attempt?: unknown };
-  try { body = (await readJson(req)) as typeof body; }
-  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
-  const sessionId = body.sessionId;
-  const rating = Number(body.rating) as ReviewRating;
-  if (!sessionId || !body.cardId || !body.setId || ![1, 2, 3, 4].includes(rating)) {
-    return sendJson(res, 400, { ok: false, error: 'need sessionId, cardId, setId, rating(1-4)' });
-  }
-  // Look up the session in memory; fall back to reading its on-disk file in case
-  // the server restarted mid-sitting.
-  let session = activeSessions.get(sessionId);
-  if (!session) {
-    try {
-      const matches = await listSessionFiles(root);
-      for (const path of matches) {
-        const s = await readJsonIO<ReviewSession>(path);
-        if (s?.id === sessionId) { session = s; activeSessions.set(sessionId, s); break; }
-      }
-    } catch { /* fall through to 404 below */ }
-  }
-  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
-  const confidence = [1, 2, 3, 4, 5].includes(Number(body.confidence))
-    ? (Number(body.confidence) as Confidence)
-    : undefined;
-  const card = await loadCard(root, body.setId, body.cardId);
-  if (!card) return sendJson(res, 404, { ok: false, error: 'card not found' });
-  if (card.status !== 'active') return sendJson(res, 409, { ok: false, code: 'card_unavailable', error: 'card is no longer active' });
-  const attempt = asAttempt(body.attempt);
-  const updated = await gradeCard(root, session, card, rating, new Date(), confidence, attempt);
-  await persistSession(root, session);
-  return sendJson(res, 200, { ok: true, cardId: updated.id, due: updated.fsrs.due });
-}
-
-/** /api/session/undo — body: { sessionId }. Exact one-level grade reversal. */
-async function sessionUndoApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
-  let body: { sessionId?: string };
-  try { body = (await readJson(req)) as typeof body; }
-  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
-  if (!body.sessionId) return sendJson(res, 400, { ok: false, error: 'need sessionId' });
-  let session = activeSessions.get(body.sessionId);
-  if (!session) {
-    for (const path of await listSessionFiles(root)) {
-      const saved = await readJsonIO<ReviewSession>(path);
-      if (saved?.id === body.sessionId) { session = saved; activeSessions.set(saved.id, saved); break; }
-    }
-  }
-  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
-  try {
-    const card = await undoLastGrade(root, session);
-    await persistSession(root, session);
-    return sendJson(res, 200, { ok: true, cardId: card.id, setId: card.setId, due: card.fsrs.due });
-  } catch (error) {
-    if (error instanceof UndoUnavailableError) return sendJson(res, 409, { ok: false, error: error.message });
+async function requireWriter(writer: SessionWriterClaim, res: ServerResponse): Promise<boolean> {
+  try { await writer.assertOwnership(); return true; }
+  catch (error) {
+    if (error instanceof SessionWriterError) { writerError(res, error); return false; }
     throw error;
   }
 }
 
-/** /api/session/end — body: { sessionId }. Finalizes and removes from memory. */
-async function sessionEndApi(root: string, req: IncomingMessage, res: ServerResponse): Promise<void> {
+async function loadSessionById(
+  root: string, sessionId: string, useActiveCache = true,
+): Promise<ReviewSession | undefined> {
+  const active = useActiveCache ? activeSessions.get(sessionId) : undefined;
+  if (active) return active;
+  for (const path of await listSessionFiles(root)) {
+    try {
+      const session = await readJsonIO<ReviewSession>(path);
+      if (session?.id === sessionId) return session;
+    } catch { /* one malformed session must not hide every valid session */ }
+  }
+  return undefined;
+}
+
+async function plannedSessionView(root: string, session: ReviewSession) {
+  const plan = session.plan;
+  const summary = session.summary ?? recomputeSummary(
+    Array.isArray(session.events) ? session.events : [], plan?.unresolvedEntryIds?.length ?? 0,
+  );
+  const entry = plan?.entries.find((item) => item.id === plan.currentEntryId);
+  const cursor = entry && plan ? plan.entries.findIndex((item) => item.id === entry.id) : -1;
+  const pendingEntries = cursor >= 0 && plan ? plan.entries.slice(cursor) : [];
+  const remainingCards = new Set(pendingEntries
+    .filter((item) => item.pass === 'first')
+    .map((item) => `${item.setId}/${item.cardId}`)).size;
+  const revisitRemaining = pendingEntries.filter((item) => item.pass === 'revisit').length;
+  let current = null;
+  if (entry) {
+    const card = await loadCard(root, entry.setId, entry.cardId);
+    if (card?.status === 'active') current = { entryId: entry.id, pass: entry.pass, card: cardView(card, (await loadSet(root, card.setId))?.title) };
+  }
+  return {
+    ok: true,
+    sessionId: session.id,
+    mode: plan?.mode ?? null,
+    sessionMode: session.mode,
+    filter: session.filter ?? null,
+    revision: plan?.revision ?? null,
+    current,
+    summary,
+    unresolved: summary.unresolved ?? 0,
+    ended: !!session.endedAt,
+    terminalReason: plan?.terminalReason ?? null,
+    resumable: !!plan && !session.endedAt,
+    remaining: remainingCards,
+    revisitRemaining,
+    backlog: plan?.backlogCount ?? 0,
+    plannedCount: plan?.entries.length ?? 0,
+  };
+}
+
+async function sessionGetApi(
+  root: string, res: ServerResponse, sessionId: string, writer: SessionWriterClaim,
+): Promise<void> {
+  return withSessionLock(sessionId, async () => {
+    let canWrite = writer.owned;
+    if (canWrite) {
+      try { await writer.assertOwnership(); }
+      catch (error) {
+        if (!(error instanceof SessionWriterError)) throw error;
+        canWrite = false;
+      }
+    }
+    if (!canWrite) activeSessions.delete(sessionId);
+    const session = await loadSessionById(root, sessionId, canWrite);
+    if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+    if (canWrite) {
+      await recoverSessionUnderCardLock(root, session, writer);
+      await advanceUnavailableEntries(root, session, writer.assertOwnership);
+      activeSessions.set(session.id, session);
+    }
+    return sendJson(res, 200, await plannedSessionView(root, session));
+  });
+}
+
+async function preparePlannedSessionView(
+  root: string, session: ReviewSession, writer: SessionWriterClaim,
+) {
+  await recoverSessionUnderCardLock(root, session, writer);
+  await advanceUnavailableEntries(root, session, writer.assertOwnership);
+  activeSessions.set(session.id, session);
+  return plannedSessionView(root, session);
+}
+
+/** Select and persist one authoritative bounded plan. */
+async function sessionStartApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
+  let body: unknown;
+  try { body = await readJson(req); }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  let filter: DueFilter | undefined;
+  try { filter = asFilter(body); }
+  catch (error) { return sendJson(res, 400, { ok: false, error: (error as Error).message }); }
+  const record = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  const requestId = typeof record.requestId === 'string' && record.requestId ? record.requestId : undefined;
+  const lessonSetId = typeof record.lessonSetId === 'string' ? record.lessonSetId : undefined;
+  const requestedMode = record.mode;
+  if (lessonSetId && requestedMode !== undefined && requestedMode !== 'study_once') {
+    return sendJson(res, 400, { ok: false, error: 'lessonSetId only supports study_once mode' });
+  }
+  const planMode = requestedMode === 'study_once' || requestedMode === 'retry_missed'
+    ? requestedMode : lessonSetId ? 'study_once' : 'review_due';
+  if (lessonSetId) filter = { setIds: [lessonSetId] };
+  const intentKey = startIntentKey(planMode, lessonSetId, filter);
+  if (requestId) {
+    return withSessionLock(`start:${root}:${requestId}`, async () => {
+      const existing = (await Promise.all((await listSessionFiles(root)).map(async (path) => {
+        try { return await readJsonIO<ReviewSession>(path); } catch { return undefined; }
+      }))).find((item) => item?.startRequest?.requestId === requestId);
+      if (existing) {
+        if (existing.startRequest?.intentKey !== intentKey) {
+          return sendJson(res, 409, { ok: false, code: 'request_id_conflict', error: 'start request id was used for another intent' });
+        }
+        return withSessionLock(existing.id, async () => {
+          const current = await loadSessionById(root, existing.id);
+          if (!current) return sendJson(res, 404, { ok: false, error: 'session not found' });
+          return sendJson(res, 200, {
+            ...(await preparePlannedSessionView(root, current, writer)), replayed: true,
+          });
+        });
+      }
+      return createPlannedSession(root, res, writer, modeForStart(lessonSetId, filter), planMode,
+        lessonSetId, filter, sourceSelection, requestId, intentKey);
+    });
+  }
+  return createPlannedSession(root, res, writer, modeForStart(lessonSetId, filter), planMode,
+    lessonSetId, filter, sourceSelection);
+}
+
+function modeForStart(lessonSetId: string | undefined, filter: DueFilter | undefined): ReviewSession['mode'] {
+  return lessonSetId ? 'lesson' : filter?.folderPaths?.length ? 'folder'
+    : filter?.tagIds?.length ? 'tag_filter' : filter?.setIds?.length ? 'set' : 'recommended';
+}
+
+async function sourceSelection(
+  root: string, planMode: PlannedSessionState['mode'], lessonSetId: string | undefined, filter: DueFilter | undefined,
+): Promise<{ cards: Card[]; sourceCount: number }> {
+  let cards: Card[];
+  let sourceCount = 0;
+  if (lessonSetId) {
+    const authored = orderActiveCards(await loadCardsForSet(root, lessonSetId), await loadOrder(root, lessonSetId));
+    const attempted = await attemptedCardIds(root, lessonSetId);
+    const unattempted = authored.filter((card) => !attempted.has(card.id));
+    cards = unattempted.length > 0 ? unattempted : authored;
+    sourceCount = cards.length;
+  } else if (planMode === 'study_once' || planMode === 'retry_missed') {
+    cards = await getActiveCardsInAuthoredOrder(root, filter);
+    sourceCount = cards.length;
+  } else {
+    const now = new Date();
+    const [due, prefs] = await Promise.all([getDueCards(root, now, filter), loadUserPreferences(root)]);
+    const queueOptions = { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) };
+    cards = orderDueQueue(selectDueCards(orderDueQueue(due, queueOptions), prefs.reviewSessionCap), queueOptions);
+    sourceCount = due.length;
+  }
+  return { cards, sourceCount };
+}
+
+async function createPlannedSession(
+  root: string, res: ServerResponse, writer: SessionWriterClaim, mode: ReviewSession['mode'],
+  planMode: PlannedSessionState['mode'], lessonSetId: string | undefined, filter: DueFilter | undefined,
+  select: typeof sourceSelection, requestId?: string, intentKey?: string,
+): Promise<void> {
+  const { cards, sourceCount } = await select(root, planMode, lessonSetId, filter);
+  const session = startPlannedSession(mode, planMode, cards, filter, new Date(), sourceCount);
+  if (requestId && intentKey) session.startRequest = { requestId, intentKey };
+  activeSessions.set(session.id, session);
+  try { await persistSession(root, session, writer.assertOwnership); }
+  catch (error) {
+    activeSessions.delete(session.id);
+    if (error instanceof SessionWriterError) return writerError(res, error);
+    throw error;
+  }
+  return sendJson(res, 200, await mutationSuccessState(root, session, writer));
+}
+
+async function mutationSuccessState(
+  root: string, session: ReviewSession, writer: SessionWriterClaim,
+) {
+  try { return await preparePlannedSessionView(root, session, writer); }
+  catch (error) {
+    if (error instanceof SessionWriterError) return plannedSessionView(root, session);
+    throw error;
+  }
+}
+
+/** Planned grade requires a retained request id plus revision and entry fence. */
+async function sessionGradeApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
+  let body: { sessionId?: string; requestId?: string; revision?: number; entryId?: string; cardId?: string; setId?: string; rating?: number; confidence?: number; attempt?: unknown };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  const rating = Number(body.rating) as ReviewRating;
+  if (!body.sessionId || !body.requestId || !Number.isInteger(body.revision) || !body.entryId
+    || !body.cardId || !body.setId || ![1, 2, 3, 4].includes(rating)) {
+    return sendJson(res, 400, { ok: false, error: 'need sessionId, requestId, revision, entryId, cardId, setId, rating(1-4)' });
+  }
+  return withSessionLock(body.sessionId, async () => {
+    const session = await loadSessionById(root, body.sessionId!);
+    if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+    const confidence = [1, 2, 3, 4, 5].includes(Number(body.confidence))
+      ? Number(body.confidence) as Confidence : undefined;
+    try {
+      await recoverSessionUnderCardLock(root, session, writer);
+      const response = await withCardLock(body.setId!, body.cardId!, () => gradePlannedSession(root, session, {
+        requestId: body.requestId!, revision: body.revision!, entryId: body.entryId!,
+        setId: body.setId!, cardId: body.cardId!, rating, confidenceBeforeReveal: confidence,
+        attempt: asAttempt(body.attempt),
+      }, new Date(), { assertOwnership: writer.assertOwnership }));
+      return sendJson(res, 200, {
+        ...response, state: await mutationSuccessState(root, session, writer),
+      });
+    } catch (error) {
+      if (error instanceof SessionWriterError) return writerError(res, error);
+      if (!(error instanceof PlannedSessionError)) throw error;
+      try {
+        const state = session.plan ? await preparePlannedSessionView(root, session, writer)
+          : await plannedSessionView(root, session);
+        return sendJson(res, 409, { ok: false, code: error.code, error: error.message, state });
+      } catch (writeError) {
+        if (writeError instanceof SessionWriterError) {
+          return sendJson(res, 409, {
+            ok: false, code: error.code, error: error.message, retryable: false,
+          });
+        }
+        throw writeError;
+      }
+    }
+  });
+}
+
+async function sessionUndoApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
+  let body: { sessionId?: string; requestId?: string; revision?: number; entryId?: string; gradeRequestId?: string };
+  try { body = (await readJson(req)) as typeof body; }
+  catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
+  if (!body.sessionId || !body.requestId || !Number.isInteger(body.revision)
+    || !body.entryId || !body.gradeRequestId) {
+    return sendJson(res, 400, { ok: false, error: 'need sessionId, requestId, revision, entryId, gradeRequestId' });
+  }
+  return withSessionLock(body.sessionId, async () => {
+    const session = await loadSessionById(root, body.sessionId!);
+    if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
+    try {
+      await recoverSessionUnderCardLock(root, session, writer);
+      const latest = session.events.at(-1);
+      const undo = () => undoPlannedGrade(root, session, {
+        requestId: body.requestId!, revision: body.revision!, entryId: body.entryId!,
+        gradeRequestId: body.gradeRequestId!,
+      }, new Date(), writer.assertOwnership);
+      const response = latest?.setId
+        ? await withCardLock(latest.setId, latest.cardId, undo)
+        : await undo();
+      return sendJson(res, 200, {
+        ...response, state: await mutationSuccessState(root, session, writer),
+      });
+    } catch (error) {
+      if (error instanceof SessionWriterError) return writerError(res, error);
+      if (error instanceof PlannedSessionError) {
+        try {
+          const state = session.plan ? await preparePlannedSessionView(root, session, writer)
+            : await plannedSessionView(root, session);
+          return sendJson(res, 409, { ok: false, code: error.code, error: error.message, state });
+        } catch (writeError) {
+          if (writeError instanceof SessionWriterError) {
+            return sendJson(res, 409, {
+              ok: false, code: error.code, error: error.message, retryable: false,
+            });
+          }
+          throw writeError;
+        }
+      }
+      throw error;
+    }
+  });
+}
+
+async function sessionEndApi(
+  root: string, req: IncomingMessage, res: ServerResponse, writer: SessionWriterClaim,
+): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
   let body: { sessionId?: string };
   try { body = (await readJson(req)) as typeof body; }
   catch { return sendJson(res, 400, { ok: false, error: 'invalid JSON body' }); }
-  const sessionId = body.sessionId;
-  if (!sessionId) return sendJson(res, 400, { ok: false, error: 'need sessionId' });
-  let session = activeSessions.get(sessionId);
-  if (!session) {
+  if (!body.sessionId) return sendJson(res, 400, { ok: false, error: 'need sessionId' });
+  return withSessionLock(body.sessionId, async () => {
+    const session = await loadSessionById(root, body.sessionId!);
+    if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
     try {
-      const matches = await listSessionFiles(root);
-      for (const path of matches) {
-        const s = await readJsonIO<ReviewSession>(path);
-        if (s?.id === sessionId) { session = s; break; }
-      }
-    } catch { /* fall through */ }
-  }
-  if (!session) return sendJson(res, 404, { ok: false, error: 'session not found' });
-  await endSession(root, session);
-  activeSessions.delete(sessionId);
-  return sendJson(res, 200, { ok: true, sessionId, summary: session.summary });
+      await recoverSessionUnderCardLock(root, session, writer);
+      if (!session.endedAt) await endSession(root, session, new Date(), writer.assertOwnership);
+    } catch (error) {
+      if (error instanceof SessionWriterError) return writerError(res, error);
+      throw error;
+    }
+    activeSessions.delete(body.sessionId!);
+    return sendJson(res, 200, { ok: true, sessionId: body.sessionId, summary: session.summary, ended: true });
+  });
 }
 
 /** POST /api/sample — install the opt-in sample lesson (idempotent). Returns the
  * set id so the client can navigate to it. Never duplicates an existing sample. */
-async function sampleApi(root: string, res: ServerResponse): Promise<void> {
+async function sampleApi(root: string, res: ServerResponse, writer: SessionWriterClaim): Promise<void> {
+  if (!await requireWriter(writer, res)) return;
   try {
-    const r = await installSampleLesson(root);
+    const r = await installSampleLesson(root, { assertOwnership: writer.assertOwnership });
     if (!r.ok) return sendJson(res, 500, { ok: false, error: 'sample import failed', errors: r.errors });
     return sendJson(res, 200, { ok: true, status: r.status, setId: r.setId, title: r.title });
   } catch (e) {
+    if (e instanceof SessionWriterError) return writerError(res, e);
     return sendJson(res, 500, { ok: false, error: (e as Error).message });
   }
 }
@@ -1164,8 +1492,9 @@ function renderPractice(instanceId: string): string {
   const body =
     `<h1>Practice</h1>` +
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
-    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" data-server-mutation hidden>Undo last answer</button></div>` +
+    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" data-server-mutation aria-describedby="retry-guidance" hidden>Undo last answer</button><button type="button" id="end-session" class="secondary-action" data-server-mutation aria-describedby="retry-guidance">End session</button></div>` +
     `<div id="mount"></div>` +
+    `<div id="retry-guidance" class="draft-notice" role="status" aria-live="polite" hidden></div>` +
     `<div class="status" id="status" aria-live="polite"></div>` +
     `<script>${practiceScript()}</script>`;
   return pageShell('MergeLearn — Practice', 'practice', body, instanceId);
@@ -1175,12 +1504,12 @@ function practiceScript(): string {
   return `
 ${practiceDraftKey.toString()}
 ${decidePracticeDraft.toString()}
-var REQUEUE_GAP=${REQUEUE_GAP},MAX_REQUEUE=${MAX_REQUEUE};
-${planRequeue.toString()}
 var queue=[];var pos=0;var reviewed=0;var reviewedCards={};var waitingBacklog=0;var confidence=0;var sessionId=null;var mutationBusy=false;
 var attempt=null;var cardStartedAt=0;var practiceMode='review';var dragEl=null;
-var requeueCounts={};var requeueSeq=0;var lastGrade=null;
+var revision=0;var currentEntryId=null;var pendingRequestId=null;var pendingRequestBody=null;var pendingUndoBody=null;var lastGrade=null;var sessionSummary={reviewedCount:0,distinctCardCount:0};var planRemaining=0;var revisitRemaining=0;var plannedCount=0;var explicitlyEnded=false;var startFailure=null;
 function statusMsg(t){var s=document.getElementById('status');s.textContent=t;s.classList.add('show');setTimeout(function(){s.classList.remove('show');},1600);}
+function retryGuidance(t){var n=document.getElementById('retry-guidance');if(!n)return;n.textContent=t||'';n.hidden=!t;}
+function clearRetryGuidance(){retryGuidance('');}
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 function copyText(text,button){
   var label=button.querySelector('[data-copy-label]');
@@ -1189,26 +1518,36 @@ function copyText(text,button){
   var area=document.createElement('textarea');area.value=text;area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();
   try{document.execCommand('copy');done();}catch(e){statusMsg('copy failed');}area.remove();
 }
-function progress(){var p=document.getElementById('progress');if(!queue.length){p.textContent='';return;}if(practiceMode==='lesson'){p.textContent='Activity '+Math.min(pos+1,queue.length)+' of '+queue.length+' · '+reviewed+' completed';return;}var pending=queue.slice(pos).filter(function(c){return !!c.__requeueSeq;}).length;p.textContent=reviewed+' attempt'+(reviewed===1?'':'s')+' · '+Math.max(0,queue.length-pos)+' remaining'+(pending?' ('+pending+' to revisit)':'');}
+function progress(){var p=document.getElementById('progress');var n=Number(sessionSummary.reviewedCount)||0;var distinct=Number(sessionSummary.distinctCardCount)||0;if(!queue.length){p.textContent=n?n+' attempt'+(n===1?'':'s')+' · '+distinct+' card'+(distinct===1?'':'s')+' reviewed':'';return;}var position=Math.max(1,plannedCount-planRemaining+1);var reviewWork=planRemaining+' card'+(planRemaining===1?'':'s')+' remaining'+(revisitRemaining?' · '+revisitRemaining+' revisit'+(revisitRemaining===1?'':'s'):'');p.textContent=n+' attempt'+(n===1?'':'s')+' · '+(practiceMode==='lesson'?'Activity '+position+' of '+plannedCount:reviewWork);}
 function syncUndo(){var b=document.getElementById('undo-grade');if(b)b.hidden=!lastGrade;}
+function syncEnd(){var b=document.getElementById('end-session');if(b)b.disabled=!sessionId;}
+function applySessionState(j){
+  if(!j)return;startFailure=null;sessionId=j.sessionId||sessionId;revision=Number(j.revision)||0;sessionSummary=j.summary||sessionSummary;lastGrade=null;
+  currentEntryId=j.current?j.current.entryId:null;queue=j.current?[j.current.card]:[];pos=0;reviewed=Number(sessionSummary.reviewedCount)||0;planRemaining=Number(j.remaining)||0;revisitRemaining=Number(j.revisitRemaining)||0;plannedCount=Number(j.plannedCount)||0;waitingBacklog=Number(j.backlog)||0;
+  if(sessionId)try{localStorage.setItem('ml-active-session',sessionId);}catch(e){}
+  syncEnd();
+}
 function render(){
   progress();
   var mount=document.getElementById('mount');
   if(pos>=queue.length){
-    var distinct=Object.keys(reviewedCards).length;
+    var distinct=Number(sessionSummary.distinctCardCount)||Object.keys(reviewedCards).length;
     var reviewSummary=distinct+' card'+(distinct===1?'':'s')+' reviewed'+(reviewed!==distinct?' in '+reviewed+' attempts':'');
-    var dueSummary=waitingBacklog?waitingBacklog+' more waiting.':'Nothing more due.';
-    var done=practiceMode==='lesson'?'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.':'Session complete — '+reviewSummary+'. '+dueSummary;
-    var empty=practiceMode==='lesson'?'This lesson has no active activities.':'Nothing due right now. Come back later, or author more cards.';
+    var unresolved=Number(sessionSummary.unresolved)||0;var skippedSummary=unresolved?' '+unresolved+' card'+(unresolved===1?' was':'s were')+' skipped.':'';
+    var dueSummary=(waitingBacklog?waitingBacklog+' more waiting.':'Nothing more due.')+skippedSummary;
+    var done=practiceMode==='lesson'?(waitingBacklog?'Lesson sitting complete — '+reviewed+' activities completed. '+waitingBacklog+' activities remain.':'Lesson complete — '+reviewed+' activities completed. Reviews are now scheduled.'):'Session complete — '+reviewSummary+'. '+dueSummary;
+    var empty=startFailure?'Session could not start. '+startFailure:planRemaining>0?'This session changed. Reload to continue.':practiceMode==='lesson'?'This lesson has no active activities.':'Nothing due right now. Come back later, or author more cards.';
     // Finishing is the moment the learner is most receptive, so never leave
     // them on a dead end. With a backlog, offer the next sitting; without one,
     // offer the two things worth doing next instead of nothing at all.
-    var forward=practiceMode==='review'&&waitingBacklog
-      ?'<a class="secondary-action" href="/practice">Review next sitting</a>'
+    var forward=waitingBacklog
+      ?(sessionId?'<button type="button" class="secondary-action" id="continue-session" data-server-mutation>'+(practiceMode==='lesson'?'Continue lesson':'Review next sitting')+'</button>':'<a class="secondary-action" id="continue-session" href="'+esc(location.pathname+location.search)+'">'+(practiceMode==='lesson'?'Continue lesson':'Review next sitting')+'</a>')
       :'<a class="secondary-action" href="/">Back to lessons</a><a class="secondary-action" href="/manage">See your progress</a>';
     var next='<div class="done-actions">'+forward+'</div>';
     var emptyNext='<div class="done-actions"><a class="secondary-action" href="/">Back to lessons</a><a class="secondary-action" href="/manage">See your progress</a></div>';
-    mount.innerHTML=queue.length?'<div class="done-note">'+done+'</div>'+next:'<div class="empty">'+empty+'</div>'+emptyNext;return;
+    var completed=explicitlyEnded||(planRemaining===0&&(plannedCount>0||reviewed>0||Number(sessionSummary.unresolved)>0));
+    mount.innerHTML=completed?'<div class="done-note" tabindex="-1">'+done+'</div>'+next:'<div class="empty">'+empty+'</div>'+emptyNext;
+    var continueButton=document.getElementById('continue-session');if(continueButton&&sessionId)continueButton.onclick=continueSitting;return;
   }
   var c=queue[pos];confidence=0;attempt=null;cardStartedAt=Date.now();
   var interaction=c.interaction||{type:'flashcard'};
@@ -1243,7 +1582,7 @@ function render(){
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
-    '<div class="actions grade"><button class="g1" data-r="1" data-server-mutation aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" data-server-mutation aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" data-server-mutation aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" data-server-mutation aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
+    '<div class="actions grade"><button class="g1" data-r="1" data-server-mutation aria-describedby="retry-guidance" aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" data-server-mutation aria-describedby="retry-guidance" aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" data-server-mutation aria-describedby="retry-guidance" aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" data-server-mutation aria-describedby="retry-guidance" aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
 
   var copyBtn=document.querySelector('[data-copy-practice-card]');if(copyBtn)copyBtn.addEventListener('click',function(){copyText(inspectCommand,copyBtn);});
@@ -1400,42 +1739,51 @@ async function grade(r){
   if(mutationBusy)return;mutationBusy=true;
   try{
     if(attempt){var deep=document.getElementById('deep');attempt.revealedFull=!!(deep&&deep.open);}
-    var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined})});
+    if(pendingRequestBody&&pendingRequestBody.rating!==r){var retryText='Saved answer is '+(['','Again','Hard','Good','Easy'][pendingRequestBody.rating])+'. Press that answer to retry.';retryGuidance(retryText);statusMsg(retryText);return;}
+    if(!pendingRequestBody){pendingRequestId=(crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+Math.random());pendingRequestBody={sessionId:sessionId,requestId:pendingRequestId,revision:revision,entryId:currentEntryId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined};}
+    var sentBody=pendingRequestBody;
+    var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sentBody)});
     var j=await res.json();
-    if(!j.ok){if(j.code==='card_unavailable'){clearPracticeDraft(c);statusMsg('Card was archived · skipped');pos++;render();return;}statusMsg(j.error||'grade failed');return;}
-    clearPracticeDraft(c);
-    var revisit=null;
-    if(r===1&&practiceMode==='review'){
-      var plan=planRequeue(queue.length,pos,requeueCounts[c.id]||0,REQUEUE_GAP,MAX_REQUEUE);
-      if(plan){var copy=Object.assign({},c,{__requeueSeq:++requeueSeq});queue.splice(plan.insertAt,0,copy);requeueCounts[c.id]=plan.nextCount;revisit=copy.__requeueSeq;}
+    if(!j.ok){
+      if(!j.state&&j.retryable){var kept='Answer kept for retry: '+(['','Again','Hard','Good','Easy'][pendingRequestBody.rating])+'.';retryGuidance(kept);statusMsg(j.error||kept);return;}
+      if(!j.state){pendingRequestId=null;pendingRequestBody=null;clearRetryGuidance();if(j.code==='card_unavailable'){clearPracticeDraft(c);pendingUndoBody=null;lastGrade=null;queue=[];planRemaining=Math.max(planRemaining,1);statusMsg('Card was archived · reload to continue');render();syncUndo();return;}statusMsg(j.error||'grade failed');return;}
+      if(j.code==='card_unavailable')clearPracticeDraft(c);pendingUndoBody=null;applySessionState(j.state);pendingRequestId=null;pendingRequestBody=null;clearRetryGuidance();statusMsg(j.code==='card_unavailable'?'Card was archived · skipped':j.error||'grade failed');render();syncUndo();return;
     }
-    lastGrade={index:pos,rating:r,cardId:c.id,requeueSeq:revisit};
+    clearPracticeDraft(c);
+    pendingRequestId=null;pendingRequestBody=null;clearRetryGuidance();
     reviewed++;reviewedCards[c.id]=(reviewedCards[c.id]||0)+1;
-    statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
-    pos++;render();syncUndo();
-  }catch(e){statusMsg('grade failed. Answer kept.');}finally{mutationBusy=false;}
+    pendingUndoBody=null;applySessionState(j.state);lastGrade=j.resultClass==='scheduled'?{rating:r,cardId:c.id,entryId:j.entryId,gradeRequestId:j.requestId}:null;statusMsg(j.resultClass==='evidence'?'Attempt recorded':j.requeued?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
+    render();syncUndo();
+  }catch(e){if(pendingRequestBody&&sentBody){var kept='Answer kept for retry: '+(['','Again','Hard','Good','Easy'][sentBody.rating])+'.';retryGuidance(kept);statusMsg('grade failed. '+kept);}else statusMsg('Grade saved, but the page could not refresh. Reload to continue.');}finally{mutationBusy=false;}
 }
 async function undoGrade(){
   if(!lastGrade||!sessionId)return;
   if(mutationBusy)return;mutationBusy=true;
   try{
-    var res=await fetch('/api/session/undo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});
-    var j=await res.json();if(!j.ok){statusMsg(j.error||'undo failed');return;}
-    if(lastGrade.requeueSeq){queue=queue.filter(function(c){return c.__requeueSeq!==lastGrade.requeueSeq;});requeueCounts[lastGrade.cardId]=Math.max(0,(requeueCounts[lastGrade.cardId]||1)-1);}
-    pos=lastGrade.index;reviewed=Math.max(0,reviewed-1);
-    reviewedCards[lastGrade.cardId]=Math.max(0,(reviewedCards[lastGrade.cardId]||1)-1);
-    if(!reviewedCards[lastGrade.cardId])delete reviewedCards[lastGrade.cardId];
-    lastGrade=null;render();syncUndo();statusMsg('Last answer undone');
-  }catch(e){statusMsg('undo failed');}finally{mutationBusy=false;}
+    if(!pendingUndoBody)pendingUndoBody={sessionId:sessionId,requestId:(crypto.randomUUID?crypto.randomUUID():String(Date.now())+'-'+Math.random()),revision:revision,entryId:lastGrade.entryId,gradeRequestId:lastGrade.gradeRequestId};
+    var res=await fetch('/api/session/undo',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(pendingUndoBody)});
+    var j=await res.json();if(!j.ok){if(!j.state&&j.retryable){retryGuidance('Undo kept for retry.');statusMsg(j.error||'Undo kept for retry.');return;}pendingUndoBody=null;clearRetryGuidance();if(j.state){pendingRequestId=null;pendingRequestBody=null;applySessionState(j.state);}statusMsg(j.error||'undo failed');render();syncUndo();return;}
+    applySessionState(j.state);pendingUndoBody=null;pendingRequestId=null;pendingRequestBody=null;lastGrade=null;clearRetryGuidance();render();syncUndo();statusMsg('Last answer undone');
+  }catch(e){statusMsg('undo failed. Request kept for retry.');}finally{mutationBusy=false;}
 }
-function endSession(sendit){if(!sessionId)return;var id=sessionId;sessionId=null;if(!sendit)return;try{var u=new URL('/api/session/end',location.origin);fetch(u.toString(),{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:id}),keepalive:true});}catch(e){}}
 var undoBtn=document.getElementById('undo-grade');if(undoBtn)undoBtn.addEventListener('click',undoGrade);
+async function continueSitting(){
+  if(!sessionId||mutationBusy)return;mutationBusy=true;
+  try{var target=location.pathname+location.search;var res=await fetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});var j=await res.json();if(!j.ok){statusMsg(j.error||'end failed');return;}try{localStorage.removeItem('ml-active-session');}catch(e){}location.href=target;}
+  catch(e){statusMsg('Could not continue. Try End session.');}finally{mutationBusy=false;}
+}
+async function endCurrentSession(){
+  if(!sessionId){statusMsg('No active session');syncEnd();return;}if(mutationBusy)return;mutationBusy=true;
+  try{var res=await fetch('/api/session/end',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId})});var j=await res.json();if(!j.ok){statusMsg(j.error||'end failed');return;}try{localStorage.removeItem('ml-active-session');}catch(e){}sessionSummary=j.summary||sessionSummary;sessionId=null;queue=[];waitingBacklog+=planRemaining;planRemaining=0;pendingRequestId=null;pendingRequestBody=null;pendingUndoBody=null;lastGrade=null;clearRetryGuidance();explicitlyEnded=true;render();syncUndo();syncEnd();var done=document.querySelector('.done-note');if(done)done.focus();statusMsg('Session ended');}
+  catch(e){statusMsg('end failed');}finally{mutationBusy=false;}
+}
+var endBtn=document.getElementById('end-session');if(endBtn)endBtn.addEventListener('click',endCurrentSession);
+syncEnd();
 document.addEventListener('keydown',function(e){
   if(['INPUT','TEXTAREA','SELECT','BUTTON'].indexOf(e.target.tagName)>=0)return;
   if(/^[1-5]$/.test(e.key)&&!isRevealed()){setConfidence(Number(e.key));return;}
   if(/^[1-4]$/.test(e.key)&&isRevealed())grade(Number(e.key));
 });
-window.addEventListener('beforeunload',function(){endSession(true);});
 (async function(){
   var params=new URLSearchParams(location.search);var setParam=params.get('set');
   var lessonMode=params.get('mode')==='lesson'&&!!setParam;practiceMode=lessonMode?'lesson':'review';
@@ -1443,21 +1791,23 @@ window.addEventListener('beforeunload',function(){endSession(true);});
   if(setParam&&!lessonMode)filter={setIds:[setParam]};
   if(lessonMode){var h=document.querySelector('main h1');if(h)h.textContent='Learn';}
   var sessionBody=lessonMode?{lessonSetId:setParam}:(filter||{});
+  var pendingStartKey='ml-pending-session-start';
+  function sorted(v){return Array.isArray(v)?v.slice().sort():[];}
+  function intentKey(body){var f=body.lessonSetId?{setIds:[body.lessonSetId],folderPaths:[],tagIds:[],combinator:'union'}:{setIds:sorted(body.setIds),folderPaths:sorted(body.folderPaths),tagIds:sorted(body.tagIds),combinator:body.combinator||'union'};return JSON.stringify({mode:body.lessonSetId?'study_once':body.mode==='study_once'||body.mode==='retry_missed'?body.mode:'review_due',lesson:!!body.lessonSetId,filter:f});}
+  function sessionKey(j){var f=j.filter||{};return JSON.stringify({mode:j.mode,lesson:j.sessionMode==='lesson',filter:{setIds:sorted(f.setIds),folderPaths:sorted(f.folderPaths),tagIds:sorted(f.tagIds),combinator:f.combinator||'union'}});}
   try{
-    var sr=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(sessionBody)});
-    var sj=await sr.json();if(sj.ok)sessionId=sj.sessionId;
-  }catch(e){statusMsg('session start failed');}
-  try{
-    var endpoint=lessonMode?'/api/lesson?set='+encodeURIComponent(setParam):'/api/due';
-    var options=lessonMode?undefined:{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(filter||{})};
-    var res=await fetch(endpoint,options);
-    var j=await res.json();queue=j.cards||[];waitingBacklog=lessonMode?0:Number(j.remaining)||0;
-    // Continue: resume a partially-done lesson at its first unattempted card.
-    if(lessonMode&&j.progress&&j.progress.resumeCardId){
-      var ri=queue.findIndex(function(c){return c.id===j.progress.resumeCardId;});
-      if(ri>0)pos=ri;
+    var saved=null;try{saved=localStorage.getItem('ml-active-session');}catch(e){}
+    var sj=null;if(saved){var rr=await fetch('/api/session/'+encodeURIComponent(saved));if(rr.ok)sj=await rr.json();}
+    if(sj&&sj.ok&&!sj.ended&&sessionKey(sj)!==intentKey(sessionBody))sj=null;
+    if(!sj||!sj.ok||sj.ended){
+      var startBody=null;try{var pendingStart=localStorage.getItem(pendingStartKey);if(pendingStart){var parsedStart=JSON.parse(pendingStart);if(intentKey(parsedStart)===intentKey(sessionBody))startBody=pendingStart;}}catch(e){}
+      if(!startBody){var startRequest=Object.assign({},sessionBody,{requestId:'start-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random())});startBody=JSON.stringify(startRequest);try{localStorage.setItem(pendingStartKey,startBody);}catch(e){}}
+      var sr=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:startBody});
+      sj=await sr.json();
+      try{localStorage.removeItem(pendingStartKey);}catch(e){}
     }
-  }catch(e){queue=[];}
+    if(sj.ok)applySessionState(sj);else{startFailure=sj.error||'Try again after restoring session write access.';statusMsg(startFailure);}
+  }catch(e){startFailure='Try again after restoring session write access.';statusMsg('session start failed');queue=[];}
   render();
 })();
 `;
