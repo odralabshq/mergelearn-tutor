@@ -1,7 +1,7 @@
 ---
 type: review
 reviewer: "Opus 5 via Kiro, source-grounded by Hermes"
-review_cycles: 2
+review_cycles: 3
 title: "Iteration 04: Completion and Spacing Quality Review"
 description: "Independent review record and source-grounded adjudication."
 resource: docs/iterations/iteration-04-completion-spacing/REVIEW.md
@@ -57,6 +57,20 @@ The focused review is `/tmp/mergelearn-iteration-04-opus-review-cycle-2.md`. It 
 - R19 adopted: sibling identity is equal Set plus identical normalized id; explicit empty values reject, while absence alone removes the field.
 - R20 confirmed: scope and tests are proportionate.
 
-## Final verdict
+## Implementation verdict
 
-Opus 5 returned NOT BLOCKED after two cycles. Iteration 04 is ready for the cross-design gate.
+Implementation commit: `e94ea7b6229e50fd85a472d14043c3e424298ecb`.
+
+The exact reviewed tree passed 370 tests across 41 files, TypeScript check, build, packaged smoke over 148 files, and `git diff --check`. A fresh built-artifact Brave CDP run proved authored Learn order, capped Review sibling spacing, incorrect deterministic attempts remaining incomplete, and honest deterministic plus self-assessed recall labels on Home and Set.
+
+The final current-tree review is `/tmp/mlt-iteration04-opus-verdict.md`. It returned `NOT BLOCKED`. Its findings and gaps are accounted for below.
+
+- I1 confirmed as intentional compatibility: result-less events remain legacy evidence only in plan-less lesson sessions. Planned sessions require scheduled result identity.
+- I2 deferred: malformed hand-edited card files can carry invalid sibling markers outside the validated import boundary. No observed product write path creates this state, and membership is not lost.
+- I3 deferred: agent-facing discoverability for the optional sibling marker should be evaluated with the authoring contract rather than adding iteration-local schema machinery.
+- T1 deferred: later-failure non-erasure deserves a direct regression, but strongest-class retention is order-independent in the reviewed implementation.
+- T2 deferred: HTTP Undo to lesson-progress integration deserves a direct route regression; persisted tombstone classification and the Undo protocol are independently covered.
+- T3 accepted through built-browser evidence: completed and deterministic labels were exercised against rebuilt artifacts. A duplicate HTML-only assertion is not required for closure.
+- T4 deferred: route-level archived-card denominator coverage would strengthen the existing active-id and ghost-evidence controls.
+
+Iteration 04 is complete. Its planned Review integration is the explicit cross-design approval required by D8. No evidence store, mastery model, relationship graph, runtime grader, adaptive scheduler, or readiness score was added.
