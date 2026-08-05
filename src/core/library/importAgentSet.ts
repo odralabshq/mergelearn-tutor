@@ -213,6 +213,7 @@ function buildCard(
   return {
     id: cardId,
     setId,
+    siblingGroupId: draft.siblingGroupId?.trim(),
     folderPath: draft.folderPath,
     tagIds: (draft.tagRefs ?? []).map(resolveTagRef),
     // Everything above and below this line is agent-authored and IS replaced:

@@ -114,6 +114,8 @@ export type FsrsState = {
 export type Card = {
   id: string;
   setId: string;
+  /** Author-owned, set-local grouping for activities derived from one source. */
+  siblingGroupId?: string;
   folderPath?: string;
   tagIds: string[];
   front: CardFront;
@@ -422,6 +424,7 @@ export type ProposedTag = {
 export type AgentCardDraft = {
   localId: string;
   id?: string;
+  siblingGroupId?: string;
   folderPath?: string;
   tagRefs: string[]; // existing tag ids OR ProposedTag localIds
   front: CardFront;

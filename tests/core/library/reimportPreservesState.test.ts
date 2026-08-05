@@ -12,7 +12,9 @@ import type { AgentSetPatch, Card } from '../../../src/core/library/types.js';
 const freshRoot = () => mkdtemp(join(tmpdir(), 'ml-reimport-'));
 
 /** Untagged single-card lesson: keeps the tag graph out of this test. */
-function lesson(overrides: { prompt?: string; answer?: string; title?: string } = {}): AgentSetPatch {
+function lesson(overrides: {
+  prompt?: string; answer?: string; title?: string; siblingGroupId?: string;
+} = {}): AgentSetPatch {
   return {
     version: 1,
     set: {
@@ -26,6 +28,7 @@ function lesson(overrides: { prompt?: string; answer?: string; title?: string } 
     order: ['c1'],
     cards: [{
       localId: 'c1',
+      siblingGroupId: overrides.siblingGroupId,
       tagRefs: [],
       front: { prompt: overrides.prompt ?? 'Why does this behave this way?' },
       back: {
@@ -95,6 +98,19 @@ describe('re-importing a lesson preserves learner-owned state', () => {
     expect(after.front.prompt).toBe('Corrected question, same card?');
     expect(after.back.shortAnswer).toBe('A corrected answer.');
     // Learner state untouched.
+    expect(after.fsrs).toEqual(before.fsrs);
+  });
+
+  it('removes an omitted authored sibling group while keeping the schedule', async () => {
+    const root = await freshRoot();
+    const first = await importAgentSet(root, lesson({ siblingGroupId: 'example-a' }));
+    const cardId = first.cards[0].cardId;
+    const before = await mature(root, cardId);
+
+    await importAgentSet(root, lesson());
+
+    const after = (await readJson<Card>(cardPath(root, cardId)))!;
+    expect(after.siblingGroupId).toBeUndefined();
     expect(after.fsrs).toEqual(before.fsrs);
   });
 

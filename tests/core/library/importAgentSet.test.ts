@@ -177,6 +177,40 @@ describe('importAgentSet — the only card-creation path', () => {
 });
 
 describe('importAgentSet — lessons and interactions (first learning loop)', () => {
+  it('trims and persists an authored sibling group id', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    (patch.cards[0] as typeof patch.cards[number] & { siblingGroupId: string }).siblingGroupId = '  example-a  ';
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(true);
+    const cards = await loadCardsForSet(r, res.setId!);
+    expect((cards.find((card) => card.front.prompt === 'What is a union type?') as typeof cards[number] & {
+      siblingGroupId?: string;
+    }).siblingGroupId).toBe('example-a');
+  });
+
+  it('rejects blank and overlong sibling group ids without writing', async () => {
+    for (const siblingGroupId of ['', '   ', 'x'.repeat(101)]) {
+      const r = await freshRoot();
+      const patch = conceptualPatch();
+      patch.cards[0].siblingGroupId = siblingGroupId;
+      const res = await importAgentSet(r, patch);
+      expect(res.ok).toBe(false);
+      expect(res.errors.some((error) => error.code.startsWith('sibling_group_'))).toBe(true);
+      expect(await listSetIds(r)).toEqual([]);
+    }
+  });
+
+  it('reports a non-string sibling group as a type error', async () => {
+    const r = await freshRoot();
+    const patch = conceptualPatch();
+    (patch.cards[0] as unknown as { siblingGroupId: unknown }).siblingGroupId = 5;
+    const res = await importAgentSet(r, patch);
+    expect(res.ok).toBe(false);
+    expect(res.errors).toContainEqual(expect.objectContaining({ code: 'sibling_group_bad_type' }));
+    expect(await listSetIds(r)).toEqual([]);
+  });
+
   it('persists lesson metadata and card interactions round-trip', async () => {
     const r = await freshRoot();
     const patch = conceptualPatch();

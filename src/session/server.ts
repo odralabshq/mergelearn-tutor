@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import {
   getActiveCardsInAuthoredOrder, getDueCards, selectDueCards, type DueFilter,
 } from '../core/library/review/dueQueue.js';
-import { orderDueQueue } from '../core/library/review/interleave.js';
+import { orderDueQueue, spaceSiblingCards } from '../core/library/review/interleave.js';
 import { loadUserPreferences } from '../core/library/userPreferences.js';
 import { archiveCard, deleteCard, editCard, unarchiveCard, CardLifecycleError, type CardEdit } from '../core/library/cardLifecycle.js';
 import { searchCardsPage } from '../core/library/searchCards.js';
@@ -26,10 +26,10 @@ import { installSampleLesson } from '../core/library/sampleLesson.js';
 import { loadCard, loadCardsForSet } from '../core/library/cardStore.js';
 import { loadMasteryReport, type ProgressStats } from '../core/library/mastery.js';
 import {
-  attemptedByLessonSet,
-  attemptedCardIds,
+  lessonEvidenceBySet,
+  lessonEvidenceForSet,
   computeLessonProgress,
-  type LessonProgress,
+  type LessonEvidence, type LessonProgress,
 } from '../core/library/review/sessionHistory.js';
 import type {
   Card, Confidence, Interaction, PlannedSessionState, ReviewAttempt, ReviewRating,
@@ -333,7 +333,7 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
   // sitting before the mixer has a chance to see cards from other sets.
   const prioritized = orderDueQueue(due, queueOptions);
   const selected = selectDueCards(prioritized, prefs.reviewSessionCap);
-  const ordered = orderDueQueue(selected, queueOptions);
+  const ordered = spaceSiblingCards(orderDueQueue(selected, queueOptions));
   const setTitles = new Map<string, string>();
   await Promise.all([...new Set(ordered.map((card) => card.setId))].map(async (setId) => {
     setTitles.set(setId, (await loadSet(root, setId))?.title ?? setId);
@@ -424,13 +424,13 @@ function orderActiveCards(cards: Card[], order: SetOrder | undefined): Card[] {
 async function lessonData(root: string, res: ServerResponse, url: URL): Promise<void> {
   const setId = url.searchParams.get('set');
   if (!setId) return sendJson(res, 400, { ok: false, error: 'need set' });
-  const [set, cards, order, attempted] = await Promise.all([
+  const [set, cards, order, evidence] = await Promise.all([
     loadSet(root, setId), loadCardsForSet(root, setId), loadOrder(root, setId),
-    attemptedCardIds(root, setId),
+    lessonEvidenceForSet(root, setId),
   ]);
   if (!set) return sendJson(res, 404, { ok: false, error: 'set not found' });
   const ordered = orderActiveCards(cards, order);
-  const progress = computeLessonProgress(ordered.map((c) => c.id), attempted);
+  const progress = computeLessonProgress(ordered.map((c) => c.id), evidence);
   return sendJson(res, 200, {
     ok: true,
     lesson: { id: set.id, title: set.title, objective: set.objective ?? null, lessonKind: set.lessonKind ?? null },
@@ -616,9 +616,9 @@ async function sourceSelection(
   let sourceCount = 0;
   if (lessonSetId) {
     const authored = orderActiveCards(await loadCardsForSet(root, lessonSetId), await loadOrder(root, lessonSetId));
-    const attempted = await attemptedCardIds(root, lessonSetId);
-    const unattempted = authored.filter((card) => !attempted.has(card.id));
-    cards = unattempted.length > 0 ? unattempted : authored;
+    const evidence = await lessonEvidenceForSet(root, lessonSetId);
+    const unpassed = authored.filter((card) => !evidence.has(card.id));
+    cards = unpassed.length > 0 ? unpassed : authored;
     sourceCount = cards.length;
   } else if (planMode === 'study_once' || planMode === 'retry_missed') {
     cards = await getActiveCardsInAuthoredOrder(root, filter);
@@ -627,7 +627,9 @@ async function sourceSelection(
     const now = new Date();
     const [due, prefs] = await Promise.all([getDueCards(root, now, filter), loadUserPreferences(root)]);
     const queueOptions = { strategy: prefs.queueStrategy, seed: now.toISOString().slice(0, 10) };
-    cards = orderDueQueue(selectDueCards(orderDueQueue(due, queueOptions), prefs.reviewSessionCap), queueOptions);
+    cards = spaceSiblingCards(orderDueQueue(
+      selectDueCards(orderDueQueue(due, queueOptions), prefs.reviewSessionCap), queueOptions,
+    ));
     sourceCount = due.length;
   }
   return { cards, sourceCount };
@@ -842,12 +844,17 @@ function cardView(card: Card, setTitle?: string) {
 
 // ---- Home tab ----
 
-/** Lesson progress for one set, given the pre-walked attempted-ids set (so the
+/** Lesson progress for one set, given the pre-walked evidence map (so the
  * Home page doesn't re-scan the session tree per set). */
-async function lessonProgressFor(root: string, setId: string, attempted: Set<string>): Promise<LessonProgress> {
+async function lessonProgressFor(root: string, setId: string, evidence: LessonEvidence): Promise<LessonProgress> {
   const [cards, order] = await Promise.all([loadCardsForSet(root, setId), loadOrder(root, setId)]);
   const ordered = orderActiveCards(cards, order);
-  return computeLessonProgress(ordered.map((c) => c.id), attempted);
+  return computeLessonProgress(ordered.map((c) => c.id), evidence);
+}
+
+function evidenceLabel(progress: LessonProgress): string {
+  return `${progress.deterministicCount} deterministic recall · `
+    + `${progress.selfAssessedCount} self-assessed recall`;
 }
 
 /** One Home lesson card: objective, meta, progress pill, and a single primary
@@ -857,14 +864,15 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
   const actionLabel = progress.state === 'not_started' ? 'Start lesson'
     : progress.state === 'in_progress' ? 'Continue lesson'
     : 'Practice again';
-  const pillLabel = progress.state === 'completed' ? 'Completed'
-    : progress.state === 'in_progress' ? `${progress.attemptedCount}/${progress.total} done`
+  const pillLabel = progress.state === 'completed' ? 'Lesson complete'
+    : progress.state === 'in_progress' ? `${progress.passedCount}/${progress.total} complete`
     : 'Not started';
   const kind = s.lessonKind ? `<span class="badge next">${escapeHtml(s.lessonKind)}</span>` : '';
   const objective = s.objective ? `<p class="lesson-obj">${escapeHtml(s.objective)}</p>` : '';
   const path = s.folderPath ? `<span class="path">${escapeHtml(s.folderPath)}</span>` : '';
   const est = s.estimatedMinutes ? `<span class="est">~${s.estimatedMinutes} min</span>` : '';
   const count = `<span class="count">${progress.total} activit${progress.total === 1 ? 'y' : 'ies'}</span>`;
+  const evidence = `<span class="evidence-counts">${evidenceLabel(progress)}</span>`;
   const pill = `<span class="progress-pill state-${progress.state}">${pillLabel}</span>`;
   const review = dueCount > 0
     ? `<a class="secondary-action" href="/practice?set=${encodeURIComponent(s.id)}">Review ${dueCount} due</a>`
@@ -876,15 +884,15 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
   return `<li class="lesson-card">` +
     `<div class="lesson-head"><a class="lesson-title" href="/set/${encodeURIComponent(s.id)}">${escapeHtml(s.title)}</a>${kind}</div>` +
     `${objective}` +
-    `<div class="lesson-meta">${path}${count}${est}${pill}</div>` +
+    `<div class="lesson-meta">${path}${count}${est}${evidence}${pill}</div>` +
     `<div class="lesson-actions">${action}${review}</div></li>`;
 }
 
 async function renderHome(root: string, instanceId: string): Promise<string> {
-  const [summaries, due, attemptedMap, prefs] = await Promise.all([
+  const [summaries, due, evidenceMap, prefs] = await Promise.all([
     listSetSummaries(root),
     getDueCards(root, new Date()),
-    attemptedByLessonSet(root),
+    lessonEvidenceBySet(root),
     loadUserPreferences(root),
   ]);
   const dueBySet = new Map<string, number>();
@@ -935,7 +943,7 @@ async function renderHome(root: string, instanceId: string): Promise<string> {
   // Lessons are the primary object: each row shows objective, progress, and one
   // Start/Continue action. Progress is derived from persisted lesson sessions.
   const rows = (await Promise.all(summaries.map(async (s) => {
-    const progress = await lessonProgressFor(root, s.id, attemptedMap.get(s.id) ?? new Set<string>());
+    const progress = await lessonProgressFor(root, s.id, evidenceMap.get(s.id) ?? new Map());
     return renderLessonRow(s, progress, dueBySet.get(s.id) ?? 0);
   }))).join('');
 
@@ -960,16 +968,16 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
       `<div class="empty">No set with id <code>${escapeHtml(setId)}</code>.</div>`;
     return pageShell('MergeLearn — Set', 'set', body, instanceId);
   }
-  const [cards, due, order, attempted, dogfoodEvents] = await Promise.all([
+  const [cards, due, order, evidence, dogfoodEvents] = await Promise.all([
     loadCardsForSet(root, setId),
     getDueCards(root, new Date(), { setIds: [setId] }),
     loadOrder(root, setId),
-    attemptedCardIds(root, setId),
+    lessonEvidenceForSet(root, setId),
     showDogfood ? listDogfoodEvents(root) : Promise.resolve([]),
   ]);
   const dueIds = new Set(due.map((c) => c.id));
   const now = Date.now();
-  const progress = computeLessonProgress(orderActiveCards(cards, order).map((c) => c.id), attempted);
+  const progress = computeLessonProgress(orderActiveCards(cards, order).map((c) => c.id), evidence);
 
   const items = cards.map((card) => {
     const v = cardView(card);
@@ -1017,8 +1025,8 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     ? `<div class="lesson-actions"><a class="cta" href="${learnHref}">${learnLabel}</a>` +
       (due.length ? `<a class="secondary-action" href="${reviewHref}">Review ${due.length} due</a>` : '') + `</div>`
     : '';
-  const pillLabel = progress.state === 'completed' ? 'Completed'
-    : progress.state === 'in_progress' ? `${progress.attemptedCount}/${progress.total} done`
+  const pillLabel = progress.state === 'completed' ? 'Lesson complete'
+    : progress.state === 'in_progress' ? `${progress.passedCount}/${progress.total} complete`
     : 'Not started';
   const est = set.estimatedMinutes ? ` · ~${set.estimatedMinutes} min` : '';
   const lastFeedback = dogfoodEvents.filter((event) => event.kind === 'feedback' && event.setId === setId).at(-1);
@@ -1040,7 +1048,8 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     `var sr=document.getElementById('spaced-repetition');if(sr)sr.onchange=function(){var enabled=sr.checked;sr.disabled=true;fetch('/api/set/spaced-repetition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,enabled:enabled})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)sr.checked=!enabled;}).finally(function(){if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')sr.disabled=false;});};` +
     `var t=null;function ping(){if(document.visibilityState==='visible')fetch('/api/keepalive').catch(function(){});}function start(){if(!t){ping();t=setInterval(ping,60000);}}function stop(){if(t){clearInterval(t);t=null;}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')start();else stop();});start();})();</script>`;
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
-    `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'}${est} · ` +
+    `<p class="muted">${path} ${kind} ${progress.total} active activit${progress.total === 1 ? 'y' : 'ies'}${est} · ` +
+    `<span class="evidence-counts">${evidenceLabel(progress)}</span> · ` +
     `<span class="progress-pill state-${progress.state}">${pillLabel}</span> · ${due.length} due</p>` +
     `${objective}${actions}${scheduling}${dogfood}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`) +

@@ -134,6 +134,15 @@ function validateCards(
     cardKeys.add(c.localId);
     if (c.id) cardKeys.add(c.id);
 
+    if (c.siblingGroupId !== undefined) {
+      if (typeof c.siblingGroupId !== 'string') {
+        errors.push({ code: 'sibling_group_bad_type', message: 'siblingGroupId must be a string', cardLocalId: c.localId });
+      } else if (c.siblingGroupId.trim().length === 0) {
+        errors.push({ code: 'sibling_group_empty', message: 'siblingGroupId must be non-empty', cardLocalId: c.localId });
+      } else if (c.siblingGroupId.trim().length > 100) {
+        errors.push({ code: 'sibling_group_too_long', message: 'siblingGroupId must be at most 100 code units', cardLocalId: c.localId });
+      }
+    }
     if (!nonEmpty(c.front?.prompt)) errors.push({ code: 'prompt_empty', message: 'front.prompt is empty', cardLocalId: c.localId });
     if (!nonEmpty(c.back?.shortAnswer)) errors.push({ code: 'short_answer_empty', message: 'back.shortAnswer is empty', cardLocalId: c.localId });
     if (!nonEmpty(c.back?.explanationMarkdown)) errors.push({ code: 'explanation_empty', message: 'back.explanationMarkdown is empty', cardLocalId: c.localId });

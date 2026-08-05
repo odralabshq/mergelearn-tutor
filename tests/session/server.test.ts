@@ -76,6 +76,30 @@ async function seedTwoSets(countPerSet: number): Promise<string> {
   return root;
 }
 
+async function seedSiblingReview(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), 'mlt-siblings-'));
+  const patch: AgentSetPatch = {
+    version: 1,
+    set: { id: 'siblings', title: 'Sibling review', tagIds: [] },
+    tagPatch: { reuse: [], add: [] }, order: ['a1', 'b1', 'b2', 'c1', 'c2'],
+    cards: [
+      { localId: 'a1', id: 'a1', siblingGroupId: 'A', tagRefs: [],
+        front: { prompt: 'A1?' }, back: { shortAnswer: 'A1', explanationMarkdown: 'A1 explanation' } },
+      { localId: 'b1', id: 'b1', siblingGroupId: 'B', tagRefs: [],
+        front: { prompt: 'B1?' }, back: { shortAnswer: 'B1', explanationMarkdown: 'B1 explanation' } },
+      { localId: 'b2', id: 'b2', siblingGroupId: 'B', tagRefs: [],
+        front: { prompt: 'B2?' }, back: { shortAnswer: 'B2', explanationMarkdown: 'B2 explanation' } },
+      { localId: 'c1', id: 'c1', siblingGroupId: 'C', tagRefs: [],
+        front: { prompt: 'C1?' }, back: { shortAnswer: 'C1', explanationMarkdown: 'C1 explanation' } },
+      { localId: 'c2', id: 'c2', siblingGroupId: 'C', tagRefs: [],
+        front: { prompt: 'C2?' }, back: { shortAnswer: 'C2', explanationMarkdown: 'C2 explanation' } },
+    ],
+  };
+  const result = await importAgentSet(root, patch, { now: new Date('2026-07-07T12:00:00Z') });
+  if (!result.ok) throw new Error('sibling seed failed');
+  return root;
+}
+
 async function get(url: string): Promise<{ status: number; text: string }> {
   const r = await fetch(url);
   return { status: r.status, text: await r.text() };
@@ -483,6 +507,36 @@ describe('review GUI server (functional)', () => {
     expect(j).toMatchObject({ total: 4, totalDue: 8, remaining: 4, strategy: 'interleaved' });
     expect(new Set(setIds)).toEqual(new Set(['alpha', 'beta']));
     expect(setIds.every((setId: string, index: number) => index === 0 || setId !== setIds[index - 1])).toBe(true);
+  });
+
+  it('spaces siblings after Review membership is selected in preview and session start', async () => {
+    const root = await seedSiblingReview();
+    await saveUserPreferences(root, { reviewSessionCap: 3, queueStrategy: 'overdue' });
+    running = await startReviewServer(root);
+
+    const due = await (await fetch(`${running.url}/api/due`)).json();
+    expect(due).toMatchObject({ total: 3, totalDue: 5, remaining: 2 });
+    expect(due.cards.map((card: { id: string }) => card.id)).toEqual(['b1', 'a1', 'b2']);
+    expect(new Set(due.cards.map((card: { id: string }) => card.id))).toEqual(new Set(['a1', 'b1', 'b2']));
+
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })).json();
+    expect(start).toMatchObject({ current: { card: { id: 'b1' } }, plannedCount: 3, backlog: 2 });
+  });
+
+  it('keeps authored order for lesson, study_once, and retry_missed sibling plans', async () => {
+    running = await startReviewServer(await seedSiblingReview());
+    for (const body of [
+      { lessonSetId: 'siblings' },
+      { mode: 'study_once', setIds: ['siblings'] },
+      { mode: 'retry_missed', setIds: ['siblings'] },
+    ]) {
+      const started = await (await fetch(`${running.url}/api/session/start`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      })).json();
+      expect(started.current.card.id).toBe('a1');
+    }
   });
 
   it('archives a card through the API and finds it in archived search', async () => {
@@ -1482,12 +1536,12 @@ describe('review GUI server (functional)', () => {
     })).json();
     expect(graded.ok).toBe(true);
 
-    // After: in_progress, one attempted, resume at the SECOND card (durable — a
-    // fresh /api/lesson call maps to a new session, so this proves the union rule).
+    // After: one self-assessed pass, then resume at the second authored card.
     const after = await (await fetch(`${running.url}/api/lesson?set=${res.setId}`)).json();
-    expect(after.progress.state).toBe('in_progress');
-    expect(after.progress.attemptedCount).toBe(1);
-    expect(after.progress.resumeCardId).toBe(secondId);
+    expect(after.progress).toMatchObject({
+      state: 'in_progress', passedCount: 1, deterministicCount: 0,
+      selfAssessedCount: 1, resumeCardId: secondId,
+    });
 
     await fetch(`${running.url}/api/session/end`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -1499,9 +1553,15 @@ describe('review GUI server (functional)', () => {
     })).json();
     expect(continued.current.card.id).toBe(secondId);
 
-    // Home surfaces a Continue action for the partially-done lesson.
+    // Home and Set expose honest evidence classes without mastery claims.
     const home = await get(`${running.url}/`);
     expect(home.text).toContain('Continue lesson');
+    expect(home.text).toContain('0 deterministic recall');
+    expect(home.text).toContain('1 self-assessed recall');
+    const setPage = await get(`${running.url}/set/${res.setId}`);
+    expect(setPage.text).toContain('0 deterministic recall');
+    expect(setPage.text).toContain('1 self-assessed recall');
+    expect(`${home.text}${setPage.text}`).not.toMatch(/Mastered|Ready|\d+% complete/);
   });
 
   it('ignores a malformed attempt but still records the grade', async () => {
