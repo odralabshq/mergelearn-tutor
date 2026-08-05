@@ -37,6 +37,38 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(buildProgram().version()).toBe('1.2.0');
   });
 
+  it('serve opens human output once, reports opener failure, and keeps JSON launch-free', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-serve-'));
+    const opened: string[] = [];
+    const errors: string[] = [];
+    const logs: string[] = [];
+    const originalError = console.error;
+    const originalLog = console.log;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    const ensureLocalServer = async () => ({
+      url: 'http://127.0.0.1:43210', pid: 123, port: 43210,
+      startedAt: '2026-08-05T00:00:00.000Z', managed: true as const, reused: true,
+    });
+    try {
+      const human = buildProgram({ ensureLocalServer, openUrl: (url) => { opened.push(url); return false; } });
+      await human.parseAsync(['node', 'libCli.js', '--home', root, 'serve']);
+      expect(opened).toEqual(['http://127.0.0.1:43210']);
+      expect(logs.join('\n')).toContain('(reused)');
+      expect(errors.join('\n')).toContain('Open http://127.0.0.1:43210 manually');
+
+      logs.length = 0;
+      const jsonOpened: string[] = [];
+      const json = buildProgram({ ensureLocalServer, openUrl: (url) => { jsonOpened.push(url); return true; } });
+      await json.parseAsync(['node', 'libCli.js', '--home', root, '--json', 'serve']);
+      expect(JSON.parse(logs.join('\n'))).toMatchObject({ ok: true, url: 'http://127.0.0.1:43210' });
+      expect(jsonOpened).toEqual([]);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+    }
+  });
+
   it('drives context -> import -> sets -> due -> show -> grade against a real library', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
 

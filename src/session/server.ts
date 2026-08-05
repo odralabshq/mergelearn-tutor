@@ -8,6 +8,7 @@
  */
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { randomUUID } from 'node:crypto';
 
 import { getDueCards, selectDueCards, type DueFilter } from '../core/library/review/dueQueue.js';
 import { orderDueQueue } from '../core/library/review/interleave.js';
@@ -31,6 +32,10 @@ import { writeJson, readJson as readJsonIO } from '../core/library/io.js';
 import { appendDogfoodEvent, listDogfoodEvents } from '../core/library/dogfood.js';
 import { join } from 'node:path';
 import { MAX_REQUEUE, REQUEUE_GAP, planRequeue } from './requeue.js';
+import { createConnectionController } from './connectionController.js';
+import {
+  decideManageDraft, decidePracticeDraft, manageDraftKey, practiceDraftKey,
+} from './draftRecovery.js';
 
 export type ReviewServer = { server: Server; url: string; close: () => Promise<void> };
 
@@ -43,9 +48,10 @@ export type ReviewServerOptions = {
 };
 
 export async function startReviewServer(root: string, port = 0, options: ReviewServerOptions = {}): Promise<ReviewServer> {
+  const resolvedOptions: ReviewServerOptions = { ...options, instanceId: options.instanceId ?? randomUUID() };
   const server = createServer(async (req, res) => {
     try {
-      await handleRequest(root, req, res, options);
+      await handleRequest(root, req, res, resolvedOptions);
     } catch (error) {
       sendText(res, 500, `session error: ${error instanceof Error ? error.message : String(error)}\n`);
     }
@@ -77,8 +83,8 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
     const origin = req.headers.origin;
     if (origin && origin !== `http://${req.headers.host}`) return sendJson(res, 403, { ok: false, error: 'cross-origin request rejected' });
   }
-  if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root));
-  if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice());
+  if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root, options.instanceId!));
+  if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice(options.instanceId!));
   if (method === 'GET' && url.pathname.startsWith('/set/')) {
     const setId = decodeURIComponent(url.pathname.slice('/set/'.length));
     // Do not count a typo or deleted lesson as an open in dogfood evidence.
@@ -86,7 +92,7 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
       await options.onLessonOpen?.(setId, url.searchParams.get('source') ?? undefined);
     }
     const showDogfood = options.dogfoodControls ?? process.env.MERGELEARN_DOGFOOD_CONTROLS !== '0';
-    return sendHtml(res, 200, await renderSetBrowser(root, setId, showDogfood));
+    return sendHtml(res, 200, await renderSetBrowser(root, setId, showDogfood, options.instanceId!));
   }
   // /api/due accepts both GET (no filter) and POST (JSON DueFilter body).
   // Empty body / empty object both mean "everything due."
@@ -109,7 +115,7 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (method === 'POST' && url.pathname === '/api/set/spaced-repetition') return setSpacedRepetitionApi(root, req, res);
   // Manage tab (doc 06): server-rendered; card membership is embedded in the
   // page so match counts recompute client-side (no per-keystroke round-trip).
-  if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root));
+  if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root, options.instanceId!));
   return sendText(res, 404, 'not found\n');
 }
 
@@ -531,7 +537,7 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
     `<div class="lesson-actions">${action}${review}</div></li>`;
 }
 
-async function renderHome(root: string): Promise<string> {
+async function renderHome(root: string, instanceId: string): Promise<string> {
   const [summaries, due, attemptedMap, prefs] = await Promise.all([
     listSetSummaries(root),
     getDueCards(root, new Date()),
@@ -553,7 +559,7 @@ async function renderHome(root: string): Promise<string> {
       `<p class="muted">Lessons are written by your coding agent, not typed in here.</p>` +
       `<div class="onboard">` +
       `<p class="onboard-step"><strong>Just want to see it?</strong> Install a built-in sample lesson and start learning now.</p>` +
-      `<p><button type="button" class="cta" id="try-sample">Try a sample lesson</button> <span class="muted small" id="sample-status"></span></p>` +
+      `<p><button type="button" class="cta" id="try-sample" data-server-mutation>Try a sample lesson</button> <span class="muted small" id="sample-status"></span></p>` +
       `<hr class="onboard-rule">` +
       `<p class="onboard-step"><strong>1.</strong> Or open your coding agent and ask it something like:</p>` +
       `<ul class="prompt-list">${promptList}</ul>` +
@@ -566,10 +572,10 @@ async function renderHome(root: string): Promise<string> {
       `</div>` +
       `<script>` +
       `document.getElementById('refresh-home').addEventListener('click',function(){location.reload();});` +
-      `(function(){var btn=document.getElementById('try-sample'),st=document.getElementById('sample-status');if(!btn)return;btn.addEventListener('click',function(){btn.disabled=true;st.textContent='Installing…';fetch('/api/sample',{method:'POST'}).then(function(r){return r.json();}).then(function(j){if(j&&j.ok&&j.setId){location.href='/set/'+encodeURIComponent(j.setId);}else{st.textContent='Could not install the sample. Try: mergelearn sample';btn.disabled=false;}}).catch(function(){st.textContent='Could not install the sample. Try: mergelearn sample';btn.disabled=false;});});})();` +
+      `(function(){var btn=document.getElementById('try-sample'),st=document.getElementById('sample-status');if(!btn)return;function enable(){if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')btn.disabled=false;}btn.addEventListener('click',function(){btn.disabled=true;st.textContent='Installing…';fetch('/api/sample',{method:'POST'}).then(function(r){return r.json();}).then(function(j){if(j&&j.ok&&j.setId){location.href='/set/'+encodeURIComponent(j.setId);}else{st.textContent='Could not install the sample. Try: mergelearn sample';enable();}}).catch(function(){st.textContent='Could not install the sample. Try: mergelearn sample';enable();});});})();` +
       `[].forEach.call(document.querySelectorAll('.copyable'),function(el){function copy(){try{navigator.clipboard.writeText(el.textContent);el.classList.add('copied');setTimeout(function(){el.classList.remove('copied');},1200);}catch(e){}}el.addEventListener('click',copy);el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();copy();}});});` +
       `</script>`;
-    return pageShell('MergeLearn — Home', 'home', body);
+    return pageShell('MergeLearn — Home', 'home', body, instanceId);
   }
 
   // Review is the separate FSRS job: one banner linking to the capped queue.
@@ -594,7 +600,7 @@ async function renderHome(root: string): Promise<string> {
     `<h2 style="margin-top:28px">Lessons</h2>` +
     `<p class="muted" style="margin:-4px 0 0;font-size:13px">Learn walks each lesson in authored order. Review is the separate due queue above.</p>` +
     `<ul class="lesson-list">${rows}</ul>`;
-  return pageShell('MergeLearn — Home', 'home', body);
+  return pageShell('MergeLearn — Home', 'home', body, instanceId);
 }
 
 // ---- Set browser ----
@@ -604,12 +610,12 @@ async function renderHome(root: string): Promise<string> {
  * expandable panel. Lets you revisit a card's front, frozen snippets, answer,
  * explanation and examples at any time — independent of the review schedule.
  */
-async function renderSetBrowser(root: string, setId: string, showDogfood: boolean): Promise<string> {
+async function renderSetBrowser(root: string, setId: string, showDogfood: boolean, instanceId: string): Promise<string> {
   const set = await loadSet(root, setId);
   if (!set) {
     const body = `<p><a href="/">← Home</a></p><h1>Set not found</h1>` +
       `<div class="empty">No set with id <code>${escapeHtml(setId)}</code>.</div>`;
-    return pageShell('MergeLearn — Set', 'set', body);
+    return pageShell('MergeLearn — Set', 'set', body, instanceId);
   }
   const [cards, due, order, attempted, dogfoodEvents] = await Promise.all([
     loadCardsForSet(root, setId),
@@ -675,10 +681,10 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
   const lastFeedback = dogfoodEvents.filter((event) => event.kind === 'feedback' && event.setId === setId).at(-1);
   const feedbackValue = lastFeedback?.kind === 'feedback' ? lastFeedback.worthAnswering : null;
   const dogfood = showDogfood ? `<div class="lesson-actions dogfood-actions" aria-label="Dogfood feedback">` +
-    `<button class="secondary-action" data-dogfood-defer>Not now</button>` +
-    `<button class="secondary-action${feedbackValue === true ? ' sel' : ''}" data-dogfood="worth" aria-pressed="${feedbackValue === true}">Worth it</button>` +
-    `<button class="secondary-action${feedbackValue === false ? ' sel' : ''}" data-dogfood="not-worth" aria-pressed="${feedbackValue === false}">Not worth it</button></div>` : '';
-  const scheduling = `<label class="schedule-toggle"><input type="checkbox" id="spaced-repetition"${set.spacedRepetition === false ? '' : ' checked'}>` +
+    `<button class="secondary-action" data-dogfood-defer data-server-mutation>Not now</button>` +
+    `<button class="secondary-action${feedbackValue === true ? ' sel' : ''}" data-dogfood="worth" data-server-mutation aria-pressed="${feedbackValue === true}">Worth it</button>` +
+    `<button class="secondary-action${feedbackValue === false ? ' sel' : ''}" data-dogfood="not-worth" data-server-mutation aria-pressed="${feedbackValue === false}">Not worth it</button></div>` : '';
+  const scheduling = `<label class="schedule-toggle"><input type="checkbox" id="spaced-repetition"${set.spacedRepetition === false ? '' : ' checked'} data-server-mutation>` +
     ` Include in spaced repetition</label>`;
   const dogfoodScript = showDogfood
     ? `document.querySelectorAll('[data-dogfood]').forEach(function(b){b.onclick=function(){var on=b.getAttribute('aria-pressed')==='true';var value=on?null:b.getAttribute('data-dogfood')==='worth';fetch('/api/dogfood/feedback',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,worthAnswering:value})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)return;document.querySelectorAll('[data-dogfood]').forEach(function(x){x.classList.remove('sel');x.setAttribute('aria-pressed','false');});if(value!==null){b.classList.add('sel');b.setAttribute('aria-pressed','true');}});};});` +
@@ -688,7 +694,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     `function copyText(text,b){var label=b.querySelector('[data-copy-label]');var done=function(){b.classList.add('copied');b.setAttribute('aria-label','Reference copied');b.title='Copied';if(label)label.textContent='Copied';setTimeout(function(){b.classList.remove('copied');b.setAttribute('aria-label','Copy reference');b.title='Copy reference';if(label)label.textContent='Copy reference';},1200);};if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done);return;}var a=document.createElement('textarea');a.value=text;document.body.appendChild(a);a.select();try{document.execCommand('copy');done();}finally{a.remove();}}` +
     `document.querySelectorAll('[data-copy-command]').forEach(function(b){b.onclick=function(){copyText(b.getAttribute('data-copy-command'),b);};});` +
     dogfoodScript +
-    `var sr=document.getElementById('spaced-repetition');if(sr)sr.onchange=function(){var enabled=sr.checked;sr.disabled=true;fetch('/api/set/spaced-repetition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,enabled:enabled})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)sr.checked=!enabled;}).finally(function(){sr.disabled=false;});};` +
+    `var sr=document.getElementById('spaced-repetition');if(sr)sr.onchange=function(){var enabled=sr.checked;sr.disabled=true;fetch('/api/set/spaced-repetition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({setId:id,enabled:enabled})}).then(function(r){return r.json();}).then(function(j){if(!j.ok)sr.checked=!enabled;}).finally(function(){if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')sr.disabled=false;});};` +
     `var t=null;function ping(){if(document.visibilityState==='visible')fetch('/api/keepalive').catch(function(){});}function start(){if(!t){ping();t=setInterval(ping,60000);}}function stop(){if(t){clearInterval(t);t=null;}}document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')start();else stop();});start();})();</script>`;
   const body = `<p><a href="/">← Home</a></p><h1>${escapeHtml(set.title)}</h1>` +
     `<p class="muted">${path} ${kind} ${cards.length} activit${cards.length === 1 ? 'y' : 'ies'}${est} · ` +
@@ -696,7 +702,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     `${objective}${actions}${scheduling}${dogfood}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`) +
     controlsScript;
-  return pageShell(`MergeLearn — ${set.title}`, 'set', body);
+  return pageShell(`MergeLearn — ${set.title}`, 'set', body, instanceId);
 }
 
 // ---- Manage tab (doc 06) ----
@@ -722,7 +728,7 @@ function progressTitle(s: ProgressStats, noun: string): string {
     + `${s.cardCount} card${s.cardCount === 1 ? '' : 's'} ${noun}, ${s.studied} studied`;
 }
 
-async function renderManage(root: string): Promise<string> {
+async function renderManage(root: string, instanceId: string): Promise<string> {
   const { folders, tags, cards } = await loadManageData(root);
   // Embed card membership so match counts recompute client-side (no round-trip).
   // Escape '<' so a folderPath/tagId can never break out of the script tag.
@@ -789,12 +795,14 @@ async function renderManage(root: string): Promise<string> {
     `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
     `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div></section>` +
     `<script type="application/json" id="ml-cards">${cardsJson}</script>`;
-  return pageShell('MergeLearn — Manage', 'manage', body) +
+  return pageShell('MergeLearn — Manage', 'manage', body, instanceId) +
     `<script>${manageScript()}</script>`;
 }
 
 function manageScript(): string {
   return `
+${manageDraftKey.toString()}
+${decideManageDraft.toString()}
 var selected={folderPaths:[],tagIds:[],combinator:'union'};
 var CARDS=[];
 try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
@@ -809,23 +817,41 @@ function copyText(text,button){
 function cardHtml(c){
   var action=c.status==='archived'?'unarchive':'archive';
   return '<article class="curation-card" data-set="'+esc(c.setId)+'" data-card="'+esc(c.cardId)+'" data-updated="'+esc(c.updatedAt)+'">'+
-    '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><div class="curation-head-actions"><button type="button" class="copy-reference" data-copy-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button><button type="button" class="copy-reference" data-card-action="'+action+'">'+(action==='archive'?'Archive':'Restore')+'</button></div></div>'+
+    '<div class="curation-head"><strong>'+esc(c.prompt)+'</strong><div class="curation-head-actions"><button type="button" class="copy-reference" data-copy-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button><button type="button" class="copy-reference" data-card-action="'+action+'" data-server-mutation>'+(action==='archive'?'Archive':'Restore')+'</button></div></div>'+
     '<div class="curation-meta muted small"><span>'+esc(c.setTitle)+' · '+esc(c.setId)+'/'+esc(c.cardId)+'</span><span class="badge next">'+esc(c.status)+'</span></div><p>'+esc(c.shortAnswer)+'</p>'+
     '<details class="curation-edit"><summary>Edit teaching text</summary><label>Prompt<textarea data-edit="prompt" rows="2">'+esc(c.prompt)+'</textarea></label>'+
     '<label>Short answer<textarea data-edit="shortAnswer" rows="2">'+esc(c.shortAnswer)+'</textarea></label>'+
     '<label>Explanation<textarea data-edit="explanation" rows="4">'+esc(c.explanation)+'</textarea></label>'+
-    '<button type="button" class="primary" data-card-action="edit">Save changes</button></details></article>';
+    '<div class="draft-notice" data-manage-draft-notice hidden></div>'+
+    '<button type="button" class="primary" data-card-action="edit" data-server-mutation>Save changes</button></details></article>';
 }
+function manageDraftFields(row){return {prompt:row.querySelector('[data-edit="prompt"]').value,shortAnswer:row.querySelector('[data-edit="shortAnswer"]').value,explanation:row.querySelector('[data-edit="explanation"]').value};}
+function discardManageDraft(row){try{localStorage.removeItem(manageDraftKey(row.getAttribute('data-set'),row.getAttribute('data-card')));}catch(e){}var n=row.querySelector('[data-manage-draft-notice]');if(n){n.hidden=true;n.innerHTML='';}}
+function wireManageDiscard(row){var b=row.querySelector('[data-discard-manage-draft]');if(b)b.onclick=function(){discardManageDraft(row);};}
+function showManageDraft(row,decision,raw){
+  var notice=row.querySelector('[data-manage-draft-notice]');if(!notice||decision.kind==='none')return;
+  notice.hidden=false;
+  if(decision.kind==='restore'){
+    row.querySelector('[data-edit="prompt"]').value=decision.value.prompt;row.querySelector('[data-edit="shortAnswer"]').value=decision.value.shortAnswer;row.querySelector('[data-edit="explanation"]').value=decision.value.explanation;
+    notice.innerHTML='<span>Unsaved draft restored.</span> <button type="button" data-discard-manage-draft>Discard</button>';wireManageDiscard(row);return;
+  }
+  var usable=null;try{var parsed=JSON.parse(raw);if(parsed&&parsed.fields)usable=parsed.fields;}catch(e){}
+  notice.innerHTML='<p>This draft belongs to an older card version. Review it before using it.</p><textarea readonly rows="4">'+esc(raw)+'</textarea>'+(usable?'<button type="button" data-use-manage-draft>Use recovered draft</button> ':'')+'<button type="button" data-discard-manage-draft>Discard</button>';
+  if(usable){notice.querySelector('[data-use-manage-draft]').onclick=function(){['prompt','shortAnswer','explanation'].forEach(function(k){if(typeof usable[k]==='string')row.querySelector('[data-edit="'+k+'"]').value=usable[k];});notice.innerHTML='<span>Recovered draft applied. Review before saving.</span> <button type="button" data-discard-manage-draft>Discard</button>';wireManageDiscard(row);};}
+  wireManageDiscard(row);
+}
+function restoreManageDrafts(){[].forEach.call(document.querySelectorAll('.curation-card'),function(row){var raw=null;try{raw=localStorage.getItem(manageDraftKey(row.getAttribute('data-set'),row.getAttribute('data-card')));}catch(e){}showManageDraft(row,decideManageDraft(raw,row.getAttribute('data-set'),row.getAttribute('data-card'),row.getAttribute('data-updated')),raw||'');});}
+function persistManageDraft(row){try{localStorage.setItem(manageDraftKey(row.getAttribute('data-set'),row.getAttribute('data-card')),JSON.stringify({version:1,setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card'),updatedAt:row.getAttribute('data-updated'),fields:manageDraftFields(row)}));}catch(e){}}
 async function loadCardResults(){
   var q=document.getElementById('card-search').value||'';var archived=document.getElementById('show-archived').checked;
-  try{var r=await fetch('/api/cards?q='+encodeURIComponent(q)+(archived?'&archived=1':''));var j=await r.json();var box=document.getElementById('card-results');box.innerHTML=(j.cards||[]).map(cardHtml).join('')||'<div class="empty">No cards match.</div>';cardStatus((j.cards||[]).length+' shown');}
+  try{var r=await fetch('/api/cards?q='+encodeURIComponent(q)+(archived?'&archived=1':''));var j=await r.json();var box=document.getElementById('card-results');box.innerHTML=(j.cards||[]).map(cardHtml).join('')||'<div class="empty">No cards match.</div>';restoreManageDrafts();if(window.__mlConnection)window.__mlConnection.refreshControls();cardStatus((j.cards||[]).length+' shown');}
   catch(e){cardStatus('Could not load cards');}
 }
 async function cardAction(button){
   var row=button.closest('.curation-card'),action=button.getAttribute('data-card-action');if(!row||!action)return;
   var body={setId:row.getAttribute('data-set'),cardId:row.getAttribute('data-card'),expectedUpdatedAt:row.getAttribute('data-updated')};
   if(action==='edit')body.edit={front:{prompt:row.querySelector('[data-edit="prompt"]').value},back:{shortAnswer:row.querySelector('[data-edit="shortAnswer"]').value,explanationMarkdown:row.querySelector('[data-edit="explanation"]').value}};
-  button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');button.disabled=false;return;}cardStatus(action==='edit'?'Saved':'Card updated');await loadCardResults();}catch(e){cardStatus('Update failed');button.disabled=false;}
+  button.disabled=true;try{var r=await fetch('/api/card/'+action,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});var j=await r.json();if(!j.ok){cardStatus(j.error||'Update failed');if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')button.disabled=false;return;}if(action==='edit')discardManageDraft(row);cardStatus(action==='edit'?'Saved':'Card updated');await loadCardResults();}catch(e){cardStatus('Update failed. Draft kept.');if(!window.__mlConnection||window.__mlConnection.state()!=='disconnected')button.disabled=false;}
 }
 var searchTimer=null;document.getElementById('card-search').addEventListener('input',function(){clearTimeout(searchTimer);searchTimer=setTimeout(loadCardResults,180);});
 document.getElementById('show-archived').addEventListener('change',loadCardResults);
@@ -834,6 +860,7 @@ document.getElementById('card-results').addEventListener('click',function(e){
   if(copy){var row=copy.closest('.curation-card');copyText('mergelearn show '+row.getAttribute('data-set')+'/'+row.getAttribute('data-card'),copy);return;}
   var b=e.target.closest&&e.target.closest('[data-card-action]');if(b)cardAction(b);
 });
+document.getElementById('card-results').addEventListener('input',function(e){var field=e.target.closest&&e.target.closest('[data-edit]');if(field){var row=field.closest('.curation-card');if(row)persistManageDraft(row);}});
 loadCardResults();
 function statusMsg(t){var s=document.getElementById('match-count');s.textContent=t;}
 function selectedFilter(){var f={};if(selected.folderPaths.length)f.folderPaths=selected.folderPaths;if(selected.tagIds.length)f.tagIds=selected.tagIds;if(Object.keys(f).length)f.combinator=selected.combinator;return f;}
@@ -1070,19 +1097,21 @@ function renderMarkdownHtml(markdown: string): string {
  * queue one card at a time (answer -> reveal -> grade), and POSTs each grade.
  * Kept deliberately framework-free — plain fetch + DOM, no build step.
  */
-function renderPractice(): string {
+function renderPractice(instanceId: string): string {
   const body =
     `<h1>Practice</h1>` +
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
-    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" hidden>Undo last answer</button></div>` +
+    `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" data-server-mutation hidden>Undo last answer</button></div>` +
     `<div id="mount"></div>` +
     `<div class="status" id="status" aria-live="polite"></div>` +
     `<script>${practiceScript()}</script>`;
-  return pageShell('MergeLearn — Practice', 'practice', body);
+  return pageShell('MergeLearn — Practice', 'practice', body, instanceId);
 }
 
 function practiceScript(): string {
   return `
+${practiceDraftKey.toString()}
+${decidePracticeDraft.toString()}
 var REQUEUE_GAP=${REQUEUE_GAP},MAX_REQUEUE=${MAX_REQUEUE};
 ${planRequeue.toString()}
 var queue=[];var pos=0;var reviewed=0;var reviewedCards={};var waitingBacklog=0;var confidence=0;var sessionId=null;var mutationBusy=false;
@@ -1145,19 +1174,55 @@ function render(){
   var inspectCommand='mergelearn show '+c.setId+'/'+c.id;
   mount.innerHTML='<article class="pcard"><div class="topline"><span>'+esc(c.setTitle||'Review')+'</span><button type="button" class="copy-reference copy-practice-card" data-copy-practice-card aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button></div>'+
     '<div class="prompt markdown-body">'+(c.promptHtml||fmt(c.prompt))+'</div>'+ctx+srcs+attemptUi+
+    '<div class="draft-notice" id="practice-draft-notice" hidden></div>'+
     '<div class="confidence" id="confidence"><p class="label" id="conf-label">Submit and reveal: how confident are you?</p><div class="conf-opts" role="radiogroup" aria-labelledby="conf-label">'+confBtns+'</div></div>'+
     '<div class="reveal" id="reveal-panel"><div id="attempt-review" aria-live="polite"></div><p class="label">Expected answer</p><p class="short">'+fmt(c.shortAnswer)+'</p>'+
     '<details class="deep" id="deep"'+(deepOpen?' open':'')+'><summary><span class="deep-more">Show full explanation</span><span class="deep-less">Hide full explanation</span></summary>'+
     '<div class="expl markdown-body">'+(c.explanationHtml||fmt(c.explanation))+'</div>'+examples+mistakes+'</details>'+
     '<p class="label grade-label">Now that you\\'ve seen it — how well did you actually know it?</p>'+
-    '<div class="actions grade"><button class="g1" data-r="1" aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
+    '<div class="actions grade"><button class="g1" data-r="1" data-server-mutation aria-label="Again, shortcut 1">Again<kbd aria-hidden="true">1</kbd></button><button class="g2" data-r="2" data-server-mutation aria-label="Hard, shortcut 2">Hard<kbd aria-hidden="true">2</kbd></button><button class="g3" data-r="3" data-server-mutation aria-label="Good, shortcut 3">Good<kbd aria-hidden="true">3</kbd></button><button class="g4" data-r="4" data-server-mutation aria-label="Easy, shortcut 4">Easy<kbd aria-hidden="true">4</kbd></button></div></div></article>';
   [].forEach.call(document.querySelectorAll('#confidence button'),function(b){b.addEventListener('click',function(){setConfidence(Number(b.getAttribute('data-c')));});});
 
   var copyBtn=document.querySelector('[data-copy-practice-card]');if(copyBtn)copyBtn.addEventListener('click',function(){copyText(inspectCommand,copyBtn);});
   wireParsons();
+  wirePracticeDraft(c);
   [].forEach.call(document.querySelectorAll('.grade button'),function(b){b.addEventListener('click',function(){grade(Number(b.getAttribute('data-r')));});});
+  if(window.__mlConnection)window.__mlConnection.refreshControls();
   var deep=document.getElementById('deep');
   if(deep)deep.addEventListener('toggle',function(){try{localStorage.setItem('ml-deep-open',deep.open?'1':'0');}catch(e){}});
+}
+function practiceDraftResponse(c){
+  var i=c.interaction||{type:'flashcard'};
+  if(i.type==='self_response'){var t=document.getElementById('attempt-text');return {interaction:i.type,text:t?t.value:''};}
+  if(i.type==='choice')return {interaction:i.type,selectedOptionIds:[].map.call(document.querySelectorAll('.choices input:checked'),function(x){return x.value;})};
+  if(i.type==='parsons')return {interaction:i.type,orderedBlockIds:[].map.call(document.querySelectorAll('#p-list .p-block'),function(x){return x.getAttribute('data-bid');})};
+  return null;
+}
+function persistPracticeDraft(c){var response=practiceDraftResponse(c);if(!response)return;try{localStorage.setItem(practiceDraftKey(c.setId,c.id),JSON.stringify({version:1,setId:c.setId,cardId:c.id,response:response}));}catch(e){}}
+function clearPracticeDraft(c){try{localStorage.removeItem(practiceDraftKey(c.setId,c.id));}catch(e){}}
+function applyPracticeResponse(response){
+  if(!response||typeof response!=='object')return;
+  if(response.interaction==='self_response'){var t=document.getElementById('attempt-text');if(t&&typeof response.text==='string')t.value=response.text;}
+  else if(response.interaction==='choice'&&Array.isArray(response.selectedOptionIds)){[].forEach.call(document.querySelectorAll('.choices input'),function(x){x.checked=response.selectedOptionIds.indexOf(x.value)>=0;});}
+  else if(response.interaction==='parsons'&&Array.isArray(response.orderedBlockIds)){var list=document.getElementById('p-list');if(list){response.orderedBlockIds.forEach(function(id){var n=[].filter.call(list.children,function(x){return x.getAttribute('data-bid')===id;})[0];if(n)list.appendChild(n);});}}
+}
+function wirePracticeDiscard(c){var b=document.querySelector('[data-discard-practice-draft]');if(b)b.onclick=function(){clearPracticeDraft(c);var n=document.getElementById('practice-draft-notice');if(n){n.hidden=true;n.innerHTML='';}};}
+function restorePracticeDraft(c){
+  var raw=null;try{raw=localStorage.getItem(practiceDraftKey(c.setId,c.id));}catch(e){}
+  var interaction=(c.interaction||{type:'flashcard'}).type;
+  var decision=decidePracticeDraft(raw,c.setId,c.id,interaction),notice=document.getElementById('practice-draft-notice');if(!notice||decision.kind==='none')return;
+  notice.hidden=false;
+  if(decision.kind==='restore'){applyPracticeResponse(decision.value);notice.innerHTML='<span>Unsaved answer restored.</span> <button type="button" data-discard-practice-draft>Discard</button>';wirePracticeDiscard(c);return;}
+  var recovered=null;try{var parsed=JSON.parse(raw);if(parsed)recovered=parsed.response;}catch(e){}
+  notice.innerHTML='<p>A saved answer does not match this card. Review it before using it.</p><textarea readonly rows="3">'+esc(raw||'')+'</textarea>'+(recovered?'<button type="button" data-use-practice-draft>Use recovered answer</button> ':'')+'<button type="button" data-discard-practice-draft>Discard</button>';
+  if(recovered){notice.querySelector('[data-use-practice-draft]').onclick=function(){applyPracticeResponse(recovered);notice.innerHTML='<span>Recovered answer applied. Review before submitting.</span> <button type="button" data-discard-practice-draft>Discard</button>';wirePracticeDiscard(c);};}
+  wirePracticeDiscard(c);
+}
+function wirePracticeDraft(c){
+  restorePracticeDraft(c);
+  var t=document.getElementById('attempt-text');if(t)t.addEventListener('input',function(){persistPracticeDraft(c);});
+  var choices=document.querySelector('.choices');if(choices)choices.addEventListener('change',function(){persistPracticeDraft(c);});
+  var list=document.getElementById('p-list');if(list){list.addEventListener('click',function(){setTimeout(function(){persistPracticeDraft(c);},0);});list.addEventListener('keyup',function(){persistPracticeDraft(c);});list.addEventListener('drop',function(){persistPracticeDraft(c);});}
 }
 function setConfidence(n){
   // Confidence is the single submit/reveal action. This keeps Guessing and the
@@ -1274,7 +1339,8 @@ async function grade(r){
     if(attempt){var deep=document.getElementById('deep');attempt.revealedFull=!!(deep&&deep.open);}
     var res=await fetch('/api/session/grade',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({sessionId:sessionId,cardId:c.id,setId:c.setId,rating:r,confidence:confidence||undefined,attempt:attempt||undefined})});
     var j=await res.json();
-    if(!j.ok){if(j.code==='card_unavailable'){statusMsg('Card was archived · skipped');pos++;render();return;}statusMsg(j.error||'grade failed');return;}
+    if(!j.ok){if(j.code==='card_unavailable'){clearPracticeDraft(c);statusMsg('Card was archived · skipped');pos++;render();return;}statusMsg(j.error||'grade failed');return;}
+    clearPracticeDraft(c);
     var revisit=null;
     if(r===1&&practiceMode==='review'){
       var plan=planRequeue(queue.length,pos,requeueCounts[c.id]||0,REQUEUE_GAP,MAX_REQUEUE);
@@ -1284,7 +1350,7 @@ async function grade(r){
     reviewed++;reviewedCards[c.id]=(reviewedCards[c.id]||0)+1;
     statusMsg(r===1&&revisit?'Again · queued for another look':'Graded · next due '+new Date(j.due).toLocaleDateString());
     pos++;render();syncUndo();
-  }catch(e){statusMsg('grade failed');}finally{mutationBusy=false;}
+  }catch(e){statusMsg('grade failed. Answer kept.');}finally{mutationBusy=false;}
 }
 async function undoGrade(){
   if(!lastGrade||!sessionId)return;
@@ -1376,7 +1442,7 @@ export function escapeHtml(value: string): string {
 
 type Tab = 'home' | 'practice' | 'set' | 'manage';
 
-function pageShell(title: string, tab: Tab, body: string): string {
+function pageShell(title: string, tab: Tab, body: string, instanceId: string): string {
   const tabs: { id: Tab; href: string; label: string }[] = [
     { id: 'home', href: '/', label: 'Home' },
     { id: 'practice', href: '/practice', label: 'Practice' },
@@ -1394,7 +1460,17 @@ function pageShell(title: string, tab: Tab, body: string): string {
     `<header class="topbar"><span class="brand">MergeLearn</span>` +
     `<nav class="tabs">${nav}</nav>` +
     `<span class="hint">local · model-free</span></header>` +
-    `<main>${body}</main><script>${mermaidLoader()}</script></body></html>`;
+    `<div id="connection-status" class="connection-status" role="status" aria-live="polite" ` +
+    `data-connection-controller data-server-instance="${escapeHtml(instanceId)}" hidden></div>` +
+    `<script data-connection-runtime>${connectionControllerScript(instanceId)}</script><main>${body}</main>` +
+    `<script>${mermaidLoader()}</script></body></html>`;
+}
+
+function connectionControllerScript(instanceId: string): string {
+  return `(function(){var factory=${createConnectionController.toString()};` +
+    `window.__mlConnection=factory({fetch:window.fetch.bind(window),doc:document,storage:window.localStorage,instanceId:${JSON.stringify(instanceId)}});` +
+    `window.fetch=window.__mlConnection.guardedFetch;` +
+    `if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',function(){window.__mlConnection.checkHealth();});else window.__mlConnection.checkHealth();})();`;
 }
 
 /**
@@ -1449,6 +1525,11 @@ a:hover{text-decoration:underline}
 .tabs a:hover{background:var(--hover);text-decoration:none;color:var(--text)}
 .tabs a[aria-current=page]{background:var(--accent);color:#fff}
 .hint{margin-left:auto;color:var(--muted);font-size:12px}
+.connection-status{max-width:820px;margin:12px auto 0;padding:10px 14px;border:1px solid var(--danger);border-radius:var(--radius);background:rgba(248,81,73,.12);color:var(--text)}
+.connection-status[hidden]{display:none}
+.draft-notice{margin:10px 0;padding:10px 12px;border:1px solid var(--warning);border-radius:var(--radius-sm);background:rgba(210,153,34,.12);color:var(--text);font-size:13px}
+.draft-notice[hidden]{display:none}
+.draft-notice p{margin:0 0 8px}.draft-notice textarea{box-sizing:border-box;width:100%;margin:4px 0 8px;padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm);font-family:var(--mono);font-size:12px}
 main{max-width:820px;margin:0 auto;padding:28px 24px 64px}
 h1{font-size:1.6rem;letter-spacing:-0.02em;margin:0 0 4px}
 h2{font-size:1.15rem;margin:0 0 10px}

@@ -90,6 +90,25 @@ describe('review GUI server (functional)', () => {
     expect(activity).toBe(1);
   });
 
+  it('gives direct servers a stable identity and embeds it in the shared status shell', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-direct-identity-'));
+    running = await startReviewServer(root);
+
+    const health = await (await fetch(`${running.url}/health`)).json() as { instanceId?: string };
+    expect(health.instanceId).toMatch(/^[0-9a-f-]{36}$/i);
+
+    const html = await (await fetch(`${running.url}/`)).text();
+    expect(html).toContain(`data-server-instance="${health.instanceId}"`);
+    expect(html).toContain('id="connection-status"');
+    expect(html).toContain('role="status" aria-live="polite"');
+    expect(html).toContain('data-connection-controller');
+    expect(html).toContain('data-connection-runtime');
+    const runtime = html.match(/<script data-connection-runtime>([\s\S]*?)<\/script>/i)?.[1];
+    expect(runtime).toBeTruthy();
+    expect(() => new Function(runtime!)).not.toThrow();
+    expect(html).toContain('data-server-mutation');
+  });
+
   it('records explicit dogfood feedback and deferral locally', async () => {
     const root = await seed();
     running = await startReviewServer(root);

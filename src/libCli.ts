@@ -109,9 +109,14 @@ function requestBrowserOpen(url: string): boolean {
   }
 }
 
-export function buildProgram(): Command {
+export function buildProgram(deps: {
+  openUrl?: (url: string) => boolean;
+  ensureLocalServer?: typeof ensureServer;
+} = {}): Command {
   const program = new Command();
   const defaultHelp = new Help();
+  const openUrl = deps.openUrl ?? requestBrowserOpen;
+  const ensureLocalServer = deps.ensureLocalServer ?? ensureServer;
   program
     .name('mergelearn')
     .description('Model-free, agent-authored learning library')
@@ -160,7 +165,7 @@ export function buildProgram(): Command {
     const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
     if (opts.open) {
       const result = await createAndOpen(rootFrom(homeOpt()), patch, {
-        agentName: opts.agent, dryRun: opts.dryRun, openUrl: requestBrowserOpen,
+        agentName: opts.agent, dryRun: opts.dryRun, openUrl,
       });
       if (wantsJson(opts)) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
       else if (!result.imported) {
@@ -431,7 +436,7 @@ export function buildProgram(): Command {
       if (opts.open === false) {
         const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
         const result = await createAndOpen(rootFrom(homeOpt()), patch, {
-          agentName: opts.agent, dryRun: opts.dryRun, noOpen: true, openUrl: requestBrowserOpen,
+          agentName: opts.agent, dryRun: opts.dryRun, noOpen: true, openUrl,
         });
         if (wantsJson(opts)) out(JSON.stringify({ ...result, dryRun: !!opts.dryRun }, null, 2));
         else if (result.url) out(`open: ${result.url}`);
@@ -835,13 +840,14 @@ export function buildProgram(): Command {
     .option('--port <n>', 'port (default: random free port)', (v) => Number(v))
     .action(async (opts: { port?: number; json?: boolean }) => {
       const root = rootFrom(homeOpt());
-      const server = await ensureServer(root, { port: opts.port });
+      const server = await ensureLocalServer(root, { port: opts.port });
       if (wantsJson(opts)) {
         out(JSON.stringify({ ok: true, ...server }, null, 2));
         return;
       }
       out(`MergeLearn review GUI running at ${server.url}${server.reused ? ' (reused)' : ''}`);
       out(server.reused ? 'A local GUI is already running.' : 'Open it in your browser. It closes after inactivity.');
+      if (!openUrl(server.url)) note(`Could not open a browser. Open ${server.url} manually.`);
     });
 
   program

@@ -63,3 +63,21 @@ Opus cycle 3 returned "not blocked" with one important serialization correction 
 - R18 adopted: current source has no test assertion for absent direct-start health IDs, while `managedServer.ts:48-49` already requires a present matching ID. The implementation test updates health expectations to the new always-present direct-start contract.
 - R19 adopted: all non-JSON CLI test calls inject an opener; fresh, reuse, false-return, and JSON behavior are asserted without a real browser launch.
 - R20 adopted: a Practice schema-version mismatch follows the stale-draft recovery path and is never auto-filled or submitted.
+
+## Implementation review and adjudication
+
+Opus 5 reviewed the implementation in session `20260805_015658_b47bd8` and returned `VERDICT: NOT BLOCKED`. The raw final response is `/tmp/mergelearn-iteration-01-opus-final.md`.
+
+- R21 adopted: a page with an instance ID now fails closed when health omits its ID. It no longer enables writes against an unverifiable responder.
+- R22 adopted: the controller preserves mismatch guidance across dynamic-control refreshes instead of replacing it with generic unreachable-server text.
+- R23 adopted: pending recovery now surfaces every stored mutation path and presents the request bodies rather than nested storage envelopes.
+- R24 adopted: controller refreshes do not re-enable mutation controls while any mutation is in flight. A focused deferred-fetch test and real browser regression cover the ownership boundary.
+- R25 adopted: a terminal `card_unavailable` result clears the unreachable card's Practice draft before moving on.
+- R26 modified: the reviewer described the pending state as one global slot. Storage already held one slot per method and path, but only one was visible after reload. The implementation now restores and displays every pending path while retaining the no-replay rule.
+- R27 rejected as unnecessary for this iteration: no separate dismissal control was added. Pending payloads remain local and copyable, and each path clears when it next receives an HTTP response. No recovery entity or automatic replay was introduced.
+
+## Implementation verification
+
+- Focused reliability gate: 56 tests passed across controller, draft, server, accessibility, and CLI suites.
+- Full release gate: 268 tests passed across 39 files, followed by typecheck, build, and packaged smoke with 145 files.
+- Fresh Brave CDP profile and disposable `/tmp` library verified Practice and Manage reload restoration, successful clearing, stale `updatedAt` fencing, explicit recovery, transport disconnection, read-only availability, blocked programmatic writes, byte-identical pending preservation, matching-health recovery, multi-path recovery display, no replay, and post-reload rediscovery.
