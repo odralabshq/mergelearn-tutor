@@ -20,6 +20,7 @@ async function seed(): Promise<string> {
     order: ['c1'],
     cards: [{
       localId: 'c1', tagRefs: [],
+      problemRefs: [{ sourceName: 'Interview list', sourceId: 'a11y-ref', canonicalUrl: 'https://example.org/a11y' }],
       front: { prompt: 'Is the reveal announced?' },
       back: { shortAnswer: 'It should be.', explanationMarkdown: 'Otherwise nobody hears it.' },
     }],
@@ -29,6 +30,32 @@ async function seed(): Promise<string> {
 }
 
 const fetchText = async (url: string): Promise<string> => (await fetch(url)).text();
+
+describe('Prepare is accessible and URL-driven', () => {
+  it('exposes named lanes, labeled filters, boundary notes, and safe external handoff semantics', async () => {
+    running = await startReviewServer(await seed());
+    const html = await fetchText(`${running.url}/prepare?source=Interview%20list`);
+
+    expect(html).toContain('<a href="/prepare" aria-current="page">Prepare</a>');
+    expect(html).toContain('<form class="prepare-filters" method="get" action="/prepare" aria-label="Prepare filters">');
+    expect(html).toContain('<label>Set<input name="set"');
+    expect(html).toContain('<label>Tag<input name="tag"');
+    expect(html).toContain('<label>Source<input name="source" value="Interview list">');
+    expect(html).toContain('<section aria-labelledby="strengthen-heading"><h2 id="strengthen-heading">Strengthen</h2>');
+    expect(html).toContain('<section aria-labelledby="external-heading"><h2 id="external-heading">Practice externally</h2>');
+    expect(html).toContain('Problem reference supplied by Interview list');
+    expect(html).toContain('role="note">Source filters apply only to Practice externally, not retrieval evidence.');
+    expect(html).toContain('External links leave MergeLearn. No implementation result is recorded.');
+    expect(html).not.toContain('Import preparation example');
+    expect(html).toContain('target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"');
+    expect(html).toContain('aria-label="Practice externally: open Interview list · a11y-ref in a new tab"');
+    const main = html.match(/<main>([\s\S]*?)<\/main>/)?.[1] ?? '';
+    expect(main).not.toContain('ml-prepare');
+    expect(main).not.toContain('prepare-filter-state');
+    expect(main).not.toContain('data-server-mutation');
+    expect(html).not.toContain('/api/prepare');
+  });
+});
 
 describe('practice reveals are announced to assistive technology', () => {
   it('marks the attempt review as a live region', async () => {

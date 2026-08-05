@@ -28,6 +28,7 @@ import {
   problemRefIdentity, safeStoredObservedOn, safeStoredProblemText,
 } from '../core/library/problemRefs.js';
 import { loadMasteryReport, type ProgressStats } from '../core/library/mastery.js';
+import { loadPrepareWorkflow, type ExternalRow } from '../core/library/prepareWorkflow.js';
 import {
   lessonEvidenceBySet,
   lessonEvidenceForSet,
@@ -119,6 +120,9 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   }
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root, options.instanceId!));
   if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice(options.instanceId!));
+  if (method === 'GET' && url.pathname === '/prepare') {
+    return sendHtml(res, 200, await renderPrepare(root, url, options.instanceId!));
+  }
   if (method === 'GET' && url.pathname.startsWith('/set/')) {
     const setId = decodeURIComponent(url.pathname.slice('/set/'.length));
     // Do not count a typo or deleted lesson as an open in dogfood evidence.
@@ -899,6 +903,48 @@ function evidenceLabel(progress: LessonProgress): string {
     + `${progress.selfAssessedCount} self-assessed recall`;
 }
 
+function cardTargetId(cardId: string): string { return `card-${cardId}`; }
+function cardTargetHref(setId: string, cardId: string): string {
+  return `/set/${encodeURIComponent(setId)}#${encodeURIComponent(cardTargetId(cardId))}`;
+}
+function safeExternalHref(row: ExternalRow): string | undefined {
+  try {
+    const url = new URL(row.canonicalUrl);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.hash
+      ? row.canonicalUrl : undefined;
+  } catch { return undefined; }
+}
+
+async function renderPrepare(root: string, url: URL, instanceId: string): Promise<string> {
+  const filters = { set: url.searchParams.getAll('set').filter(Boolean), tag: url.searchParams.getAll('tag').filter(Boolean), source: url.searchParams.getAll('source').filter(Boolean) };
+  const hasSetTagFilters = filters.set.length > 0 || filters.tag.length > 0;
+  const workflow = await loadPrepareWorkflow(root, filters);
+  const strengthen = workflow.strengthen.length ? workflow.strengthen.map((row) =>
+    `<li class="prepare-row"><strong>${escapeHtml(row.prompt)}</strong><p>${escapeHtml(row.reason)}</p>` +
+    `<a class="secondary-action" href="${escapeHtml(cardTargetHref(row.setId, row.cardId))}">Review this evidence</a></li>`).join('')
+    : `<li class="empty">${hasSetTagFilters ? 'No evidence-backed weak cards match the active Set and Tag filters.' : 'No evidence-backed weak cards are available yet.'}</li>`;
+  const external = workflow.external.length ? workflow.external.map((row) => {
+    const href = safeExternalHref(row), label = `${row.sourceName} · ${row.sourceId}`;
+    const action = href ? `<a class="secondary-action" href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer" aria-label="Practice externally: open ${escapeHtml(label)} in a new tab">Practice externally</a>`
+      : `<span class="secondary-action is-disabled">Link unavailable</span>`;
+    const date = row.attributionDate ? `<span class="muted small">List attribution date: ${escapeHtml(row.attributionDate)}</span>` : '';
+    return `<li class="prepare-row"><strong>${escapeHtml(label)}</strong><p>${escapeHtml(row.reason)}</p>${date}<div class="prepare-actions">` +
+      `<a href="${escapeHtml(cardTargetHref(row.setId, row.cardId))}">View card</a>${action}</div></li>`;
+  }).join('') : `<li class="empty">${workflow.externalBeforeFilters === 0 ? 'No problem references are available yet.' : 'No problem references match the active filters.'}</li>`;
+  const field = (name: 'set' | 'tag' | 'source', label: string) => {
+    const values = filters[name].length ? filters[name] : [''];
+    return values.map((value, index) => `<label>${label}${values.length > 1 ? ` ${index + 1}` : ''}<input name="${name}" value="${escapeHtml(value)}"></label>`).join('');
+  };
+  const ignored = workflow.sourceFilterIgnoredForStrengthen ? `<p class="muted small" role="note">Source filters apply only to Practice externally, not retrieval evidence.</p>` : '';
+  const onboarding = workflow.externalBeforeFilters === 0
+    ? `<aside class="onboard" aria-label="Import preparation example"><p>Try the opt-in interview-pattern example:</p><code>mergelearn apply --file examples/interview-pattern-lesson.json --open</code></aside>` : '';
+  const body = `<h1>Prepare</h1><p class="muted">Strengthen retrieval evidence or practice from supplied external problem references.</p><p><a href="/">Learn and due Review stay on Home.</a></p>${onboarding}` +
+    `<form class="prepare-filters" method="get" action="/prepare" aria-label="Prepare filters">${field('set', 'Set')}${field('tag', 'Tag')}${field('source', 'Source')}<button type="submit">Apply filters</button></form>${ignored}` +
+    `<section aria-labelledby="strengthen-heading"><h2 id="strengthen-heading">Strengthen</h2><ul class="prepare-list">${strengthen}</ul></section>` +
+    `<section aria-labelledby="external-heading"><h2 id="external-heading">Practice externally</h2><p class="muted">External links leave MergeLearn. No implementation result is recorded.</p><ul class="prepare-list">${external}</ul></section>`;
+  return pageShell('MergeLearn — Prepare', 'prepare', body, instanceId);
+}
+
 /** One Home lesson card: objective, meta, progress pill, and a single primary
  * action (Start / Continue / Practice again) plus due-review as a secondary. */
 function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: number): string {
@@ -1044,7 +1090,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     // Summary holds a safe one-line preview (a <summary> can't contain block
     // code); the full prompt — fenced code and all — renders in the body.
     const inspectCommand = `mergelearn show ${setId}/${card.id}`;
-    return `<details class="browse-card"><summary><span class="q">${promptPreview(v.prompt)}</span>${state}</summary>` +
+    return `<details class="browse-card" id="${escapeHtml(cardTargetId(card.id))}"><summary><span class="q">${promptPreview(v.prompt)}</span>${state}</summary>` +
       `<div class="browse-body">` +
       `<button type="button" class="copy-reference copy-card" data-copy-command="${escapeHtml(inspectCommand)}" aria-label="Copy reference" title="Copy reference"><span data-copy-label>Copy reference</span><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></svg></button>` +
       `<p class="label">Question</p><div class="prompt-full markdown-body">${v.promptHtml || inlineCode(v.prompt)}</div>` +
@@ -1920,12 +1966,13 @@ export function escapeHtml(value: string): string {
 
 // ---- HTML shell ----
 
-type Tab = 'home' | 'practice' | 'set' | 'manage';
+type Tab = 'home' | 'practice' | 'prepare' | 'set' | 'manage';
 
 function pageShell(title: string, tab: Tab, body: string, instanceId: string): string {
   const tabs: { id: Tab; href: string; label: string }[] = [
     { id: 'home', href: '/', label: 'Home' },
     { id: 'practice', href: '/practice', label: 'Practice' },
+    { id: 'prepare', href: '/prepare', label: 'Prepare' },
     { id: 'manage', href: '/manage', label: 'Manage' },
   ];
   const nav = tabs
@@ -2193,6 +2240,13 @@ button.primary:hover{background:var(--accent-hover)}
 .browse-body{padding:16px}
 .browse-body .label{margin-top:14px}
 .browse-body .label:first-child{margin-top:0}
+.prepare-filters{display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin:18px 0;padding:14px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
+.prepare-filters label{display:grid;gap:4px;color:var(--muted);font-size:12px}
+.prepare-filters input{padding:8px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.prepare-list{list-style:none;padding:0;display:grid;gap:10px}
+.prepare-row{padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
+.prepare-row p{margin:4px 0 10px}.prepare-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:10px}
+.secondary-action.is-disabled{color:var(--muted);pointer-events:none}
 .active-filter{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:14px 16px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius);margin:18px 0}
 .card-curation{margin-top:24px}
 .card-tools{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:12px 0}

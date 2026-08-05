@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startReviewServer, type ReviewServer } from '../../src/session/server.js';
 import { importAgentSet } from '../../src/core/library/importAgentSet.js';
 import { archiveCard } from '../../src/core/library/cardLifecycle.js';
-import { loadCard } from '../../src/core/library/cardStore.js';
+import { loadCard, saveCard } from '../../src/core/library/cardStore.js';
 import { loadSet, saveSet } from '../../src/core/library/setStore.js';
 import { getDueCards } from '../../src/core/library/review/dueQueue.js';
 import { gradePlannedSession, startPlannedSession } from '../../src/core/library/review/session.js';
@@ -152,6 +152,63 @@ function gradeBody(
 }
 
 describe('review GUI server (functional)', () => {
+  it('renders Prepare with exact card fragments, safe links, and repeated source filters', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-prepare-route-'));
+    const result = await importAgentSet(root, {
+      version: 1,
+      set: { id: 'prep-set', title: 'Prepare & verify', tagIds: [] },
+      tagPatch: { reuse: [], add: [] }, order: ['reserved'],
+      cards: [{
+        localId: 'reserved', id: 'reserved', tagRefs: [],
+        problemRefs: [
+          { sourceName: 'Good & Co', sourceId: 'A/1', canonicalUrl: 'https://example.org/a?q=1' },
+          { sourceName: 'Other', sourceId: 'B', canonicalUrl: 'https://example.org/b' },
+        ],
+        front: { prompt: 'Which source?' },
+        back: { shortAnswer: 'The supplied one.', explanationMarkdown: 'Use factual metadata.' },
+      }],
+    }, { now: new Date('2026-08-05T12:00:00Z') });
+    expect(result.ok).toBe(true);
+    const original = await loadCard(root, 'prep-set', 'reserved');
+    expect(original).toBeDefined();
+    await archiveCard(root, 'prep-set', 'reserved');
+    await saveCard(root, { ...original!, id: 'snow 雪 %?#' });
+    running = await startReviewServer(root);
+
+    const html = await (await fetch(`${running.url}/prepare?source=missing&source=Good%20%26%20Co`)).text();
+    const fragment = `/set/${encodeURIComponent('prep-set')}#card-${encodeURIComponent('snow 雪 %?#')}`;
+    expect(html).toContain('<a href="/prepare" aria-current="page">Prepare</a>');
+    expect(html).toContain(`href="${fragment}"`);
+    expect(html).toContain('Good &amp; Co');
+    expect(html.match(/<input name="source"/g)).toHaveLength(2);
+    expect(html).toContain('<label>Source 1<input name="source" value="missing">');
+    expect(html).toContain('<label>Source 2<input name="source" value="Good &amp; Co">');
+    expect(html).not.toContain('Problem reference supplied by Other');
+    expect(html).not.toContain('href="/set/prep-set#card-reserved"');
+    expect(html).toContain('target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"');
+
+    const setHtml = await (await fetch(`${running.url}${fragment}`)).text();
+    expect(setHtml).toContain('id="card-snow 雪 %?#"');
+  });
+
+  it('distinguishes absent External metadata from filters that exclude it', async () => {
+    const root = await seed();
+    running = await startReviewServer(root);
+    const absent = await (await fetch(`${running.url}/prepare`)).text();
+    expect(absent).toContain('No evidence-backed weak cards are available yet.');
+    expect(absent).toContain('No problem references are available yet.');
+    expect(absent).toContain('mergelearn apply --file examples/interview-pattern-lesson.json --open');
+    await running.close();
+
+    running = await startReviewServer(await seedProblemRefs());
+    const populated = await (await fetch(`${running.url}/prepare`)).text();
+    expect(populated).toContain('<span class="secondary-action is-disabled">Link unavailable</span>');
+    expect(populated).not.toContain('href="javascript:');
+    expect(populated).not.toContain('Safe gninrut');
+    const filtered = await (await fetch(`${running.url}/prepare?source=missing`)).text();
+    expect(filtered).toContain('No problem references match the active filters.');
+  });
+
   it('reports health and keeps the health probe out of activity tracking', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-health-'));
     let activity = 0;

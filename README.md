@@ -63,6 +63,15 @@ tradeoff rather than presenting one pattern as universally best. Never copy a
 problem statement or claim a company asked it. Dated list or company labels are
 provenance only, not verification or frequency claims.
 
+### Prepare from evidence and supplied references
+
+Open `mergelearn serve`, then choose **Prepare**. The read-only page has two
+factual lanes: **Strengthen** contains cards with enough persisted retrieval
+failures, and **Practice externally** contains author-supplied problem references.
+Repeated `set`, `tag`, and `source` query parameters make filtered URLs shareable.
+Source filters affect external references only. Prepare records no implementation
+result and never turns these rows into a readiness score or workflow.
+
 ## Install details
 
 Requirements: Node.js 20 or newer. Git is needed only for lessons that cite
