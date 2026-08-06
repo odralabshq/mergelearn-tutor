@@ -797,6 +797,36 @@ describe('review GUI server (functional)', () => {
     expect(ended.summary.good).toBe(1);
   });
 
+  it('does not keep a completed lesson session resumable', async () => {
+    running = await startReviewServer(await seedTwoSets(1));
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lessonSetId: 'beta' }),
+    })).json();
+    const graded = await (await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(gradeBody(start, start.current.card, { requestId: 'complete-beta' })),
+    })).json();
+    expect(graded.state).toMatchObject({ current: null, remaining: 0, resumable: false });
+  });
+
+  it('keeps scheduled Review as the only Review action on populated Home', async () => {
+    const root = await seedTwoSets(2);
+    running = await startReviewServer(root);
+    const start = await (await fetch(`${running.url}/api/session/start`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ lessonSetId: 'alpha' }),
+    })).json();
+    await fetch(`${running.url}/api/session/grade`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(gradeBody(start, start.current.card, { requestId: 'progress-alpha' })),
+    });
+    const home = await (await fetch(`${running.url}/`)).text();
+    expect(home).toContain('<h2>In progress</h2>');
+    expect(home).toMatch(/Review \d+ now/);
+    expect(home).not.toMatch(/Review \d+ due/);
+  });
+
   it('advances an archived planned card and returns the next authoritative entry', async () => {
     const root = await seedMany(2);
     running = await startReviewServer(root);

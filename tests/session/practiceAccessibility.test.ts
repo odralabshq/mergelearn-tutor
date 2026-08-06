@@ -108,6 +108,8 @@ describe('practice reveals are announced to assistive technology', () => {
     expect(script).toContain('function intentKey');
     expect(script).toContain('function sessionKey');
     expect(script).toContain('sessionKey(sj)!==intentKey(sessionBody)');
+    expect(script).toContain('sj&&sj.ok&&sj.resumable');
+    expect(script).toContain('!sj.resumable');
     expect(script).toContain("pendingStartKey='ml-pending-session-start'");
     expect(script).toContain('localStorage.setItem(pendingStartKey,startBody)');
     expect(script).toContain("body:startBody");

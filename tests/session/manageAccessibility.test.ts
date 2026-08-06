@@ -42,7 +42,8 @@ describe('Manage paging accessibility', () => {
     expect(html).toContain('id="reload-cards"');
     expect(html).toContain('class="curation-card" tabindex="-1"');
     expect(html).toContain('if(expectedOffset>0&&newRows.length)newRows[0].focus();');
-    expect(html).toContain("document.getElementById('reload-cards').focus()");
+    expect(html).toContain("document.getElementById('card-status').focus()");
+    expect(html).not.toContain("document.getElementById('reload-cards').focus()");
     expect(html).toContain("resetCardResults(action==='edit'?'Saved.':'Card updated.')");
     expect(html).toContain("(cardPage.notice?cardPage.notice+' ':'')+cardPage.offset+' of '+cardPage.total");
     expect(html).toContain("cardPage.notice=typeof notice==='string'?notice:''");

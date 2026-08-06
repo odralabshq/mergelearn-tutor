@@ -543,7 +543,7 @@ async function plannedSessionView(root: string, session: ReviewSession) {
     unresolved: summary.unresolved ?? 0,
     ended: !!session.endedAt,
     terminalReason: plan?.terminalReason ?? null,
-    resumable: !!plan && !session.endedAt,
+    resumable: !!plan && !!entry && !session.endedAt,
     remaining: remainingCards,
     revisitRemaining,
     backlog: plan?.backlogCount ?? 0,
@@ -975,7 +975,9 @@ async function renderPrepare(
 
 /** One Home lesson card: objective, meta, progress pill, and a single primary
  * action (Start / Continue / Practice again) plus due-review as a secondary. */
-function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: number): string {
+function renderLessonRow(
+  s: SetSummary, progress: LessonProgress, dueCount: number, showReview = true,
+): string {
   const href = `/practice?mode=lesson&set=${encodeURIComponent(s.id)}`;
   const actionLabel = progress.state === 'not_started' ? 'Start lesson'
     : progress.state === 'in_progress' ? 'Continue lesson'
@@ -990,7 +992,7 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
   const count = `<span class="count">${progress.total} activit${progress.total === 1 ? 'y' : 'ies'}</span>`;
   const evidence = `<span class="evidence-counts">${evidenceLabel(progress)}</span>`;
   const pill = `<span class="progress-pill state-${progress.state}">${pillLabel}</span>`;
-  const review = dueCount > 0
+  const review = showReview && dueCount > 0
     ? `<a class="secondary-action" href="/practice?set=${encodeURIComponent(s.id)}">Review ${dueCount} due</a>`
     : '';
   const disabled = progress.total === 0;
@@ -1096,7 +1098,7 @@ async function renderHome(root: string, instanceId: string): Promise<string> {
     `<li class="attention-row"><div><strong>${escapeHtml(row.prompt)}</strong><p>${escapeHtml(row.reason)}</p></div><a class="secondary-action" href="${escapeHtml(cardTargetHref(row.setId, row.cardId))}">View card</a></li>`).join('');
   const review = await renderReviewScope(root, due, prefs.reviewSessionCap, false);
   const inProgress = current
-    ? `<ul class="lesson-list">${renderLessonRow(current.summary, current.progress, dueBySet.get(current.summary.id) ?? 0)}</ul>`
+    ? `<ul class="lesson-list">${renderLessonRow(current.summary, current.progress, dueBySet.get(current.summary.id) ?? 0, false)}</ul>`
     : `<p class="muted">No lesson is in progress. <a href="/library">Browse lessons</a>.</p>`;
   const attention = `<p class="muted small">Opening these cards is ungraded and does not change scheduling.</p>` + (weak
     ? `<ul class="attention-list">${weak}</ul><p><a href="/practice/strengthen">See all weak areas</a></p>`
@@ -1366,11 +1368,11 @@ async function loadCardResults(){
     var r=await fetch('/api/cards?'+cardQuery(expectedOffset).toString());var j=await r.json();
     if(requestGeneration!==cardPage.generation||expectedOffset!==cardPage.offset)return;
     if(r.status===409&&j.code==='snapshot_mismatch'){
-      cardStatus('Library changed. Reload results before continuing.');document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=false;document.getElementById('reload-cards').focus();return;
+      cardStatus('Library changed. Reload results before continuing.');document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=false;document.getElementById('card-status').focus();return;
     }
     if(!r.ok||!j.ok)throw new Error(j.error||'card search failed');
     if(expectedOffset===0){cardPage.snapshot=j.snapshot;box.innerHTML='';}
-    else if(j.snapshot!==cardPage.snapshot){cardStatus('Library changed. Reload results before continuing.');document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=false;return;}
+    else if(j.snapshot!==cardPage.snapshot){cardStatus('Library changed. Reload results before continuing.');document.getElementById('load-more-cards').hidden=true;document.getElementById('reload-cards').hidden=false;document.getElementById('card-status').focus();return;}
     var incoming=j.cards||[],beforeRows=box.querySelectorAll('.curation-card').length;box.insertAdjacentHTML('beforeend',incoming.map(cardHtml).join(''));
     var newRows=[].slice.call(box.querySelectorAll('.curation-card'),beforeRows);
     cardPage.offset=expectedOffset+incoming.length;cardPage.total=j.total;
@@ -1871,8 +1873,8 @@ document.addEventListener('keydown',function(e){
   try{
     var saved=null;try{saved=localStorage.getItem('ml-active-session');}catch(e){}
     var sj=null;if(saved){var rr=await fetch('/api/session/'+encodeURIComponent(saved));if(rr.ok)sj=await rr.json();}
-    if(sj&&sj.ok&&!sj.ended&&sessionKey(sj)!==intentKey(sessionBody)){var notice=document.getElementById('launch-notice');if(notice){notice.hidden=false;notice.textContent='Your unfinished session was resumed. The newly requested practice was not started.';}}
-    if(!sj||!sj.ok||sj.ended){
+    if(sj&&sj.ok&&sj.resumable&&sessionKey(sj)!==intentKey(sessionBody)){var notice=document.getElementById('launch-notice');if(notice){notice.hidden=false;notice.textContent='Your unfinished session was resumed. The newly requested practice was not started.';}}
+    if(!sj||!sj.ok||!sj.resumable){
       var startBody=null;try{var pendingStart=localStorage.getItem(pendingStartKey);if(pendingStart){var parsedStart=JSON.parse(pendingStart);if(intentKey(parsedStart)===intentKey(sessionBody))startBody=pendingStart;}}catch(e){}
       if(!startBody){var startRequest=Object.assign({},sessionBody,{requestId:'start-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random())});startBody=JSON.stringify(startRequest);try{localStorage.setItem(pendingStartKey,startBody);}catch(e){}}
       var sr=await fetch('/api/session/start',{method:'POST',headers:{'content-type':'application/json'},body:startBody});
