@@ -4,6 +4,35 @@ import { compareDueCards } from './dueQueue.js';
 
 export type InterleaveOptions = { strategy?: QueueStrategy; seed?: string };
 
+type SiblingItem = { card: Card; originalIndex: number };
+type SiblingGroup = { key: string; cards: SiblingItem[] };
+
+/** Space author-declared siblings without changing membership or within-group order. */
+export function spaceSiblingCards(cards: readonly Card[]): Card[] {
+  const groups = new Map<string, SiblingGroup>();
+  cards.forEach((card, index) => {
+    const key = card.siblingGroupId === undefined
+      ? JSON.stringify(['singleton', index])
+      : JSON.stringify(['sibling', card.setId, card.siblingGroupId.trim()]);
+    const group = groups.get(key) ?? { key, cards: [] };
+    group.cards.push({ card, originalIndex: index });
+    groups.set(key, group);
+  });
+  const output: Card[] = [];
+  let previous: string | undefined;
+  while (output.length < cards.length) {
+    let candidates = [...groups.values()].filter((group) => group.cards.length > 0);
+    const alternatives = candidates.filter((group) => group.key !== previous);
+    if (alternatives.length) candidates = alternatives;
+    candidates.sort((left, right) => right.cards.length - left.cards.length
+      || left.cards[0]!.originalIndex - right.cards[0]!.originalIndex);
+    const group = candidates[0]!;
+    output.push(group.cards.shift()!.card);
+    previous = group.key;
+  }
+  return output;
+}
+
 function hash(value: string): number {
   let h = 2166136261;
   for (let i = 0; i < value.length; i++) { h ^= value.charCodeAt(i); h = Math.imul(h, 16777619); }

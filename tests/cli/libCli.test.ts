@@ -37,6 +37,38 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(buildProgram().version()).toBe('1.2.0');
   });
 
+  it('serve opens human output once, reports opener failure, and keeps JSON launch-free', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-serve-'));
+    const opened: string[] = [];
+    const errors: string[] = [];
+    const logs: string[] = [];
+    const originalError = console.error;
+    const originalLog = console.log;
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); };
+    console.log = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    const ensureLocalServer = async () => ({
+      url: 'http://127.0.0.1:43210', pid: 123, port: 43210,
+      startedAt: '2026-08-05T00:00:00.000Z', managed: true as const, reused: true,
+    });
+    try {
+      const human = buildProgram({ ensureLocalServer, openUrl: (url) => { opened.push(url); return false; } });
+      await human.parseAsync(['node', 'libCli.js', '--home', root, 'serve']);
+      expect(opened).toEqual(['http://127.0.0.1:43210']);
+      expect(logs.join('\n')).toContain('(reused)');
+      expect(errors.join('\n')).toContain('Open http://127.0.0.1:43210 manually');
+
+      logs.length = 0;
+      const jsonOpened: string[] = [];
+      const json = buildProgram({ ensureLocalServer, openUrl: (url) => { jsonOpened.push(url); return true; } });
+      await json.parseAsync(['node', 'libCli.js', '--home', root, '--json', 'serve']);
+      expect(JSON.parse(logs.join('\n'))).toMatchObject({ ok: true, url: 'http://127.0.0.1:43210' });
+      expect(jsonOpened).toEqual([]);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+    }
+  });
+
   it('drives context -> import -> sets -> due -> show -> grade against a real library', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-'));
 
@@ -51,7 +83,9 @@ describe('library CLI (functional, end-to-end)', () => {
     const patchFile = join(root, 'patch.json');
     await writeFile(patchFile, JSON.stringify(patch), 'utf8');
     const importOut = await run(root, 'import', '--file', patchFile, '--agent', 'tester');
-    expect(importOut).toContain('imported set "cli-deck": 1 active');
+    // The create-vs-merge disclosure is deliberate: "imported set X" alone reads
+    // identically whether X is new or already held a lesson.
+    expect(importOut).toContain('imported set "cli-deck" (new lesson): 1 active');
     expect(importOut).toContain('+1 tags');
 
     // context: recent lessons expose enough grounded metadata to deepen instead of repeat.
@@ -133,6 +167,33 @@ describe('library CLI (functional, end-to-end)', () => {
     expect(again).toContain('already installed');
   });
 
+  it('runs the documented example through apply --file --open', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'mlt-cli-example-'));
+    const opened: string[] = [];
+    const lines: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+    try {
+      const program = buildProgram({
+        ensureLocalServer: async () => ({
+          url: 'http://127.0.0.1:43210', pid: 123, port: 43210,
+          startedAt: '2026-08-05T00:00:00.000Z', managed: true, reused: true,
+        }),
+        openUrl: (url) => { opened.push(url); return true; },
+      });
+      await program.parseAsync([
+        'node', 'libCli.js', '--home', root, 'apply', '--file',
+        join(process.cwd(), 'examples', 'interview-pattern-lesson.json'), '--open',
+      ]);
+    } finally {
+      console.log = originalLog;
+    }
+    expect(lines.join('\n')).toContain('applied set "interview-pattern-example"');
+    expect(opened).toEqual([
+      'http://127.0.0.1:43210/set/interview-pattern-example?source=apply-open',
+    ]);
+  });
+
   it('doctor --json emits machine-readable setup checks', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-cli-doctor-'));
     const result = JSON.parse(await run(root, 'doctor', '--json'));
@@ -153,19 +214,25 @@ describe('library CLI (functional, end-to-end)', () => {
     const patchFile = join(root, 'patch.json');
     await writeFile(patchFile, JSON.stringify(patch), 'utf8');
     await run(root, 'import', '--file', patchFile);
-    const listed = JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'));
-    const cardId = listed[0].cardId;
+    // The deprecated `cards` alias runs the canonical handler, so it returns the
+    // same {cards,total,returned,truncated} envelope. One JSON contract for one
+    // piece of data; an alias that answered in a different shape would be worse
+    // than the changed shape.
+    const cardsOf = async (...args: string[]): Promise<{ cardId: string; status: string; prompt: string }[]> =>
+      JSON.parse(await run(root, 'cards', ...args, '--json')).cards;
+
+    const cardId = (await cardsOf('--set', 'cli-deck'))[0]!.cardId;
     await run(root, 'archive', '--set', 'cli-deck', '--card', cardId);
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))).toEqual([]);
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))[0].status).toBe('archived');
+    expect(await cardsOf('--set', 'cli-deck')).toEqual([]);
+    expect((await cardsOf('--set', 'cli-deck', '--archived'))[0]!.status).toBe('archived');
     await run(root, 'unarchive', '--set', 'cli-deck', '--card', cardId);
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))[0].status).toBe('active');
+    expect((await cardsOf('--set', 'cli-deck'))[0]!.status).toBe('active');
     expect(await run(root, 'delete', '--set', 'cli-deck', '--card', cardId)).toContain('refusing permanent deletion');
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--json'))).toHaveLength(1);
+    expect(await cardsOf('--set', 'cli-deck')).toHaveLength(1);
     await run(root, 'edit', '--set', 'cli-deck', '--card', cardId, '--prompt', 'Fixed CLI prompt');
-    expect(JSON.parse(await run(root, 'cards', '--query', 'fixed cli', '--json'))[0].prompt).toBe('Fixed CLI prompt');
+    expect((await cardsOf('--query', 'fixed cli'))[0]!.prompt).toBe('Fixed CLI prompt');
     await run(root, 'delete', '--set', 'cli-deck', '--card', cardId, '--yes');
-    expect(JSON.parse(await run(root, 'cards', '--set', 'cli-deck', '--archived', '--json'))).toEqual([]);
+    expect(await cardsOf('--set', 'cli-deck', '--archived')).toEqual([]);
   });
 
   it('exports and imports a portable lesson bundle', async () => {

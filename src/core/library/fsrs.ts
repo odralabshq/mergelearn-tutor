@@ -50,6 +50,31 @@ function fromState(s: FsrsState): FsrsCard {
   } as FsrsCard;
 }
 
+/** Reused instance: dailyFsrs() is pure config with fuzz disabled, so caching
+ * it is safe and avoids rebuilding the scheduler once per card. */
+let cachedFsrs: FSRS | undefined;
+
+/**
+ * Current probability of recall, 0..1 (FSRS retrievability).
+ *
+ * Measured, not inferred: at a card's due date this returns ~0.90 (the target
+ * retention), rising to 1.0 immediately after a review and decaying with
+ * elapsed time. A never-reviewed card returns 0, so callers MUST decide whether
+ * unstudied cards belong in an average - including them turns a retention
+ * figure back into a coverage figure.
+ */
+export function retrievability(state: FsrsState, now = new Date()): number {
+  cachedFsrs ??= dailyFsrs();
+  const r = cachedFsrs.get_retrievability(fromState(state), now, false);
+  return Number.isFinite(r) ? Math.min(1, Math.max(0, r)) : 0;
+}
+
+/** Has the learner actually attempted this card? Distinguishes "never seen"
+ * from "seen and forgotten", which a bare retrievability number cannot. */
+export function hasBeenStudied(state: FsrsState): boolean {
+  return state.reps > 0;
+}
+
 /** A fresh schedule for a new card, due immediately. */
 export function newFsrsState(now = new Date()): FsrsState {
   return toState(createEmptyCard(now));

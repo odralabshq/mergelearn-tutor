@@ -30,13 +30,18 @@ markdown files, each carrying YAML frontmatter (`type`, `title`, `description`, 
 - [Lexicon](LEXICON.md) - shared vocabulary.
 - [Roadmap](ROADMAP.md) - planned direction.
 
+## Proposed iterations
+
+- [Iteration scopes](iterations/README.md) - sequential, independently shippable work covering reliability, scalable management, focused practice, learning evidence, and interview preparation.
+
 ## Simplified platform (2026-07 redesign)
 
 The **north-star** design after the 2026-07 simplification pivot: a model-free
-local library + FSRS review shell, agent-authored learning sets, Quizlet-style
-sets/folders/tags, a single agent-maintained tag taxonomy (no separate concept
-graph), self-contained card backs, and a two-tab UI. The tutor authors nothing
-and analyzes no code. Supersedes the LLM-sole-author direction below where they
+local library + FSRS review shell, agent-authored learning sets, folders and tags,
+a single agent-maintained taxonomy, and self-contained card backs. The shipped UI
+uses Home for next actions, Library for Lessons and Cards, and Practice for graded
+Review plus read-only Strengthen and External modes. The tutor authors nothing and
+analyzes no code. This supersedes the older LLM-sole-author direction where they
 conflict.
 
 - **[Redesign Overview](design/redesign-2026-07/00-OVERVIEW.md)** — **Start here for the target.** North-star + the eight locked decisions.

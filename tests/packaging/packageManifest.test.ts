@@ -24,7 +24,11 @@ describe('public package manifest', () => {
     expect(pkg.main).toBe('dist/index.js');
     expect(pkg.types).toBe('dist/index.d.ts');
     expect(pkg.bin?.mergelearn).toBe('./dist/libCli.js');
-    expect(pkg.files).toEqual(['dist/', 'skills/', 'examples/', 'docs/*.md', 'docs/assets/screenshots/*.png', 'LICENSE']);
+    expect(pkg.files).toEqual([
+      'dist/', 'skills/', 'examples/', 'docs/USER_MANUAL.md',
+      'docs/REVIEW_SESSION.md', 'docs/PRIVACY.md',
+      'docs/assets/screenshots/*.png', 'LICENSE',
+    ]);
     expect(pkg.scripts?.['smoke:package']).toBe('node scripts/packaged-smoke.mjs');
   });
 

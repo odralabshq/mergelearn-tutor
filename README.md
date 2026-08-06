@@ -2,8 +2,9 @@
 
 MergeLearn is a local-first, model-free learning tool. Your own coding agent
 writes the lessons; MergeLearn stores them, schedules reviews with FSRS, and
-gives you a local website to learn from. It ships no model and makes no network
-calls.
+gives you a local website to learn from. It ships no model, account, telemetry,
+or required network service. Authored Mermaid diagrams may load their renderer
+from jsDelivr when displayed; no lesson or library data is sent with that request.
 
 ## How you use it
 
@@ -44,6 +45,33 @@ mergelearn serve
 
 The sample is opt-in, offline, and demonstrates every question type. Running the
 command again does not create duplicates.
+
+### Try the interview-pattern example
+
+`examples/interview-pattern-lesson.json` is an original, opt-in lesson with only
+reserved `example.org` references. Import it through the normal authoring gate:
+
+```bash
+mergelearn apply --file examples/interview-pattern-lesson.json --open
+```
+
+When authoring transfer practice, fade guidance from a worked example to a
+completion task, then a near-miss and an unlabelled transfer prompt. Keep problem
+and pattern identity out of the prompt and context when those labels would reveal
+the approach. Put them in the explanation or post-reveal references instead.
+Include competing approaches when constraints change the right choice; state the
+tradeoff rather than presenting one pattern as universally best. Never copy a
+problem statement or claim a company asked it. Dated list or company labels are
+provenance only, not verification or frequency claims.
+
+### Practice from evidence and supplied references
+
+Open `mergelearn serve`, then choose **Practice**. **Review due** starts a graded,
+scheduled session. The read-only **Strengthen weak areas** mode contains cards with
+enough persisted retrieval failures, while **External problems** contains
+author-supplied references. Repeated `set`, `tag`, and `source` query parameters
+make those filtered views shareable. Source filters affect external references
+only. Strengthen and External problems never write FSRS state or imply readiness.
 
 ## Install details
 
@@ -94,11 +122,12 @@ with the arrow keys or visible buttons, or drag it into place.
 </table>
 
 After an attempt, MergeLearn reveals deterministic feedback and the authored
-explanation. Your confidence grade controls FSRS scheduling; answer correctness
-is stored as evidence but does not grade your confidence for you.
+explanation. Pre-reveal confidence is recorded for calibration and does not affect
+FSRS. Your post-reveal Again, Hard, Good, or Easy grade controls scheduling;
+answer correctness is stored separately as learning evidence.
 
 <p align="center">
-  <img src="docs/assets/screenshots/answer-feedback.png" alt="A correct multiple-choice attempt with targeted feedback, full explanation, and Again, Hard, Good, and Easy confidence controls" width="75%">
+  <img src="docs/assets/screenshots/answer-feedback.png" alt="A correct multiple-choice attempt with targeted feedback, full explanation, and Again, Hard, Good, and Easy review-grade controls" width="75%">
 </p>
 
 *Feedback appears only after the attempt; the learner still chooses the review grade.*
@@ -116,8 +145,8 @@ is stored as evidence but does not grade your confidence for you.
 
 ## CLI commands
 
-The browser is the main interface, but every action is also available on the
-command line.
+The browser is the main interface. Core library inspection, maintenance, and
+review grading are also available on the command line.
 
 ```bash
 mergelearn context     [--goal "..."] [--repo <path>] [--target-set <id>] [--recent <n>]
@@ -132,10 +161,11 @@ mergelearn unarchive   <setId/cardId>
 mergelearn edit        <setId/cardId> [content options]
 mergelearn delete      <setId|setId/cardId> --yes [--force]
 mergelearn settings    [--review-session-cap <n>] [--queue-strategy overdue|interleaved]
-mergelearn due         [--set <id>] [--tag <id>] [--folder <path>] [--limit <n>]
+mergelearn list due    [--set <id>] [--tag <id>] [--folder <path>] [--limit <n>] [--quiet] [--if-any]
 mergelearn show        <setId/cardId>
 mergelearn grade       <setId/cardId> <1-4>
 mergelearn mastery
+mergelearn weak
 mergelearn check       [--set <id>] [--archived]
 mergelearn prune       [--set <id>] [--yes]
 mergelearn export      --set <id> --output <lesson.mergelearn.zip>
@@ -151,6 +181,31 @@ selects the library, `--json` emits machine-readable output, and `--yes`
 confirms destructive or bulk actions. Run `mergelearn help <command>` for full
 options or `mergelearn help --all` for internal and deprecated spellings.
 
+`list cards --json` returns every match by default, wrapped so a page can never
+be mistaken for the whole library:
+
+```json
+{ "cards": [ ... ], "total": 400, "returned": 400, "truncated": false }
+```
+
+Human output pages at 100 rows and prints `showing 100 of 400` to stderr, keeping
+stdout pipeable. `--limit <n>` pages deliberately and sets `truncated: true`;
+`--limit 0` means no cap. The deprecated `cards` alias returns the same envelope,
+so there is one JSON contract rather than two.
+
+Progress is reported as two separate measures, because one number cannot express
+both. `mastery` shows how much of a tag or folder has been *learned* (reached
+review at least once) next to how much is still *retained* right now (current
+FSRS recall probability over the cards actually studied), with the studied count
+alongside so the denominator is never a mystery. Rows are ordered weakest first.
+`weak` goes further and names the individual cards you keep failing to recall,
+using recorded review evidence; it stays silent rather than ranking cards whose
+history is too thin to judge.
+
+`status` also answers "is there anything to do?" by reporting the due count.
+`due --if-any --quiet` prints one line when reviews are waiting and nothing at
+all when they are not, which makes it safe to call from a shell prompt hook.
+
 `context` prints the current library state for an agent; `--goal` is optional but
 helps focus the lesson, while `--recent` exposes recent question summaries,
 source paths, and review state. `apply --open` is the normal agent workflow:
@@ -163,7 +218,19 @@ developer deliberately made no lesson. Early-stage
 
 Each lesson is included in spaced repetition by default. Its lesson page has an
 **Include in spaced repetition** checkbox for a reversible learn-once opt-out.
-This learner preference survives later agent re-imports of the lesson.
+
+Lesson identity is explicit: omitting `set.id` always means "create a new
+lesson", and passing an existing `set.id` means "update or append to that one".
+An omitted id that slugifies onto an existing lesson is rejected with
+`set:id_collision` rather than merged, because two unrelated lessons can share a
+title and a silent merge overwrites the first lesson's metadata.
+
+Learner-owned state survives later agent re-imports of the same lesson. An agent
+refreshing its teaching text replaces the question, answer, explanation,
+interaction, tags, and citations, but review history, scheduling state, creation
+provenance, the learn-once preference, and an archived card's archived status are
+all preserved. Refreshing a lesson never resets progress or resurrects a card you
+archived.
 
 Lesson bundles contain authored teaching content, interactions, referenced tags,
 assets, and frozen source excerpts. They exclude review schedules, sessions,

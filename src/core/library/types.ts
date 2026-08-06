@@ -13,11 +13,26 @@ export type CardStatus = 'active' | 'needs_review' | 'blocked' | 'archived';
  * See docs/design/redesign-2026-07/08-FIRST-LEARNING-LOOP.md. */
 export type LessonKind = 'general' | 'repository' | 'bridge';
 
+export type ProblemAttribution = {
+  kind: 'list' | 'company';
+  label: string;
+  observedOn: string;
+};
+
+export type ExternalProblemRef = {
+  sourceName: string;
+  sourceId: string;
+  canonicalUrl: string;
+  title?: string;
+  attributions?: ProblemAttribution[];
+};
+
 /** Abstraction level a card teaches at (orthogonal to Difficulty). */
 export type Altitude = 'line' | 'function' | 'module' | 'service' | 'system';
 
 /** Optional lesson metadata shared by CardSet and the import patch's set. */
 export type LessonMeta = {
+  problemRefs?: ExternalProblemRef[];
   objective?: string;
   lessonKind?: LessonKind;
   prerequisiteTagIds?: string[];
@@ -114,6 +129,9 @@ export type FsrsState = {
 export type Card = {
   id: string;
   setId: string;
+  /** Author-owned, set-local grouping for activities derived from one source. */
+  siblingGroupId?: string;
+  problemRefs?: ExternalProblemRef[];
   folderPath?: string;
   tagIds: string[];
   front: CardFront;
@@ -209,19 +227,121 @@ export type ReviewEvent = {
   confidenceBeforeReveal?: Confidence;
   /** The learner's pre-reveal action; evidence, not a scheduling input. */
   attempt?: ReviewAttempt;
-  stateBefore: 0 | 1 | 2 | 3;
-  stabilityBefore: number;
-  difficultyBefore: number;
-  elapsedDays: number;
-  scheduledDays: number;
+  stateBefore?: 0 | 1 | 2 | 3;
+  stabilityBefore?: number;
+  difficultyBefore?: number;
+  elapsedDays?: number;
+  scheduledDays?: number;
   reviewedAt: string;
+  /** Planned-session identity. Absent on legacy events. */
+  sessionId?: string;
+  sessionMode?: 'review_due' | 'study_once' | 'retry_missed';
+  resultClass?: 'scheduled' | 'evidence';
+  entryId?: string;
+  requestId?: string;
 };
+
+export type PlannedSessionEntry = {
+  id: string;
+  setId: string;
+  cardId: string;
+  pass: 'first' | 'revisit';
+};
+
+export type PlannedGradeResponse = {
+  ok: true;
+  requestId: string;
+  revision: number;
+  entryId: string;
+  setId: string;
+  cardId: string;
+  resultClass: 'scheduled' | 'evidence';
+  currentEntryId?: string;
+  due?: string;
+  requeued?: true;
+  replayed?: true;
+};
+
+export type PlannedGradeLedgerEntry = {
+  requestId: string;
+  semanticKey: string;
+} & (
+  | { response: PlannedGradeResponse; error?: never }
+  | { response?: never; error: { code: 'transition_diverged' | 'request_undone' } }
+);
+
+export type PlannedSessionState = {
+  version: 1;
+  mode: 'review_due' | 'study_once' | 'retry_missed';
+  entries: PlannedSessionEntry[];
+  revision: number;
+  currentEntryId?: string;
+  gradeLedger: PlannedGradeLedgerEntry[];
+  undoLedger?: PlannedUndoLedgerEntry[];
+  requestBudget: 512;
+  /** Selection size before the fixed plan cap, for truthful backlog reporting. */
+  sourceCount?: number;
+  backlogCount?: number;
+  /** Stable plan entries already traversed as unavailable. */
+  unresolvedEntryIds?: string[];
+
+  terminalReason?: 'request_budget_exhausted';
+};
+
+export type PlannedUndoResponse = {
+  ok: true;
+  requestId: string;
+  revision: number;
+  entryId: string;
+  gradeRequestId: string;
+  currentEntryId: string;
+  setId: string;
+  cardId: string;
+  replayed?: true;
+};
+
+export type PlannedUndoRequest = {
+  requestId: string;
+  revision: number;
+  entryId: string;
+  gradeRequestId: string;
+};
+
+export type PlannedUndoLedgerEntry = {
+  requestId: string;
+  semanticKey: string;
+} & (
+  | { response: PlannedUndoResponse; error?: never }
+  | { response?: never; error: { code: 'transition_diverged' } }
+);
+
+export type PendingSessionTransition = {
+  requestId: string;
+  semanticKey: string;
+  beforeCard: Card;
+  afterCard: Card;
+  planAfter: PlannedSessionState;
+  summaryAfter: ReviewSession['summary'];
+} & (
+  | {
+    kind: 'grade';
+    event: ReviewEvent;
+    response: PlannedGradeResponse;
+  }
+  | {
+    kind: 'undo';
+    eventsAfter: ReviewEvent[];
+    response: PlannedUndoResponse;
+  }
+);
 
 /** One review sitting. Persisted as a per-session file, not a global log. */
 export type ReviewSession = {
   id: string;
   startedAt: string;
   endedAt?: string;
+  /** Durable identity for replaying a lost /api/session/start response. */
+  startRequest?: { requestId: string; intentKey: string };
   // 'lesson' walks a set's authored order (Learn); the others are due Review.
   mode: 'recommended' | 'set' | 'folder' | 'tag_filter' | 'lesson';
   filter?: {
@@ -233,6 +353,9 @@ export type ReviewSession = {
     // matches if it satisfies ANY dimension; 'intersection' = must satisfy all.
     combinator?: 'union' | 'intersection';
   };
+  /** Absent on legacy sessions, which remain readable and endable. */
+  plan?: PlannedSessionState;
+  pendingTransition?: PendingSessionTransition;
   events: ReviewEvent[];
   summary: {
     reviewedCount: number;
@@ -242,6 +365,11 @@ export type ReviewSession = {
     hard: number;
     good: number;
     easy: number;
+    scheduledResults?: number;
+    evidenceAttempts?: number;
+    firstPass?: number;
+    retried?: number;
+    unresolved?: number;
   };
 };
 
@@ -268,9 +396,22 @@ export type RecentLesson = {
   createdAt: string;
   tagIds: string[];
   citedPaths: string[];
+  /** Cited paths WITH line ranges (`src/foo.ts:104-108`). `citedPaths` alone
+   * cannot tell an author which lines are already taught, so it prevents
+   * duplicate files but not duplicate content. */
+  citedRanges: string[];
+  /** Distinct altitudes already covered. Altitude is the schema's explicit axis
+   * for climbing a concept from syntax to architecture, so an author deciding
+   * whether to deepen needs it; without it, avoiding overlap is guesswork. */
+  altitudes: Altitude[];
+  /** Identifier-only problem summary. URLs, titles, and attribution stay out of authoring context. */
+  problemRefs: Pick<ExternalProblemRef, 'sourceName' | 'sourceId'>[];
   questionSummaries: string[];
   reviewState: { cards: number; due: number; lapses: number };
 };
+
+/** A task the agent previously decided was not worth a lesson. */
+export type RecentSkip = { ts: string; task: string; reason: string };
 
 export type AuthoringContext = {
   goal?: string;
@@ -280,6 +421,10 @@ export type AuthoringContext = {
   folderTree: string[];
   targetSetId?: string;
   recentLessons: RecentLesson[];
+  /** Recent `skip` decisions, newest first. Without these the next agent
+   * re-evaluates work already judged not worth teaching, and "author no lesson"
+   * stops being a decision the tool remembers. */
+  recentSkips: RecentSkip[];
 };
 
 /** A NEW tag proposed within a patch; referenced by cards via localId. */
@@ -297,6 +442,8 @@ export type ProposedTag = {
 export type AgentCardDraft = {
   localId: string;
   id?: string;
+  siblingGroupId?: string;
+  problemRefs?: ExternalProblemRef[];
   folderPath?: string;
   tagRefs: string[]; // existing tag ids OR ProposedTag localIds
   front: CardFront;

@@ -32,6 +32,13 @@ export async function readRange(repoPath: string, path: string, startLine: numbe
   const lines = raw.split('\n');
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop();
   const start = Math.max(1, Math.floor(startLine));
+  // A start past EOF cannot be clamped into a meaningful range: slice(start-1,
+  // end) returns [], so the caller would freeze an EMPTY snippet and still
+  // claim status 'fresh'. Throwing routes this through freezeSourceRef's catch
+  // to status 'missing' -> needs_review, exactly how a bad path already behaves.
+  if (start > lines.length) {
+    throw new Error(`startLine ${start} is past end of file (${lines.length} lines): ${path}`);
+  }
   const end = Math.min(lines.length, Math.max(start, Math.floor(endLine)));
   return { path, startLine: start, endLine: end, text: lines.slice(start - 1, end).join('\n') };
 }

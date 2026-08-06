@@ -11,6 +11,7 @@
  */
 
 import type { AgentSetPatch, Interaction, LessonKind, ParsonsBlock } from './types.js';
+import { normalizeProblemRefs } from './problemRefs.js';
 
 export type PatchValidationError = { code: string; message: string; cardLocalId?: string };
 
@@ -95,8 +96,9 @@ export function validateSetPatchStructure(
   patch: AgentSetPatch,
   existingTagIds: Set<string>,
   proposedLocalIds: Set<string>,
+  now: Date = new Date(),
 ): { ok: boolean; errors: PatchValidationError[] } {
-  const errors: PatchValidationError[] = [];
+  const errors: PatchValidationError[] = normalizeProblemRefs(patch.set?.problemRefs, now).errors;
   if (patch.version !== 1) errors.push({ code: 'bad_version', message: `unsupported patch version: ${patch.version}` });
   if (!nonEmpty(patch.set?.title)) errors.push({ code: 'set_title_empty', message: 'set.title is required' });
   if (patch.set?.lessonKind !== undefined && !LESSON_KINDS.has(patch.set.lessonKind)) {
@@ -109,7 +111,7 @@ export function validateSetPatchStructure(
   // Combine top-level + card-level errors, THEN derive ok. (Deriving ok from
   // the top-level array alone would ignore every card error — the bug the
   // reject-case tests caught.)
-  const all = [...errors, ...validateCards(patch, existingTagIds, proposedLocalIds)];
+  const all = [...errors, ...validateCards(patch, existingTagIds, proposedLocalIds, now)];
   return { ok: all.length === 0, errors: all };
 }
 
@@ -117,6 +119,7 @@ function validateCards(
   patch: AgentSetPatch,
   existingTagIds: Set<string>,
   proposedLocalIds: Set<string>,
+  now: Date,
 ): PatchValidationError[] {
   const errors: PatchValidationError[] = [];
   const seen = new Set<string>();
@@ -134,11 +137,43 @@ function validateCards(
     cardKeys.add(c.localId);
     if (c.id) cardKeys.add(c.id);
 
+    errors.push(...normalizeProblemRefs(c.problemRefs, now).errors.map((error) => ({
+      ...error, cardLocalId: c.localId,
+    })));
+
+    if (c.siblingGroupId !== undefined) {
+      if (typeof c.siblingGroupId !== 'string') {
+        errors.push({ code: 'sibling_group_bad_type', message: 'siblingGroupId must be a string', cardLocalId: c.localId });
+      } else if (c.siblingGroupId.trim().length === 0) {
+        errors.push({ code: 'sibling_group_empty', message: 'siblingGroupId must be non-empty', cardLocalId: c.localId });
+      } else if (c.siblingGroupId.trim().length > 100) {
+        errors.push({ code: 'sibling_group_too_long', message: 'siblingGroupId must be at most 100 code units', cardLocalId: c.localId });
+      }
+    }
     if (!nonEmpty(c.front?.prompt)) errors.push({ code: 'prompt_empty', message: 'front.prompt is empty', cardLocalId: c.localId });
     if (!nonEmpty(c.back?.shortAnswer)) errors.push({ code: 'short_answer_empty', message: 'back.shortAnswer is empty', cardLocalId: c.localId });
     if (!nonEmpty(c.back?.explanationMarkdown)) errors.push({ code: 'explanation_empty', message: 'back.explanationMarkdown is empty', cardLocalId: c.localId });
-    if (nonEmpty(c.front?.prompt) && nonEmpty(c.back?.shortAnswer) && leaksAnswer(c.front.prompt, c.back.shortAnswer)) {
-      errors.push({ code: 'answer_leak', message: 'prompt contains the shortAnswer verbatim', cardLocalId: c.localId });
+    // Leak-check EVERY field rendered before the attempt, not just the prompt.
+    // contextMarkdown renders together with the question, so an answer placed
+    // there is strictly worse than one in the prompt: the learner reads it as
+    // setup material and the card measures reading, not recall.
+    const shortAnswer = c.back?.shortAnswer;
+    if (shortAnswer !== undefined && shortAnswer.trim().length > 0) {
+      const preAttempt: ReadonlyArray<readonly [string, string | undefined]> = [
+        ['prompt', c.front?.prompt],
+        ['front.contextMarkdown', c.front?.contextMarkdown],
+      ];
+      for (const [field, text] of preAttempt) {
+        if (text === undefined || text.trim().length === 0) continue;
+        if (!leaksAnswer(text, shortAnswer)) continue;
+        errors.push({
+          code: 'answer_leak',
+          message: field === 'prompt'
+            ? 'prompt contains the shortAnswer verbatim'
+            : 'front.contextMarkdown contains the shortAnswer verbatim (it renders before the attempt)',
+          cardLocalId: c.localId,
+        });
+      }
     }
     for (const ref of c.tagRefs ?? []) {
       if (!existingTagIds.has(ref) && !proposedLocalIds.has(ref)) {
