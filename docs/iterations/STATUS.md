@@ -15,16 +15,16 @@ timestamp: 2026-08-04
 - Remote: `origin/feat/iteration-program`
 - Mode: autonomous design and implementation; no merge to `main`
 - Current phase: complete
-- Current iteration: eight implementation iterations and one verification iteration complete
+- Current iteration: nine implementation iterations and one verification iteration complete
 - Program base commit: `44f94cd`
-- Latest completed implementation commit: `80db027681fd2b87caf476f2796490ab490786e3` (Iteration 08 card filter consistency)
+- Latest completed implementation commit: `f2ade3876e33ff1341ddd0ff900953655fd0af82` (Iteration 10 packaged example resolution)
 - Active worker: parent session with bounded implementation and direct Opus 5 review; cron job `29ddd97918b5` remains paused
 
 ## Completed
 
 - Baseline UX changes and original iteration scopes were committed separately.
 - Opus 5 roadmap review reduced ten scopes to six focused releases.
-- Eight implementation packages and one verification-only review package are complete and pushed.
+- Nine implementation packages and one verification-only review package are complete and pushed.
 - Four cross-design Opus 5 cycles adjudicated findings C1 through C39. Final verdict: NOT BLOCKED.
 - Reviewed design checkpoint `c49f884` is verified at `origin/feat/iteration-program`.
 - Iteration 01 local server reliability implementation is complete and verified at `a7a61ae`.
@@ -47,10 +47,12 @@ timestamp: 2026-08-04
 - Iteration 08 passed 393 tests across 42 files, typecheck, build, packaged smoke over 155 files, populated built-artifact Brave QA at 375 pixels, and an Opus 5 exact-tree review with `NOT BLOCKED` verdict.
 - Iteration 09 Practice scope verification audited pushed product revision `44327a8ba3377c22ec1a3da1746a16d2ea9cc4ee` without product changes.
 - Iteration 09 passed 393 tests across 42 files, typecheck, build, packaged smoke over 155 files, compound-scope built-artifact Brave QA, and an Opus 5 review with `NOT BLOCKED` verdict and justified no-code closure.
+- Iteration 10 packaged example resolution is complete at `f2ade3876e33ff1341ddd0ff900953655fd0af82`.
+- Iteration 10 passed 393 tests across 42 files, typecheck, build, packaged smoke over 155 files, a real clean-install `--open` journey, and an Opus 5 exact-tree review with `NOT BLOCKED` verdict.
 
 ## Next action
 
-Await human approval for any merge, npm publication, or production deployment. Resolve the package-relative example path before npm publication.
+Await human approval for any merge, npm publication, or production deployment.
 
 ## Blockers
 
