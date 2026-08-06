@@ -37,8 +37,8 @@ Learning and Review sessions require JavaScript. Library search and filters reta
 
 ```bash
 mergelearn list sets
-mergelearn list cards [--query <text>] [--set <id>] [--tag <id>]
-mergelearn due [--set <id>] [--tag <id>] [--folder <path>]
+mergelearn list cards [--query <text>] [--set <id>]
+mergelearn list due [--set <id>] [--tag <id>] [--folder <path>]
 mergelearn show <set/card>
 mergelearn grade <set/card> <1-4>
 mergelearn mastery

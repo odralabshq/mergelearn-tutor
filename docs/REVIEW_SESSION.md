@@ -39,4 +39,4 @@ The Practice hub can scope Review by folder and tag. Multiple selections use uni
 - Read-only or disconnected clients disable server mutations.
 - The server binds to `127.0.0.1`; session and review history remain under the selected local library.
 
-The terminal equivalents are `mergelearn due`, `mergelearn show <set/card>`, and `mergelearn grade <set/card> <1-4>`.
+The terminal equivalents are `mergelearn list due`, `mergelearn show <set/card>`, and `mergelearn grade <set/card> <1-4>`.

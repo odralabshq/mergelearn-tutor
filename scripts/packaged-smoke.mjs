@@ -69,8 +69,20 @@ try {
   const packedReview = await readFile(path.join(extractDir, 'package/docs/REVIEW_SESSION.md'), 'utf8');
   assert(packedReadme.includes('choose **Practice**') && !packedReadme.includes('choose **Prepare**'),
     'packed README should describe the current Practice destination');
+  assert(packedReadme.includes('Pre-reveal confidence is recorded for calibration and does not affect')
+    && !packedReadme.includes('confidence grade controls FSRS'),
+  'packed README should distinguish confidence from the FSRS grade');
+  assert(packedReadme.includes('Core library inspection, maintenance, and')
+    && !packedReadme.includes('every action is also available'),
+  'packed README should state the bounded CLI surface');
   assert(packedManual.includes('**Home**') && packedManual.includes('**Library**') && packedManual.includes('**Practice**'),
     'packed user manual should describe the three current destinations');
+  assert(packedManual.includes('mergelearn list cards [--query <text>] [--set <id>]')
+    && !packedManual.includes('mergelearn list cards [--query <text>] [--set <id>] [--tag <id>]'),
+  'packed user manual should not advertise tag filtering for list cards');
+  assert(packedReadme.includes('mergelearn list due') && packedManual.includes('mergelearn list due')
+    && packedReview.includes('mergelearn list due'),
+  'packed guides should lead with the canonical list due command');
   assert(!packedReview.includes('.skilltrace') && packedReview.includes('Strengthen weak areas'),
     'packed review guide should describe the current local session model');
 

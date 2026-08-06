@@ -122,11 +122,12 @@ with the arrow keys or visible buttons, or drag it into place.
 </table>
 
 After an attempt, MergeLearn reveals deterministic feedback and the authored
-explanation. Your confidence grade controls FSRS scheduling; answer correctness
-is stored as evidence but does not grade your confidence for you.
+explanation. Pre-reveal confidence is recorded for calibration and does not affect
+FSRS. Your post-reveal Again, Hard, Good, or Easy grade controls scheduling;
+answer correctness is stored separately as learning evidence.
 
 <p align="center">
-  <img src="docs/assets/screenshots/answer-feedback.png" alt="A correct multiple-choice attempt with targeted feedback, full explanation, and Again, Hard, Good, and Easy confidence controls" width="75%">
+  <img src="docs/assets/screenshots/answer-feedback.png" alt="A correct multiple-choice attempt with targeted feedback, full explanation, and Again, Hard, Good, and Easy review-grade controls" width="75%">
 </p>
 
 *Feedback appears only after the attempt; the learner still chooses the review grade.*
@@ -144,8 +145,8 @@ is stored as evidence but does not grade your confidence for you.
 
 ## CLI commands
 
-The browser is the main interface, but every action is also available on the
-command line.
+The browser is the main interface. Core library inspection, maintenance, and
+review grading are also available on the command line.
 
 ```bash
 mergelearn context     [--goal "..."] [--repo <path>] [--target-set <id>] [--recent <n>]
@@ -160,7 +161,7 @@ mergelearn unarchive   <setId/cardId>
 mergelearn edit        <setId/cardId> [content options]
 mergelearn delete      <setId|setId/cardId> --yes [--force]
 mergelearn settings    [--review-session-cap <n>] [--queue-strategy overdue|interleaved]
-mergelearn due         [--set <id>] [--tag <id>] [--folder <path>] [--limit <n>] [--quiet] [--if-any]
+mergelearn list due    [--set <id>] [--tag <id>] [--folder <path>] [--limit <n>] [--quiet] [--if-any]
 mergelearn show        <setId/cardId>
 mergelearn grade       <setId/cardId> <1-4>
 mergelearn mastery
