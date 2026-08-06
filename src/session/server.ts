@@ -119,9 +119,31 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
     if (origin && origin !== `http://${req.headers.host}`) return sendJson(res, 403, { ok: false, error: 'cross-origin request rejected' });
   }
   if (method === 'GET' && url.pathname === '/') return sendHtml(res, 200, await renderHome(root, options.instanceId!));
-  if (method === 'GET' && url.pathname === '/practice') return sendHtml(res, 200, renderPractice(options.instanceId!));
+  if (method === 'GET' && url.pathname === '/library') {
+    return sendHtml(res, 200, await renderLibrary(root, options.instanceId!));
+  }
+  if (method === 'GET' && url.pathname === '/library/cards') {
+    return sendHtml(res, 200, await renderManage(root, url, options.instanceId!));
+  }
+  if (method === 'GET' && url.pathname === '/practice') {
+    const legacyLesson = url.searchParams.get('mode') === 'lesson' && url.searchParams.has('set');
+    const legacySetReview = url.searchParams.has('set') && !url.searchParams.has('mode');
+    if (legacyLesson || legacySetReview) return sendRedirect(res, `/practice/session${url.search}`);
+    return sendHtml(res, 200, await renderPracticeHub(root, url, options.instanceId!));
+  }
+  if (method === 'GET' && url.pathname === '/practice/session') {
+    return sendHtml(res, 200, renderPractice(url, options.instanceId!));
+  }
+  if (method === 'GET' && (url.pathname === '/practice/strengthen' || url.pathname === '/practice/external')) {
+    const lane = url.pathname.endsWith('/external') ? 'external' : 'strengthen';
+    return sendHtml(res, 200, await renderPrepare(root, url, options.instanceId!, lane));
+  }
   if (method === 'GET' && url.pathname === '/prepare') {
-    return sendHtml(res, 200, await renderPrepare(root, url, options.instanceId!));
+    const sourceOnly = url.searchParams.has('source') && !url.searchParams.has('set') && !url.searchParams.has('tag');
+    return sendRedirect(res, `${sourceOnly ? '/practice/external' : '/practice/strengthen'}${url.search}`);
+  }
+  if (method === 'GET' && url.pathname === '/manage') {
+    return sendRedirect(res, `/library/cards${url.search}`);
   }
   if (method === 'GET' && url.pathname.startsWith('/set/')) {
     const setId = decodeURIComponent(url.pathname.slice('/set/'.length));
@@ -162,9 +184,6 @@ async function handleRequest(root: string, req: IncomingMessage, res: ServerResp
   if (method === 'POST' && url.pathname === '/api/set/spaced-repetition') {
     return setSpacedRepetitionApi(root, req, res, options.sessionWriter);
   }
-  // Manage tab (doc 06): server-rendered; card membership is embedded in the
-  // page so match counts recompute client-side (no per-keystroke round-trip).
-  if (method === 'GET' && url.pathname === '/manage') return sendHtml(res, 200, await renderManage(root, options.instanceId!));
   return sendText(res, 404, 'not found\n');
 }
 
@@ -915,7 +934,9 @@ function safeExternalHref(row: ExternalRow): string | undefined {
   } catch { return undefined; }
 }
 
-async function renderPrepare(root: string, url: URL, instanceId: string): Promise<string> {
+async function renderPrepare(
+  root: string, url: URL, instanceId: string, lane: 'strengthen' | 'external',
+): Promise<string> {
   const filters = { set: url.searchParams.getAll('set').filter(Boolean), tag: url.searchParams.getAll('tag').filter(Boolean), source: url.searchParams.getAll('source').filter(Boolean) };
   const hasSetTagFilters = filters.set.length > 0 || filters.tag.length > 0;
   const workflow = await loadPrepareWorkflow(root, filters);
@@ -938,11 +959,20 @@ async function renderPrepare(root: string, url: URL, instanceId: string): Promis
   const ignored = workflow.sourceFilterIgnoredForStrengthen ? `<p class="muted small" role="note">Source filters apply only to Practice externally, not retrieval evidence.</p>` : '';
   const onboarding = workflow.externalBeforeFilters === 0
     ? `<aside class="onboard" aria-label="Import preparation example"><p>Try the opt-in interview-pattern example:</p><code>mergelearn apply --file examples/interview-pattern-lesson.json --open</code></aside>` : '';
-  const body = `<h1>Prepare</h1><p class="muted">Strengthen retrieval evidence or practice from supplied external problem references.</p><p><a href="/">Learn and due Review stay on Home.</a></p>${onboarding}` +
-    `<form class="prepare-filters" method="get" action="/prepare" aria-label="Prepare filters">${field('set', 'Set')}${field('tag', 'Tag')}${field('source', 'Source')}<button type="submit">Apply filters</button></form>${ignored}` +
-    `<section aria-labelledby="strengthen-heading"><h2 id="strengthen-heading">Strengthen</h2><ul class="prepare-list">${strengthen}</ul></section>` +
-    `<section aria-labelledby="external-heading"><h2 id="external-heading">Practice externally</h2><p class="muted">External links leave MergeLearn. No implementation result is recorded.</p><ul class="prepare-list">${external}</ul></section>`;
-  return pageShell('MergeLearn — Prepare', 'prepare', body, instanceId);
+  const query = url.search;
+  const nav = `<nav class="subtabs" aria-label="Practice views"><a href="/practice/strengthen${escapeHtml(query)}"${lane === 'strengthen' ? ' aria-current="page"' : ''}>Strengthen</a><a href="/practice/external${escapeHtml(query)}"${lane === 'external' ? ' aria-current="page"' : ''}>External problems</a></nav>`;
+  const action = lane === 'strengthen' ? '/practice/strengthen' : '/practice/external';
+  const fields = lane === 'strengthen'
+    ? `${field('set', 'Set')}${field('tag', 'Tag')}`
+    : `${field('set', 'Set')}${field('tag', 'Tag')}${field('source', 'Source')}`;
+  const sourceNotice = lane === 'strengthen' && filters.source.length
+    ? `<p class="muted small" role="note">Source was not applied to retrieval evidence. <a href="/practice/external${escapeHtml(query)}">Apply it to External problems.</a></p>`
+    : '';
+  const content = lane === 'strengthen'
+    ? `<section aria-labelledby="strengthen-heading"><h1 id="strengthen-heading">Strengthen weak areas</h1><p class="muted">Based on past answers. Opening a card here does not grade it, change scheduling, or assert readiness.</p><ul class="prepare-list">${strengthen}</ul></section>`
+    : `<section aria-labelledby="external-heading"><h1 id="external-heading">External problems</h1><p class="muted">External links leave MergeLearn. Nothing here is graded or scheduled, no result is recorded, and this view does not assert readiness.</p>${onboarding}<ul class="prepare-list">${external}</ul></section>`;
+  const body = `${nav}<form class="prepare-filters" method="get" action="${action}" aria-label="Practice filters">${fields}<button type="submit">Apply filters</button></form>${sourceNotice}${content}`;
+  return pageShell(`MergeLearn — ${lane === 'strengthen' ? 'Strengthen' : 'External problems'}`, 'practice', body, instanceId, false);
 }
 
 /** One Home lesson card: objective, meta, progress pill, and a single primary
@@ -973,7 +1003,46 @@ function renderLessonRow(s: SetSummary, progress: LessonProgress, dueCount: numb
     `<div class="lesson-head"><a class="lesson-title" href="/set/${encodeURIComponent(s.id)}">${escapeHtml(s.title)}</a>${kind}</div>` +
     `${objective}` +
     `<div class="lesson-meta">${path}${count}${est}${evidence}${pill}</div>` +
-    `<div class="lesson-actions">${action}${review}</div></li>`;
+    `<div class="lesson-actions">${action}${review}</div>` +
+    (disabled ? '' : `<p class="muted small session-requirement">Learning and Review sessions require JavaScript.</p>`) + `</li>`;
+}
+
+async function renderReviewScope(
+  root: string, due: Card[], reviewSessionCap: number, picker: boolean,
+): Promise<string> {
+  const [{ folders, tags }, summaries] = await Promise.all([loadMasteryReport(root), listSetSummaries(root)]);
+  const setFolders = new Map(summaries.map((summary) => [summary.id, summary.folderPath ?? '']));
+  const data = JSON.stringify({
+    cap: reviewSessionCap,
+    picker,
+    folders: folders.map((folder) => folder.path),
+    tags: tags.map((tag) => ({ id: tag.id, label: tag.label })),
+    due: due.map((card) => ({
+      folderPath: card.folderPath ?? setFolders.get(card.setId) ?? '',
+      tagIds: card.tagIds,
+    })),
+  }).replace(/</g, '\\u003c');
+  const sitting = selectDueCards(due, reviewSessionCap).length;
+  const waiting = Math.max(0, due.length - sitting);
+  const lead = due.length
+    ? `<p class="muted small">Reviewing all due cards. Completing Review updates scheduling. Grading requires JavaScript.</p>`
+    : `<p class="caught-up"><strong>You are caught up.</strong> No cards are due right now.</p>`;
+  return `<div class="review-scope" data-review-scope>${lead}` +
+    (due.length ? `<a class="cta" href="/practice/session">Review ${sitting} now</a>${waiting ? `<span class="muted small backlog">${waiting} more waiting</span>` : ''}` : '') +
+    `</div><script>(function(){var host=document.querySelector('[data-review-scope]');if(!host)return;var data=${data};` +
+    `var selected={folderPaths:[],tagIds:[],combinator:'union'},storageOk=false;try{var probe='ml-scope-probe';localStorage.setItem(probe,'1');storageOk=localStorage.getItem(probe)==='1';localStorage.removeItem(probe);}catch(e){storageOk=false;}` +
+    `if(storageOk)try{var raw=localStorage.getItem('ml-practice-filter');if(raw){var saved=JSON.parse(raw);if(Array.isArray(saved.folderPaths))selected.folderPaths=saved.folderPaths.filter(function(v){return typeof v==='string';});if(Array.isArray(saved.tagIds))selected.tagIds=saved.tagIds.filter(function(v){return typeof v==='string';});if(saved.combinator==='intersection')selected.combinator='intersection';}}catch(e){}` +
+    `function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}` +
+    `function active(){return selected.folderPaths.length||selected.tagIds.length;}` +
+    `function matches(card){var tests=[];if(selected.folderPaths.length)tests.push(!!card.folderPath&&selected.folderPaths.some(function(f){return card.folderPath===f||card.folderPath.indexOf(f+'/')===0;}));if(selected.tagIds.length)tests.push(selected.tagIds.some(function(t){return card.tagIds.indexOf(t)>=0;}));if(!tests.length)return true;return selected.combinator==='intersection'?tests.every(Boolean):tests.some(Boolean);}` +
+    `function save(){if(!storageOk)return;try{if(active()){var out={};if(selected.folderPaths.length)out.folderPaths=selected.folderPaths;if(selected.tagIds.length)out.tagIds=selected.tagIds;out.combinator=selected.combinator;localStorage.setItem('ml-practice-filter',JSON.stringify(out));}else localStorage.removeItem('ml-practice-filter');}catch(e){storageOk=false;}}` +
+    `function toggle(key,value){var list=selected[key],i=list.indexOf(value);if(i>=0)list.splice(i,1);else list.push(value);save();render(key+':'+value);}` +
+    `function render(refocus){var open=!!host.querySelector('.scope-picker[open]');var n=data.due.filter(matches).length,shown=data.cap?Math.min(n,data.cap):n;var labels=[];selected.folderPaths.forEach(function(v){labels.push(v);});selected.tagIds.forEach(function(v){var tag=data.tags.filter(function(t){return t.id===v;})[0];labels.push(tag?tag.label:v);});` +
+    `var summary=active()?'Scope: '+labels.join(', ')+' · '+n+' due':'Reviewing all due cards · '+n+' due';var waiting=Math.max(0,n-shown);var empty=active()?'<p class="caught-up"><strong>You are caught up in this scope.</strong> No matching cards are due.</p>':'<p class="caught-up"><strong>You are caught up.</strong> No cards are due right now.</p>';var action=n?'<a class="cta" href="/practice/session">Review '+shown+' now</a>'+(waiting?'<span class="muted small backlog">'+waiting+' more waiting</span>':''):empty;var clear=active()?'<button type="button" class="clear" data-clear-scope>Clear scope</button>':'';` +
+    `var picker='';if(data.picker&&storageOk){var folderButtons=data.folders.map(function(v){return '<button type="button" class="scope-option" data-scope-folder="'+esc(v)+'" aria-pressed="'+(selected.folderPaths.indexOf(v)>=0?'true':'false')+'">'+esc(v)+'</button>';}).join('');var tagButtons=data.tags.map(function(t){return '<button type="button" class="scope-option" data-scope-tag="'+esc(t.id)+'" aria-pressed="'+(selected.tagIds.indexOf(t.id)>=0?'true':'false')+'">'+esc(t.label)+'</button>';}).join('');picker='<details class="scope-picker"'+(open?' open':'')+'><summary>Review a selection</summary><p class="muted small">Choose folders or tags for the next scheduled Review. Values within a group match any; groups match '+(selected.combinator==='intersection'?'all':'any')+'.</p><div class="scope-options">'+folderButtons+tagButtons+'</div><label class="scope-combine">Combine groups <select data-scope-combinator><option value="union"'+(selected.combinator==='union'?' selected':'')+'>Match any</option><option value="intersection"'+(selected.combinator==='intersection'?' selected':'')+'>Match all</option></select></label></details>';}` +
+    `host.innerHTML='<div class="scope-summary" tabindex="-1"><span role="status">'+esc(summary)+'</span>'+clear+'</div>'+action+(n?'<p class="muted small">Completing Review updates scheduling. Grading requires JavaScript.</p>':'')+picker;` +
+    `var clearButton=host.querySelector('[data-clear-scope]');if(clearButton)clearButton.onclick=function(){selected={folderPaths:[],tagIds:[],combinator:'union'};save();render('summary');};[].forEach.call(host.querySelectorAll('[data-scope-folder]'),function(button){button.onclick=function(){toggle('folderPaths',button.getAttribute('data-scope-folder'));};});[].forEach.call(host.querySelectorAll('[data-scope-tag]'),function(button){button.onclick=function(){toggle('tagIds',button.getAttribute('data-scope-tag'));};});var combine=host.querySelector('[data-scope-combinator]');if(combine)combine.onchange=function(){selected.combinator=combine.value==='intersection'?'intersection':'union';save();render('combine');};if(refocus){var target=refocus==='summary'?(host.querySelector('.scope-picker summary')||host.querySelector('.scope-summary')):refocus==='combine'?host.querySelector('[data-scope-combinator]'):refocus.indexOf('folderPaths:')===0?[].filter.call(host.querySelectorAll('[data-scope-folder]'),function(x){return x.getAttribute('data-scope-folder')===refocus.slice(12);})[0]:[].filter.call(host.querySelectorAll('[data-scope-tag]'),function(x){return x.getAttribute('data-scope-tag')===refocus.slice(7);})[0];if(target)target.focus();}}` +
+    `render();})();</script>`;
 }
 
 async function renderHome(root: string, instanceId: string): Promise<string> {
@@ -1017,29 +1086,46 @@ async function renderHome(root: string, instanceId: string): Promise<string> {
     return pageShell('MergeLearn — Home', 'home', body, instanceId);
   }
 
-  // Review is the separate FSRS job: one banner linking to the capped queue.
-  const sittingCount = selectDueCards(due, prefs.reviewSessionCap).length;
-  const waiting = Math.max(0, due.length - sittingCount);
-  const cta = due.length > 0
-    ? `<a class="cta" href="/practice">Review ${sittingCount} now</a>`
-    : `<span class="cta is-disabled">Nothing due right now</span>`;
-  const backlog = waiting ? `<span class="muted small">${waiting} more waiting</span>` : '';
-  const banner = `<div class="due-banner"><strong>${due.length}</strong>` +
-    `<span class="muted">card${due.length === 1 ? '' : 's'} due for review</span></div>` +
-    `<div class="review-entry">${cta}${backlog}</div>`;
-
-  // Lessons are the primary object: each row shows objective, progress, and one
-  // Start/Continue action. Progress is derived from persisted lesson sessions.
-  const rows = (await Promise.all(summaries.map(async (s) => {
-    const progress = await lessonProgressFor(root, s.id, evidenceMap.get(s.id) ?? new Map());
-    return renderLessonRow(s, progress, dueBySet.get(s.id) ?? 0);
-  }))).join('');
-
-  const body = `<h1>Home</h1>${banner}` +
-    `<h2 style="margin-top:28px">Lessons</h2>` +
-    `<p class="muted" style="margin:-4px 0 0;font-size:13px">Learn walks each lesson in authored order. Review is the separate due queue above.</p>` +
-    `<ul class="lesson-list">${rows}</ul>`;
+  const progressRows = await Promise.all(summaries.map(async (summary) => ({
+    summary,
+    progress: await lessonProgressFor(root, summary.id, evidenceMap.get(summary.id) ?? new Map()),
+  })));
+  const current = progressRows
+    .filter((row) => row.progress.state === 'in_progress')
+    .sort((a, b) => (a.summary.id < b.summary.id ? -1 : a.summary.id > b.summary.id ? 1 : 0))[0];
+  const workflow = await loadPrepareWorkflow(root, {});
+  const weak = workflow.strengthen.slice(0, 3).map((row) =>
+    `<li class="attention-row"><div><strong>${escapeHtml(row.prompt)}</strong><p>${escapeHtml(row.reason)}</p></div><a class="secondary-action" href="${escapeHtml(cardTargetHref(row.setId, row.cardId))}">View card</a></li>`).join('');
+  const review = await renderReviewScope(root, due, prefs.reviewSessionCap, false);
+  const inProgress = current
+    ? `<ul class="lesson-list">${renderLessonRow(current.summary, current.progress, dueBySet.get(current.summary.id) ?? 0)}</ul>`
+    : `<p class="muted">No lesson is in progress. <a href="/library">Browse lessons</a>.</p>`;
+  const attention = `<p class="muted small">Opening these cards is ungraded and does not change scheduling.</p>` + (weak
+    ? `<ul class="attention-list">${weak}</ul><p><a href="/practice/strengthen">See all weak areas</a></p>`
+    : `<p class="muted">No evidence-backed weak cards yet.</p>`);
+  const browse = `<form class="home-search" method="get" action="/library/cards"><label for="home-card-search">Search cards</label><input id="home-card-search" name="q" type="search" placeholder="Search cards and lessons"><button type="submit">Search</button></form><p><a href="/library">Browse all lessons</a></p>`;
+  const body = `<h1>Home</h1><p class="muted">Your next useful actions, based only on saved learning evidence.</p>` +
+    `<section class="dashboard-section"><h2>Review due</h2>${review}</section>` +
+    `<section class="dashboard-section"><div class="section-head"><h2>In progress</h2><a href="/library">Browse all lessons</a></div>${inProgress}</section>` +
+    `<section class="dashboard-section"><h2>Needs attention</h2>${attention}</section>` +
+    `<section class="dashboard-section"><h2>Browse</h2>${browse}</section>`;
   return pageShell('MergeLearn — Home', 'home', body, instanceId);
+}
+
+async function renderLibrary(root: string, instanceId: string): Promise<string> {
+  const [summaries, due, evidenceMap] = await Promise.all([
+    listSetSummaries(root), getDueCards(root, new Date()), lessonEvidenceBySet(root),
+  ]);
+  const dueBySet = new Map<string, number>();
+  for (const card of due) dueBySet.set(card.setId, (dueBySet.get(card.setId) ?? 0) + 1);
+  const rows = (await Promise.all(summaries.map(async (summary) => {
+    const progress = await lessonProgressFor(root, summary.id, evidenceMap.get(summary.id) ?? new Map());
+    return renderLessonRow(summary, progress, dueBySet.get(summary.id) ?? 0);
+  }))).join('');
+  const views = `<nav class="subtabs" aria-label="Library views"><a href="/library" aria-current="page">Lessons</a><a href="/library/cards">Cards</a></nav>`;
+  const body = `<div class="page-head"><div><h1>Library</h1><p class="muted">Browse lessons or search and manage individual cards.</p></div>${views}</div>` +
+    (rows ? `<ul class="lesson-list">${rows}</ul>` : `<div class="empty">No lessons yet.</div>`);
+  return pageShell('MergeLearn — Library', 'library', body, instanceId);
 }
 
 // ---- Set browser ----
@@ -1054,7 +1140,7 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
   if (!set) {
     const body = `<p><a href="/">← Home</a></p><h1>Set not found</h1>` +
       `<div class="empty">No set with id <code>${escapeHtml(setId)}</code>.</div>`;
-    return pageShell('MergeLearn — Set', 'set', body, instanceId);
+    return pageShell('MergeLearn — Set', 'library', body, instanceId, false);
   }
   const [cards, due, order, evidence, dogfoodEvents] = await Promise.all([
     loadCardsForSet(root, setId),
@@ -1113,6 +1199,8 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     ? `<div class="lesson-actions"><a class="cta" href="${learnHref}">${learnLabel}</a>` +
       (due.length ? `<a class="secondary-action" href="${reviewHref}">Review ${due.length} due</a>` : '') + `</div>`
     : '';
+  const sessionRequirement = progress.total
+    ? `<p class="muted small session-requirement">Learning and Review sessions require JavaScript.</p>` : '';
   const pillLabel = progress.state === 'completed' ? 'Lesson complete'
     : progress.state === 'in_progress' ? `${progress.passedCount}/${progress.total} complete`
     : 'Not started';
@@ -1139,10 +1227,10 @@ async function renderSetBrowser(root: string, setId: string, showDogfood: boolea
     `<p class="muted">${path} ${kind} ${progress.total} active activit${progress.total === 1 ? 'y' : 'ies'}${est} · ` +
     `<span class="evidence-counts">${evidenceLabel(progress)}</span> · ` +
     `<span class="progress-pill state-${progress.state}">${pillLabel}</span> · ${due.length} due</p>` +
-    `${objective}${actions}${scheduling}${dogfood}` +
+    `${objective}${actions}${sessionRequirement}${scheduling}${dogfood}` +
     (cards.length ? `<div class="browse-list">${items}</div>` : `<div class="empty">This set has no cards yet.</div>`) +
     controlsScript;
-  return pageShell(`MergeLearn — ${set.title}`, 'set', body, instanceId);
+  return pageShell(`MergeLearn — ${set.title}`, 'library', body, instanceId, false);
 }
 
 // ---- Manage tab (doc 06) ----
@@ -1168,81 +1256,43 @@ function progressTitle(s: ProgressStats, noun: string): string {
     + `${s.cardCount} card${s.cardCount === 1 ? '' : 's'} ${noun}, ${s.studied} studied`;
 }
 
-async function renderManage(root: string, instanceId: string): Promise<string> {
-  const [{ folders, tags, cards }, sets] = await Promise.all([loadManageData(root), listSetSummaries(root)]);
-  // Embed card membership so match counts recompute client-side (no round-trip).
-  // Escape '<' so a folderPath/tagId can never break out of the script tag.
+async function renderManage(root: string, url: URL, instanceId: string): Promise<string> {
+  const [{ tags, cards }, sets] = await Promise.all([loadManageData(root), listSetSummaries(root)]);
+  const query = url.searchParams.get('q') ?? '';
+  const setId = url.searchParams.get('set') ?? '';
+  const selectedTags = url.searchParams.getAll('tag').filter(Boolean);
+  const stateValue = url.searchParams.get('state') ?? '';
+  const state = /^[0-3]$/.test(stateValue) ? Number(stateValue) as 0 | 1 | 2 | 3 : undefined;
+  const includeArchived = url.searchParams.get('archived') === '1';
+  const initial = await searchCardsPage(root, query, {
+    setIds: setId ? [setId] : undefined, tagIds: selectedTags,
+    includeArchived, state, limit: 100,
+  });
   const cardsJson = JSON.stringify(cards).replace(/</g, '\\u003c');
-  // Render the folder tree as a flat list of nodes; the client expands/collapses
-  // via <details> in the inline script. v1: set-level paths only (addendum A5).
-  const tree = folders.length
-    ? folders.map((f) =>
-        `<li class="tree-node" data-folder="${escapeHtml(f.path)}">` +
-        `<div class="tree-row" role="button" tabindex="0" title="${escapeHtml(progressTitle(f, 'in this folder'))}">` +
-        `<span class="tree-name">${escapeHtml(f.path)}</span>` +
-        `<span class="tree-count" title="${f.cardCount} card${f.cardCount === 1 ? '' : 's'}">${f.cardCount}</span>` +
-        `<span class="tree-bar" style="--pct:${f.coverage}%" aria-hidden="true"></span>` +
-        `<span class="tree-pct" aria-label="${f.coverage}% learned, ${escapeHtml(retentionLabel(f))}">${f.coverage}%</span>` +
-        `</div></li>`,
-      ).join('')
-    : `<li class="empty">No folders yet — author a set with a <code>folderPath</code>.</li>`;
-
-  // Tag chips. Empty library → friendly empty state.
-  const tagChips = tags.length
-    ? tags.map((t) =>
-        `<div class="tag-chip" data-tag="${escapeHtml(t.id)}" role="button" tabindex="0" title="${escapeHtml(progressTitle(t, 'tagged'))}">` +
-        `<span class="tag-top"><span class="tag-label">${escapeHtml(t.label)}</span>` +
-        `<span class="tag-count" title="${t.cardCount} card${t.cardCount === 1 ? '' : 's'}">${t.cardCount}</span></span>` +
-        `<span class="tag-bar" style="--pct:${t.coverage}%" aria-hidden="true"></span>` +
-        `<span class="tag-pct" aria-label="${t.coverage}% learned, ${escapeHtml(retentionLabel(t))}">${t.coverage}%</span>` +
-        `</div>`,
-      ).join('')
-    : `<div class="empty">No tags yet — author cards with <code>tagRefs</code>.</div>`;
-  const setOptions = sets.map((set) => `<option value="${escapeHtml(set.id)}">${escapeHtml(set.title)}</option>`).join('');
-  const tagOptions = tags.map((tag) => `<option value="${escapeHtml(tag.id)}">${escapeHtml(tag.label)}</option>`).join('');
-
-  // Combinator tiles sit between Folders and Tags — the seam where the
-  // cross-dimension join is ambiguous. Labelled by meaning ("Match any" = OR =
-  // union, default; "Match all" = AND = intersection) with the operator as a
-  // hint. Within a dimension, multi-select is always OR.
-  const combinator =
-    `<div class="combinator" id="combinator" role="radiogroup" aria-label="How folders and tags combine">` +
-    `<button class="combo-tile sel" data-combinator="union" role="radio" aria-checked="true" type="button">` +
-    `<span class="combo-title">Match any</span><span class="combo-hint">folder OR tag</span></button>` +
-    `<button class="combo-tile" data-combinator="intersection" role="radio" aria-checked="false" type="button">` +
-    `<span class="combo-title">Match all</span><span class="combo-hint">folder AND tag</span></button>` +
-    `</div>`;
-
-  // Defines what the bar/percentage mean — answers "% of what?".
-  const masteryLegend =
-    `<span class="legend" title="A card counts as learned once it reaches the FSRS Review stage (state ≥ 2).">` +
-    `Bar shows <strong>mastery</strong>: share of cards learned</span>`;
-
-  const body = `<h1>Manage</h1>` +
-    `<p class="muted">Choose what to practice, then search, inspect, fix, or archive cards.</p>` +
-    `<section class="practice-filters"><h2>Practice filters</h2>` +
-    `<p class="muted">Pick the concepts you want to drill. The active filter feeds the Practice tab.</p>` +
-    `<div class="active-filter" id="active-filter">` +
-    `<span class="muted" id="match-count">—</span>` +
-    `<button class="clear" id="clear-filter" type="button">Clear</button>` +
-    `<button class="primary" id="start-practice" type="button">Start Practice →</button>` +
-    `</div>` +
-    `<div class="section-head" style="margin-top:24px"><h2>Folders</h2>${masteryLegend}</div>` +
-    `<ul class="tree">${tree}</ul>` +
-    combinator +
-    `<div class="section-head" style="margin-top:24px"><h2>Tags</h2>${masteryLegend}</div>` +
-    `<div class="tag-grid">${tagChips}</div></section>` +
-    `<section class="card-curation"><div class="section-head"><h2>Cards</h2><span class="muted small" id="card-status" role="status" aria-live="polite">0 of 0</span></div>` +
-    `<div class="card-tools"><label>Search<input id="card-search" type="search" placeholder="Search cards and lessons"></label>` +
-    `<label>Set<select id="card-set"><option value="">All sets</option>${setOptions}</select></label>` +
-    `<label>Tags<select id="card-tags" multiple>${tagOptions}</select></label>` +
-    `<label>Learning state<select id="card-state"><option value="">All states</option><option value="0">New</option><option value="1">Learning</option><option value="2">Review</option><option value="3">Relearning</option></select></label>` +
-    `<label><input id="show-archived" type="checkbox"> Show archived</label></div>` +
-    `<div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div>` +
+  const setOptions = sets.map((set) => `<option value="${escapeHtml(set.id)}"${set.id === setId ? ' selected' : ''}>${escapeHtml(set.title)}</option>`).join('');
+  const tagOptions = tags.map((tag) => `<option value="${escapeHtml(tag.id)}"${selectedTags.includes(tag.id) ? ' selected' : ''}>${escapeHtml(tag.label)}</option>`).join('');
+  const stateOption = (value: number, label: string) => `<option value="${value}"${state === value ? ' selected' : ''}>${label}</option>`;
+  const legacyScope = (url.searchParams.has('folderPath') || url.searchParams.has('folder'))
+    && !url.searchParams.has('q') && !url.searchParams.has('set') && !url.searchParams.has('state') && !url.searchParams.has('archived');
+  const moved = legacyScope
+    ? `<p class="notice" role="status">Temporary Review scope moved to <a href="/practice">Practice</a>. Library Cards shows the full searchable library.</p>` : '';
+  const noScriptRows = (initial.cards.length
+    ? `<ul class="prepare-list">${initial.cards.map((card) => `<li class="prepare-row"><strong>${escapeHtml(card.prompt)}</strong><p>${escapeHtml(card.setTitle)} · ${escapeHtml(card.shortAnswer)}</p><a href="${escapeHtml(cardTargetHref(card.setId, card.cardId))}">View card</a></li>`).join('')}</ul>`
+    : `<div class="empty">No cards match.</div>`) + (initial.hasMore ? `<p class="muted">Showing the first ${initial.returned} of ${initial.total} matches. Enable JavaScript to load more.</p>` : '');
+  const views = `<nav class="subtabs" aria-label="Library views"><a href="/library">Lessons</a><a href="/library/cards" aria-current="page">Cards</a></nav>`;
+  const body = `<div class="page-head"><div><h1>Cards</h1><p class="muted">Search, inspect, edit, archive, or restore cards.</p></div>${views}</div>${moved}` +
+    `<section class="card-curation"><details class="card-filter-panel" open><summary>Filter cards</summary>` +
+    `<form class="card-tools" method="get" action="/library/cards#card-status"><label>Search<input id="card-search" name="q" type="search" value="${escapeHtml(query)}" placeholder="Search cards and lessons"></label>` +
+    `<label>Set<select id="card-set" name="set"><option value="">All sets</option>${setOptions}</select></label>` +
+    `<label>Tags<select id="card-tags" name="tag" multiple>${tagOptions}</select></label>` +
+    `<label>Learning state<select id="card-state" name="state"><option value="">All states</option>${stateOption(0, 'New')}${stateOption(1, 'Learning')}${stateOption(2, 'Review')}${stateOption(3, 'Relearning')}</select></label>` +
+    `<label><input id="show-archived" name="archived" value="1" type="checkbox"${includeArchived ? ' checked' : ''}> Show archived</label><button type="submit">Search</button></form></details>` +
+    `<div class="section-head"><h2 class="sr-only">Card results</h2><span class="muted small" id="card-status" tabindex="-1" role="status" aria-live="polite">${initial.returned} of ${initial.total}</span></div>` +
+    `<noscript><style>#card-results{display:none}</style>${noScriptRows}</noscript><div id="card-results" class="curation-list"><span class="muted">Loading cards…</span></div>` +
     `<p><button type="button" id="load-more-cards" class="secondary-action" hidden>Load more</button> ` +
     `<button type="button" id="reload-cards" class="secondary-action" hidden>Reload results</button></p></section>` +
     `<script type="application/json" id="ml-cards">${cardsJson}</script>`;
-  return pageShell('MergeLearn — Manage', 'manage', body, instanceId) +
+  return pageShell('MergeLearn — Cards', 'library', body, instanceId, false) +
     `<script>${manageScript()}</script>`;
 }
 
@@ -1250,7 +1300,6 @@ function manageScript(): string {
   return `
 ${manageDraftKey.toString()}
 ${decideManageDraft.toString()}
-var selected={folderPaths:[],tagIds:[],combinator:'union'};
 var CARDS=[];
 var cardPage={generation:0,offset:0,total:0,snapshot:null,inFlight:false,reloadQueued:false,notice:''};
 try{CARDS=JSON.parse(document.getElementById('ml-cards').textContent)||[];}catch(e){CARDS=[];}
@@ -1350,109 +1399,6 @@ document.getElementById('card-results').addEventListener('click',function(e){
 });
 document.getElementById('card-results').addEventListener('input',function(e){var field=e.target.closest&&e.target.closest('[data-edit]');if(field){var row=field.closest('.curation-card');if(row)persistManageDraft(row);}});
 loadCardResults();
-function statusMsg(t){var s=document.getElementById('match-count');s.textContent=t;}
-function selectedFilter(){var f={};if(selected.folderPaths.length)f.folderPaths=selected.folderPaths;if(selected.tagIds.length)f.tagIds=selected.tagIds;if(Object.keys(f).length)f.combinator=selected.combinator;return f;}
-function isSelectedFolder(p){return selected.folderPaths.indexOf(p)>=0;}
-function isSelectedTag(t){return selected.tagIds.indexOf(t)>=0;}
-// Mirror of server matchesFilter (dueQueue.ts): within-dim OR, cross-dim
-// union/intersection, empty = no constraint, folder prefix match.
-function cardMatches(card){
-  var results=[];
-  if(selected.folderPaths.length){
-    var p=card.folderPath||'';
-    results.push(!!p&&selected.folderPaths.some(function(f){return p===f||p.indexOf(f+'/')===0;}));
-  }
-  if(selected.tagIds.length){
-    results.push(selected.tagIds.some(function(t){return card.tagIds.indexOf(t)>=0;}));
-  }
-  if(results.length===0)return true;
-  return selected.combinator==='intersection'?results.every(Boolean):results.some(Boolean);
-}
-function refreshCount(){
-  var n=0;for(var i=0;i<CARDS.length;i++){if(cardMatches(CARDS[i]))n++;}
-  var anySel=selected.folderPaths.length||selected.tagIds.length;
-  if(!anySel){statusMsg(CARDS.length+' card'+(CARDS.length===1?'':'s')+' total');return;}
-  statusMsg(n===0?'No cards match this filter':(n+' card'+(n===1?'':'s')+' match'));
-}
-function renderChips(){
-  var bar=document.getElementById('active-filter');
-  // Remove any previously rendered chip; re-insert the persistent controls.
-  var mc=document.getElementById('match-count');
-  [].forEach.call(bar.querySelectorAll('.chip'),function(n){n.parentNode.removeChild(n);});
-  function addChip(text,kind,value){
-    var c=document.createElement('span');c.className='chip';c.setAttribute('data-kind',kind);c.setAttribute('data-value',value);
-    c.innerHTML=esc(text)+' <button class="chip-x" type="button" aria-label="Remove">×</button>';
-    bar.insertBefore(c,mc);
-    c.querySelector('.chip-x').addEventListener('click',function(){removeFromFilter(kind,value);});
-  }
-  selected.folderPaths.forEach(function(p){addChip(p,'folder',p);});
-  selected.tagIds.forEach(function(t){
-    var labels=[].slice.call(document.querySelectorAll('.tag-chip[data-tag]'));
-    var m=labels.filter(function(n){return n.getAttribute('data-tag')===t;})[0];
-    addChip(m?m.querySelector('.tag-label').textContent:t,'tag',t);
-  });
-}
-function removeFromFilter(kind,value){
-  if(kind==='folder'){selected.folderPaths=selected.folderPaths.filter(function(x){return x!==value;});}
-  else{selected.tagIds=selected.tagIds.filter(function(x){return x!==value;});}
-  updateAll();
-}
-function toggle(kind,value){
-  var arr=kind==='folder'?'folderPaths':'tagIds';
-  var i=selected[arr].indexOf(value);
-  if(i>=0)selected[arr].splice(i,1);else selected[arr].push(value);
-  updateAll();
-}
-function updateAll(){
-  [].forEach.call(document.querySelectorAll('.tree-node'),function(n){
-    var p=n.getAttribute('data-folder');
-    n.classList.toggle('sel',isSelectedFolder(p));
-  });
-  [].forEach.call(document.querySelectorAll('.tag-chip'),function(n){
-    var t=n.getAttribute('data-tag');
-    n.classList.toggle('sel',isSelectedTag(t));
-  });
-  renderChips();
-  // Count is a pure local computation now — no network, so recompute inline.
-  refreshCount();
-}
-function persistFilter(){try{localStorage.setItem('ml-practice-filter',JSON.stringify(selectedFilter()));}catch(e){}}
-[].forEach.call(document.querySelectorAll('.tree-node .tree-row'),function(n){
-  n.addEventListener('click',function(){toggle('folder',n.parentNode.getAttribute('data-folder'));});
-  n.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();toggle('folder',n.parentNode.getAttribute('data-folder'));}});
-});
-[].forEach.call(document.querySelectorAll('.tag-chip'),function(n){
-  n.addEventListener('click',function(){toggle('tag',n.getAttribute('data-tag'));});
-  n.addEventListener('keydown',function(e){if(e.key===' '||e.key==='Enter'){e.preventDefault();toggle('tag',n.getAttribute('data-tag'));}});
-});
-function setCombinator(mode){
-  selected.combinator=(mode==='intersection')?'intersection':'union';
-  [].forEach.call(document.querySelectorAll('.combo-tile'),function(n){
-    var on=n.getAttribute('data-combinator')===selected.combinator;
-    n.classList.toggle('sel',on);
-    n.setAttribute('aria-checked',on?'true':'false');
-  });
-  refreshCount();
-}
-[].forEach.call(document.querySelectorAll('.combo-tile'),function(n){
-  n.addEventListener('click',function(){setCombinator(n.getAttribute('data-combinator'));});
-});
-document.getElementById('clear-filter').addEventListener('click',function(){
-  selected={folderPaths:[],tagIds:[],combinator:'union'};
-  setCombinator('union');updateAll();
-});
-document.getElementById('start-practice').addEventListener('click',function(){
-  persistFilter();location.href='/practice';
-});
-(function(){
-  // Restore a previously persisted filter, if any.
-  try{var raw=localStorage.getItem('ml-practice-filter');if(raw){var f=JSON.parse(raw);
-    if(Array.isArray(f.folderPaths))selected.folderPaths=f.folderPaths;
-    if(Array.isArray(f.tagIds))selected.tagIds=f.tagIds;
-    if(f.combinator==='intersection'||f.combinator==='union')selected.combinator=f.combinator;
-    setCombinator(selected.combinator);updateAll();return;}}catch(e){}
-  refreshCount();
-})();
 `;
 }
 
@@ -1578,23 +1524,39 @@ function renderMarkdownHtml(markdown: string): string {
   return blocks.join('\n');
 }
 
-// ---- Practice tab ----
+// ---- Practice ----
+
+async function renderPracticeHub(root: string, url: URL, instanceId: string): Promise<string> {
+  const [due, prefs, workflow] = await Promise.all([
+    getDueCards(root, new Date()), loadUserPreferences(root), loadPrepareWorkflow(root, {}),
+  ]);
+  const ignored = (url.searchParams.has('mode') || url.searchParams.has('tag'))
+    ? `<p class="notice" role="status">That incomplete review link was not started. Choose a practice mode below.</p>` : '';
+  const reviewAction = await renderReviewScope(root, due, prefs.reviewSessionCap, true);
+  const body = `<h1>Choose how to practice</h1><p class="muted">Review is scheduled and graded. Strengthen and External problems are read-only planning views.</p>${ignored}` +
+    `<div class="mode-grid"><section class="mode-card primary-mode"><p class="eyebrow">Scheduled and graded</p><h2>Review due</h2>${reviewAction}</section>` +
+    `<section class="mode-card"><p class="eyebrow">Ungraded</p><h2>Strengthen weak areas</h2><p>${workflow.strengthen.length} evidence-backed card${workflow.strengthen.length === 1 ? '' : 's'}.</p><a class="secondary-action" href="/practice/strengthen">Browse weak areas</a></section>` +
+    `<section class="mode-card"><p class="eyebrow">Ungraded</p><h2>External problems</h2><p>${workflow.external.length} author-supplied reference${workflow.external.length === 1 ? '' : 's'}.</p><a class="secondary-action" href="/practice/external">Browse external problems</a></section></div>`;
+  return pageShell('MergeLearn — Practice', 'practice', body, instanceId);
+}
 
 /**
- * Practice is client-rendered: a static shell that fetches /api/due, walks the
- * queue one card at a time (answer -> reveal -> grade), and POSTs each grade.
- * Kept deliberately framework-free — plain fetch + DOM, no build step.
+ * The active Review runner is client-rendered: a static shell that fetches the
+ * session APIs, shows one card, and persists every grade.
  */
-function renderPractice(instanceId: string): string {
+function renderPractice(url: URL, instanceId: string): string {
+  const requestedLesson = url.searchParams.get('mode') === 'lesson' && url.searchParams.has('set');
   const body =
-    `<h1>Practice</h1>` +
+    `<noscript><style>#session-ui{display:none}</style><div class="notice">Learning and Review sessions require JavaScript. <a href="/practice">Return to Practice</a>.</div></noscript>` +
+    `<div id="session-ui"><h1>${requestedLesson ? 'Learn' : 'Review'}</h1>` +
+    `<div id="launch-notice" class="notice" role="status" hidden></div>` +
     `<div id="progress" class="muted" style="margin:6px 0 4px"></div>` +
     `<div class="session-tools"><button type="button" id="undo-grade" class="secondary-action" data-server-mutation aria-describedby="retry-guidance" hidden>Undo last answer</button><button type="button" id="end-session" class="secondary-action" data-server-mutation aria-describedby="retry-guidance">End session</button></div>` +
     `<div id="mount"></div>` +
     `<div id="retry-guidance" class="draft-notice" role="status" aria-live="polite" hidden></div>` +
-    `<div class="status" id="status" aria-live="polite"></div>` +
+    `<div class="status" id="status" aria-live="polite"></div></div>` +
     `<script>${practiceScript()}</script>`;
-  return pageShell('MergeLearn — Practice', 'practice', body, instanceId);
+  return pageShell(`MergeLearn — ${requestedLesson ? 'Learn' : 'Review'}`, 'practice', body, instanceId, false);
 }
 
 function practiceScript(): string {
@@ -1633,7 +1595,7 @@ function progress(){var p=document.getElementById('progress');var n=Number(sessi
 function syncUndo(){var b=document.getElementById('undo-grade');if(b)b.hidden=!lastGrade;}
 function syncEnd(){var b=document.getElementById('end-session');if(b)b.disabled=!sessionId;}
 function applySessionState(j){
-  if(!j)return;startFailure=null;sessionId=j.sessionId||sessionId;revision=Number(j.revision)||0;sessionSummary=j.summary||sessionSummary;lastGrade=null;
+  if(!j)return;startFailure=null;sessionId=j.sessionId||sessionId;if(j.sessionMode)practiceMode=j.sessionMode==='lesson'?'lesson':'review';document.title='MergeLearn — '+(practiceMode==='lesson'?'Learn':'Review');var heading=document.querySelector('main h1');if(heading)heading.textContent=practiceMode==='lesson'?'Learn':'Review';revision=Number(j.revision)||0;sessionSummary=j.summary||sessionSummary;lastGrade=null;
   currentEntryId=j.current?j.current.entryId:null;queue=j.current?[j.current.card]:[];pos=0;reviewed=Number(sessionSummary.reviewedCount)||0;planRemaining=Number(j.remaining)||0;revisitRemaining=Number(j.revisitRemaining)||0;plannedCount=Number(j.plannedCount)||0;waitingBacklog=Number(j.backlog)||0;
   if(sessionId)try{localStorage.setItem('ml-active-session',sessionId);}catch(e){}
   syncEnd();
@@ -1911,7 +1873,7 @@ document.addEventListener('keydown',function(e){
   try{
     var saved=null;try{saved=localStorage.getItem('ml-active-session');}catch(e){}
     var sj=null;if(saved){var rr=await fetch('/api/session/'+encodeURIComponent(saved));if(rr.ok)sj=await rr.json();}
-    if(sj&&sj.ok&&!sj.ended&&sessionKey(sj)!==intentKey(sessionBody))sj=null;
+    if(sj&&sj.ok&&!sj.ended&&sessionKey(sj)!==intentKey(sessionBody)){var notice=document.getElementById('launch-notice');if(notice){notice.hidden=false;notice.textContent='Your unfinished session was resumed. The newly requested practice was not started.';}}
     if(!sj||!sj.ok||sj.ended){
       var startBody=null;try{var pendingStart=localStorage.getItem(pendingStartKey);if(pendingStart){var parsedStart=JSON.parse(pendingStart);if(intentKey(parsedStart)===intentKey(sessionBody))startBody=pendingStart;}}catch(e){}
       if(!startBody){var startRequest=Object.assign({},sessionBody,{requestId:'start-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random())});startBody=JSON.stringify(startRequest);try{localStorage.setItem(pendingStartKey,startBody);}catch(e){}}
@@ -1949,6 +1911,11 @@ function sendHtml(res: ServerResponse, status: number, body: string): void {
   res.end(body);
 }
 
+function sendRedirect(res: ServerResponse, location: string): void {
+  res.writeHead(302, { location });
+  res.end();
+}
+
 function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(`${JSON.stringify(body)}\n`);
@@ -1966,18 +1933,17 @@ export function escapeHtml(value: string): string {
 
 // ---- HTML shell ----
 
-type Tab = 'home' | 'practice' | 'prepare' | 'set' | 'manage';
+type Tab = 'home' | 'library' | 'practice';
 
-function pageShell(title: string, tab: Tab, body: string, instanceId: string): string {
+function pageShell(title: string, tab: Tab, body: string, instanceId: string, exact = true): string {
   const tabs: { id: Tab; href: string; label: string }[] = [
     { id: 'home', href: '/', label: 'Home' },
+    { id: 'library', href: '/library', label: 'Library' },
     { id: 'practice', href: '/practice', label: 'Practice' },
-    { id: 'prepare', href: '/prepare', label: 'Prepare' },
-    { id: 'manage', href: '/manage', label: 'Manage' },
   ];
   const nav = tabs
     .map((t) => {
-      const current = t.id === tab ? ' aria-current="page"' : '';
+      const current = t.id === tab ? ` aria-current="${exact ? 'page' : 'true'}"` : '';
       return `<a href="${t.href}"${current}>${t.label}</a>`;
     })
     .join('');
@@ -2050,7 +2016,7 @@ a:hover{text-decoration:underline}
 .tabs{display:flex;gap:4px}
 .tabs a{padding:6px 14px;border-radius:var(--radius-sm);color:var(--muted);font-weight:500}
 .tabs a:hover{background:var(--hover);text-decoration:none;color:var(--text)}
-.tabs a[aria-current=page]{background:var(--accent);color:#fff}
+.tabs a[aria-current=page],.tabs a[aria-current=true]{background:var(--accent);color:#fff}
 .hint{margin-left:auto;color:var(--muted);font-size:12px}
 .connection-status{max-width:820px;margin:12px auto 0;padding:10px 14px;border:1px solid var(--danger);border-radius:var(--radius);background:rgba(248,81,73,.12);color:var(--text)}
 .connection-status[hidden]{display:none}
@@ -2061,6 +2027,7 @@ main{max-width:820px;margin:0 auto;padding:28px 24px 64px}
 h1{font-size:1.6rem;letter-spacing:-0.02em;margin:0 0 4px}
 h2{font-size:1.15rem;margin:0 0 10px}
 .muted{color:var(--muted)}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .empty{border:1px dashed var(--border);border-radius:var(--radius);padding:32px;text-align:center;color:var(--muted)}
 .empty code{background:var(--overlay);padding:2px 6px;border-radius:4px;font-family:var(--mono);font-size:13px;color:var(--text)}
 .due-banner{display:flex;align-items:baseline;gap:10px;margin:18px 0 24px}
@@ -2300,10 +2267,60 @@ button.primary:hover{background:var(--accent-hover)}
 .combo-tile.sel{background:rgba(99,102,241,0.12);border-color:var(--accent)}
 .combo-title{font-weight:600;font-size:14px}
 .combo-hint{color:var(--muted);font-size:12px;font-family:var(--mono)}
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:20px}
+.page-head h1{margin-bottom:4px}
+.page-head p{margin:0}
+.subtabs{display:flex;gap:4px;padding:3px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.subtabs a{padding:7px 12px;border-radius:4px;color:var(--muted);font-weight:600;white-space:nowrap}
+.subtabs a:hover{color:var(--text);background:var(--hover);text-decoration:none}
+.subtabs a[aria-current=page]{color:#fff;background:var(--accent)}
+.dashboard-section{margin-top:24px;padding:20px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
+.dashboard-section>h2{margin-bottom:12px}
+.dashboard-section .lesson-list{margin-bottom:0}
+.attention-list{display:grid;gap:10px;list-style:none;padding:0;margin:14px 0}
+.attention-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--border-soft)}
+.attention-row:first-child{padding-top:0}.attention-row:last-child{padding-bottom:0;border-bottom:0}
+.attention-row p{margin:3px 0 0;color:var(--muted);font-size:13px}
+.mode-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:24px}
+.mode-card{padding:20px;background:var(--raised);border:1px solid var(--border);border-radius:var(--radius)}
+.mode-card.primary-mode{grid-column:1/-1;border-color:var(--accent);background:linear-gradient(135deg,rgba(99,102,241,.12),var(--raised) 55%)}
+.mode-card h2{margin:2px 0 8px}.mode-card>p{margin:6px 0 14px}
+.eyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:11px;font-weight:700;color:var(--accent-hover)}
+.review-scope{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.review-scope>p{flex-basis:100%;margin:0}
+.review-scope .cta{margin-top:0}
+.scope-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-basis:100%;padding:10px 12px;background:var(--overlay);border:1px solid var(--border-soft);border-radius:var(--radius-sm)}
+.scope-summary .clear{padding:5px 9px;background:transparent}
+.scope-picker{flex-basis:100%;margin-top:4px;border-top:1px solid var(--border-soft);padding-top:12px}
+.scope-picker>summary{cursor:pointer;color:var(--link);font-weight:600}
+.scope-options{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+.scope-option{padding:7px 11px}.scope-option[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+.scope-combine{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px}
+.scope-combine select{padding:7px 9px;background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:var(--radius-sm)}
+.backlog{margin-left:2px}.caught-up{margin:0;color:var(--success)}
+.notice{margin:14px 0;padding:11px 13px;background:rgba(210,153,34,.12);border:1px solid var(--warning);border-radius:var(--radius-sm)}
+.notice[hidden]{display:none}
+.session-tools{display:flex;justify-content:flex-end;gap:8px;margin:8px 0 4px}
 @media(max-width:600px){
-  .topbar{gap:8px;padding:12px}
-  .tabs a{padding:6px 9px}
+  .topbar{gap:8px;padding:10px 12px;flex-wrap:wrap}
+  .brand{width:100%}
+  .tabs{width:100%;display:grid;grid-template-columns:repeat(3,1fr)}
+  .tabs a{min-height:44px;padding:11px 8px;text-align:center}
   .hint{display:none}
-  main{padding:24px 16px 56px}
+  main{padding:22px 14px 56px}
+  .page-head{display:block}.subtabs{margin-top:16px;width:100%;display:grid;grid-template-columns:1fr 1fr}.subtabs a{min-height:44px;padding:11px 8px;text-align:center}
+  .mode-grid{grid-template-columns:1fr}.mode-card.primary-mode{grid-column:auto}.mode-card{padding:17px}
+  .dashboard-section{padding:16px;margin-top:18px}
+  .home-search{display:flex;align-items:stretch;flex-direction:column;gap:8px}.home-search input,.home-search button{width:100%;min-height:44px}
+  .attention-row{align-items:flex-start;flex-direction:column}.attention-row .secondary-action{width:100%;text-align:center}
+  .review-scope{align-items:stretch}.review-scope .cta,.review-scope .secondary-action{min-height:44px;text-align:center;padding:11px 14px}.scope-summary{align-items:flex-start;flex-direction:column}.scope-summary .clear{min-height:44px;width:100%}
+  .scope-option,.scope-picker>summary{min-height:44px}.scope-picker>summary{display:flex;align-items:center}.scope-combine{align-items:flex-start;flex-direction:column}.scope-combine select{min-height:44px;width:100%}
+  .prepare-filters{align-items:stretch;flex-direction:column}.prepare-filters label,.prepare-filters input,.prepare-filters button{width:100%}.prepare-filters input,.prepare-filters button{min-height:44px}
+  .card-filter-panel>summary{min-height:44px;display:flex;align-items:center}.card-tools{align-items:stretch;flex-direction:column}.card-tools label{min-height:44px}.card-tools input[type="search"]{min-width:0;width:100%;min-height:44px}.card-tools select,.card-tools button{min-height:44px;width:100%}
+  .lesson-actions,.prepare-actions,.session-tools{align-items:stretch;flex-direction:column}.lesson-actions .cta,.lesson-actions .secondary-action,.prepare-actions .secondary-action,.session-tools button{min-height:44px;text-align:center;width:100%}
+  .mode-card .secondary-action,.attention-row .secondary-action,.prepare-row>a,.browse-card>summary,.curation-edit>summary{min-height:44px;display:flex;align-items:center}
+  .mode-card .secondary-action,.attention-row .secondary-action,.prepare-row>a{justify-content:center}
+  .curation-head-actions button,.actions button,.conf-opts button,.p-move button{min-height:44px}
+  .curation-head{flex-direction:column}.curation-head-actions{width:100%;justify-content:flex-end}
 }`;
 }

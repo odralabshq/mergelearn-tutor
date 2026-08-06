@@ -152,7 +152,45 @@ function gradeBody(
 }
 
 describe('review GUI server (functional)', () => {
-  it('renders Prepare with exact card fragments, safe links, and repeated source filters', async () => {
+  it('exposes canonical Home, Library, and Practice routes with one-hop compatibility redirects', async () => {
+    running = await startReviewServer(await seed());
+    for (const [path, label, current] of [
+      ['/', 'Home', 'page'],
+      ['/library', 'Library', 'page'],
+      ['/library/cards', 'Library', 'true'],
+      ['/practice', 'Practice', 'page'],
+      ['/practice/session', 'Practice', 'true'],
+      ['/set/server-deck', 'Library', 'true'],
+    ]) {
+      const response = await fetch(`${running.url}${path}`);
+      const html = await response.text();
+      expect(response.status, path).toBe(200);
+      expect(html, path).toContain(`<a href="${label === 'Home' ? '/' : `/${label.toLowerCase()}`}" aria-current="${current}">${label}</a>`);
+      const nav = html.match(/<nav class="tabs">([\s\S]*?)<\/nav>/)?.[1] ?? '';
+      expect(nav.match(/aria-current=/g), path).toHaveLength(1);
+      const scripts = [...html.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+      expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
+        .forEach((script) => new Function(script))).not.toThrow();
+    }
+
+    for (const [path, location] of [
+      ['/manage?tag=a&tag=b%20c', '/library/cards?tag=a&tag=b%20c'],
+      ['/prepare?source=Interview%20list', '/practice/external?source=Interview%20list'],
+      ['/prepare?set=s&source=x', '/practice/strengthen?set=s&source=x'],
+      ['/practice?mode=lesson&set=server-deck', '/practice/session?mode=lesson&set=server-deck'],
+      ['/practice?set=server-deck', '/practice/session?set=server-deck'],
+    ]) {
+      const response = await fetch(`${running.url}${path}`, { redirect: 'manual' });
+      expect(response.status, path).toBe(302);
+      expect(response.headers.get('location'), path).toBe(location);
+    }
+
+    const unknown = await fetch(`${running.url}/practice?utm=test`);
+    expect(unknown.status).toBe(200);
+    expect(await unknown.text()).toContain('Choose how to practice');
+  });
+
+  it('renders External problems with exact card fragments, safe links, and repeated source filters', async () => {
     const root = await mkdtemp(join(tmpdir(), 'mlt-prepare-route-'));
     const result = await importAgentSet(root, {
       version: 1,
@@ -175,9 +213,10 @@ describe('review GUI server (functional)', () => {
     await saveCard(root, { ...original!, id: 'snow 雪 %?#' });
     running = await startReviewServer(root);
 
-    const html = await (await fetch(`${running.url}/prepare?source=missing&source=Good%20%26%20Co`)).text();
+    const html = await (await fetch(`${running.url}/practice/external?source=missing&source=Good%20%26%20Co`)).text();
     const fragment = `/set/${encodeURIComponent('prep-set')}#card-${encodeURIComponent('snow 雪 %?#')}`;
-    expect(html).toContain('<a href="/prepare" aria-current="page">Prepare</a>');
+    expect(html).toContain('<a href="/practice" aria-current="true">Practice</a>');
+    expect(html).toContain('href="/practice/external?source=missing&amp;source=Good%20%26%20Co" aria-current="page"');
     expect(html).toContain(`href="${fragment}"`);
     expect(html).toContain('Good &amp; Co');
     expect(html.match(/<input name="source"/g)).toHaveLength(2);
@@ -194,18 +233,19 @@ describe('review GUI server (functional)', () => {
   it('distinguishes absent External metadata from filters that exclude it', async () => {
     const root = await seed();
     running = await startReviewServer(root);
-    const absent = await (await fetch(`${running.url}/prepare`)).text();
-    expect(absent).toContain('No evidence-backed weak cards are available yet.');
+    const strengthen = await (await fetch(`${running.url}/practice/strengthen`)).text();
+    const absent = await (await fetch(`${running.url}/practice/external`)).text();
+    expect(strengthen).toContain('No evidence-backed weak cards are available yet.');
     expect(absent).toContain('No problem references are available yet.');
     expect(absent).toContain('mergelearn apply --file examples/interview-pattern-lesson.json --open');
     await running.close();
 
     running = await startReviewServer(await seedProblemRefs());
-    const populated = await (await fetch(`${running.url}/prepare`)).text();
+    const populated = await (await fetch(`${running.url}/practice/external`)).text();
     expect(populated).toContain('<span class="secondary-action is-disabled">Link unavailable</span>');
     expect(populated).not.toContain('href="javascript:');
     expect(populated).not.toContain('Safe gninrut');
-    const filtered = await (await fetch(`${running.url}/prepare?source=missing`)).text();
+    const filtered = await (await fetch(`${running.url}/practice/external?source=missing`)).text();
     expect(filtered).toContain('No problem references match the active filters.');
   });
 
@@ -435,14 +475,20 @@ describe('review GUI server (functional)', () => {
     expect(second.status).toBe('current');
   });
 
-  it('renders Home with the set and the due count', async () => {
+  it('renders Home as a next-action dashboard', async () => {
     running = await startReviewServer(await seed());
     const { status, text } = await get(`${running.url}/`);
     expect(status).toBe(200);
-    expect(text).toContain('Server Deck');
-    expect(text).toContain('1</strong>'); // due banner count
-    expect(text).toContain('Review 1 now'); // Review is the separate capped FSRS entry
-    expect(text).toContain('class="review-entry"');
+    expect(text).toContain('Review 1 now');
+    expect(text).toContain('<h2>In progress</h2>');
+    expect(text).toContain('<h2>Needs attention</h2>');
+    expect(text).toContain('Opening these cards is ungraded and does not change scheduling.');
+    expect(text).toContain('<form class="home-search" method="get" action="/library/cards">');
+    expect(text).toContain('.home-search input,.home-search button{width:100%;min-height:44px}');
+    expect(text).toContain("active()?'<p class=\"caught-up\"><strong>You are caught up in this scope.</strong>");
+    expect(text).toContain("':'<p class=\"caught-up\"><strong>You are caught up.</strong>");
+    expect(text).toContain('href="/library">Browse lessons</a>');
+    expect(text).not.toContain('<h2>Lessons</h2>');
     expect(text).toContain('aria-current="page"'); // Home tab active
   });
 
@@ -452,9 +498,9 @@ describe('review GUI server (functional)', () => {
     expect(status).toBe(200);
     expect(text).toContain('id="card-search"');
     expect(text).toContain('id="card-set"');
-    expect(text).toContain('id="card-tags" multiple');
+    expect(text).toContain('id="card-tags" name="tag" multiple');
     expect(text).toContain('id="card-state"');
-    expect(text).toContain('id="card-status" role="status" aria-live="polite"');
+    expect(text).toContain('id="card-status" tabindex="-1" role="status" aria-live="polite"');
     expect(text).toContain('id="load-more-cards"');
     expect(text).toContain('id="reload-cards"');
     expect(text).toContain("params.set('offset',String(expectedOffset))");
@@ -473,19 +519,40 @@ describe('review GUI server (functional)', () => {
     expect(text).not.toContain('class="curation-actions"');
     expect(text.indexOf('class="curation-head-actions"')).toBeLessThan(text.indexOf('class="curation-edit"'));
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
-    expect(text.indexOf('Practice filters')).toBeLessThan(text.indexOf('id="card-search"'));
+    expect(text).not.toContain('Practice filters');
     const scripts = [...text.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
     expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
       .forEach((script) => new Function(script))).not.toThrow();
   });
 
-  it('serves the Practice shell', async () => {
+  it('server-renders Cards queries and explains moved legacy Review scope', async () => {
     running = await startReviewServer(await seed());
-    const { status, text } = await get(`${running.url}/practice`);
+    const searched = await get(`${running.url}/library/cards?q=union`);
+    expect(searched.status).toBe(200);
+    expect(searched.text).toContain('value="union"');
+    expect(searched.text).toContain('<noscript><style>#card-results{display:none}</style><ul class="prepare-list">');
+    expect(searched.text).toContain('What is a union type?');
+
+    const blankState = await get(`${running.url}/library/cards?q=union&set=&state=`);
+    expect(blankState.status).toBe(200);
+    expect(blankState.text).toContain('<option value="">All states</option>');
+    expect(blankState.text).not.toContain('<option value="0" selected>New</option>');
+
+    const legacy = await get(`${running.url}/manage?folderPath=ts%2Fbasics`);
+    expect(legacy.status).toBe(200);
+    expect(legacy.text).toContain('Temporary Review scope moved to <a href="/practice">Practice</a>');
+  });
+
+  it('serves the active Review runner', async () => {
+    running = await startReviewServer(await seed());
+    const { status, text } = await get(`${running.url}/practice/session`);
     expect(status).toBe(200);
     expect(text).toContain('id="mount"');
     expect(text).toContain('/api/session/start');
     expect(text).toContain('function applySessionState');
+    expect(text).toContain("if(j.sessionMode)practiceMode=j.sessionMode==='lesson'?'lesson':'review'");
+    expect(text).toContain("document.title='MergeLearn — '+(practiceMode==='lesson'?'Learn':'Review')");
+    expect(text).toContain("heading.textContent=practiceMode==='lesson'?'Learn':'Review'");
     expect(text).not.toContain("fetch('/api/due'");
     expect(text).not.toContain('function planRequeue');
     expect(text).toContain('/api/session/undo');

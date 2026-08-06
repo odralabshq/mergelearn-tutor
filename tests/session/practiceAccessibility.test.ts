@@ -31,36 +31,40 @@ async function seed(): Promise<string> {
 
 const fetchText = async (url: string): Promise<string> => (await fetch(url)).text();
 
-describe('Prepare is accessible and URL-driven', () => {
-  it('exposes named lanes, labeled filters, boundary notes, and safe external handoff semantics', async () => {
+describe('Practice planning views are accessible and URL-driven', () => {
+  it('exposes labeled filters, truthful boundaries, and safe external handoff semantics', async () => {
     running = await startReviewServer(await seed());
-    const html = await fetchText(`${running.url}/prepare?source=Interview%20list`);
+    const strengthen = await fetchText(`${running.url}/practice/strengthen?source=Interview%20list`);
+    const external = await fetchText(`${running.url}/practice/external?source=Interview%20list`);
 
-    expect(html).toContain('<a href="/prepare" aria-current="page">Prepare</a>');
-    expect(html).toContain('<form class="prepare-filters" method="get" action="/prepare" aria-label="Prepare filters">');
-    expect(html).toContain('<label>Set<input name="set"');
-    expect(html).toContain('<label>Tag<input name="tag"');
-    expect(html).toContain('<label>Source<input name="source" value="Interview list">');
-    expect(html).toContain('<section aria-labelledby="strengthen-heading"><h2 id="strengthen-heading">Strengthen</h2>');
-    expect(html).toContain('<section aria-labelledby="external-heading"><h2 id="external-heading">Practice externally</h2>');
-    expect(html).toContain('Problem reference supplied by Interview list');
-    expect(html).toContain('role="note">Source filters apply only to Practice externally, not retrieval evidence.');
-    expect(html).toContain('External links leave MergeLearn. No implementation result is recorded.');
-    expect(html).not.toContain('Import preparation example');
-    expect(html).toContain('target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"');
-    expect(html).toContain('aria-label="Practice externally: open Interview list · a11y-ref in a new tab"');
-    const main = html.match(/<main>([\s\S]*?)<\/main>/)?.[1] ?? '';
+    expect(strengthen).toContain('<a href="/practice" aria-current="true">Practice</a>');
+    expect(strengthen).toContain('<form class="prepare-filters" method="get" action="/practice/strengthen" aria-label="Practice filters">');
+    expect(strengthen).toContain('<label>Set<input name="set"');
+    expect(strengthen).toContain('<label>Tag<input name="tag"');
+    expect(strengthen).not.toContain('<input name="source"');
+    expect(strengthen).toContain('<section aria-labelledby="strengthen-heading"><h1 id="strengthen-heading">Strengthen weak areas</h1>');
+    expect(strengthen).toContain('role="note">Source was not applied to retrieval evidence.');
+
+    expect(external).toContain('<form class="prepare-filters" method="get" action="/practice/external" aria-label="Practice filters">');
+    expect(external).toContain('<label>Source<input name="source" value="Interview list">');
+    expect(external).toContain('<section aria-labelledby="external-heading"><h1 id="external-heading">External problems</h1>');
+    expect(external).toContain('Nothing here is graded or scheduled, no result is recorded, and this view does not assert readiness.');
+    expect(external).not.toContain('Source filters apply only to Practice externally');
+    expect(external).not.toContain('Import preparation example');
+    expect(external).toContain('target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer"');
+    expect(external).toContain('aria-label="Practice externally: open Interview list · a11y-ref in a new tab"');
+    const main = external.match(/<main>([\s\S]*?)<\/main>/)?.[1] ?? '';
     expect(main).not.toContain('ml-prepare');
     expect(main).not.toContain('prepare-filter-state');
     expect(main).not.toContain('data-server-mutation');
-    expect(html).not.toContain('/api/prepare');
+    expect(external).not.toContain('/api/prepare');
   });
 });
 
 describe('practice reveals are announced to assistive technology', () => {
   it('marks the attempt review as a live region', async () => {
     running = await startReviewServer(await seed());
-    const html = await fetchText(`${running.url}/practice`);
+    const html = await fetchText(`${running.url}/practice/session`);
     // Checking answer inserts the result WITHOUT moving focus, so without a
     // live region a screen-reader user is never told the outcome arrived.
     expect(html).toContain('id="attempt-review" aria-live="polite"');
@@ -68,7 +72,7 @@ describe('practice reveals are announced to assistive technology', () => {
 
   it('marks the session status as a live region', async () => {
     running = await startReviewServer(await seed());
-    const html = await fetchText(`${running.url}/practice`);
+    const html = await fetchText(`${running.url}/practice/session`);
     expect(html).toContain('id="status" aria-live="polite"');
     expect(html).toContain('id="retry-guidance"');
     expect(html).toContain('role="status" aria-live="polite"');
@@ -77,7 +81,7 @@ describe('practice reveals are announced to assistive technology', () => {
 
   it('keeps the inline client parseable after the markup change', async () => {
     running = await startReviewServer(await seed());
-    const html = await fetchText(`${running.url}/practice`);
+    const html = await fetchText(`${running.url}/practice/session`);
     const script = html.match(/<script>([\s\S]*?)<\/script>/i)?.[1];
     expect(script).toBeTruthy();
     // The client is a string literal, so tsc cannot see inside it.
@@ -86,9 +90,10 @@ describe('practice reveals are announced to assistive technology', () => {
 
   it('uses the server plan as the only Practice cursor and retains uncertain requests', async () => {
     running = await startReviewServer(await seed());
-    const html = await fetchText(`${running.url}/practice`);
+    const html = await fetchText(`${running.url}/practice/session`);
     const script = html.match(/<script>([\s\S]*?)<\/script>/i)?.[1] ?? '';
     expect(script).toContain('function applySessionState');
+    expect(script).toContain("heading.textContent=practiceMode==='lesson'?'Learn':'Review'");
     expect(script).toContain('entryId:currentEntryId');
     expect(script).toContain('requestId:pendingRequestId');
     expect(script).toContain('var sentBody=pendingRequestBody');
@@ -141,7 +146,7 @@ describe('practice reveals are announced to assistive technology', () => {
 describe('finishing a session always offers a way forward', () => {
   it('ships forward actions for both the completed and empty states', async () => {
     running = await startReviewServer(await seed());
-    const script = (await fetchText(`${running.url}/practice`))
+    const script = (await fetchText(`${running.url}/practice/session`))
       .match(/<script>([\s\S]*?)<\/script>/i)?.[1] ?? '';
     // With a backlog: continue reviewing. Without one: the two things actually
     // worth doing next, instead of a dead end.

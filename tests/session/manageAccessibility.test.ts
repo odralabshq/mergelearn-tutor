@@ -33,9 +33,11 @@ describe('Manage paging accessibility', () => {
     const html = await manageHtml();
     expect(html).toContain('<label>Search<input id="card-search"');
     expect(html).toContain('<label>Set<select id="card-set"');
-    expect(html).toContain('<label>Tags<select id="card-tags" multiple>');
+    expect(html).toContain('<label>Tags<select id="card-tags" name="tag" multiple>');
+    expect(html).toContain('<form class="card-tools" method="get" action="/library/cards#card-status">');
+    expect(html).toContain('<noscript><style>#card-results{display:none}</style><ul class="prepare-list">');
     expect(html).toContain('<label>Learning state<select id="card-state"');
-    expect(html).toContain('id="card-status" role="status" aria-live="polite"');
+    expect(html).toContain('id="card-status" tabindex="-1" role="status" aria-live="polite"');
     expect(html).toContain('id="load-more-cards"');
     expect(html).toContain('id="reload-cards"');
     expect(html).toContain('class="curation-card" tabindex="-1"');
