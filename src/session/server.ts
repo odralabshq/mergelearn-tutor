@@ -377,12 +377,10 @@ async function dueData(root: string, req: IncomingMessage, res: ServerResponse, 
 async function cardsApi(root: string, res: ServerResponse, url: URL): Promise<void> {
   const rawOffset = Number(url.searchParams.get('offset'));
   const rawLimit = Number(url.searchParams.get('limit'));
-  const rawState = Number(url.searchParams.get('state'));
+  const stateValue = url.searchParams.get('state') ?? '';
   const offset = url.searchParams.has('offset') && Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
   const limit = url.searchParams.has('limit') && Number.isInteger(rawLimit) && rawLimit >= 1 && rawLimit <= 100 ? rawLimit : 100;
-  const state = url.searchParams.has('state') && Number.isInteger(rawState) && rawState >= 0 && rawState <= 3
-    ? rawState as 0 | 1 | 2 | 3
-    : undefined;
+  const state = /^[0-3]$/.test(stateValue) ? Number(stateValue) as 0 | 1 | 2 | 3 : undefined;
   const page = await searchCardsPage(root, url.searchParams.get('q') ?? '', {
     setIds: url.searchParams.get('set') ? [url.searchParams.get('set')!] : undefined,
     tagIds: url.searchParams.getAll('tag').filter(Boolean),

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startReviewServer, type ReviewServer } from '../../src/session/server.js';
 import { importAgentSet } from '../../src/core/library/importAgentSet.js';
 import { archiveCard } from '../../src/core/library/cardLifecycle.js';
-import { loadCard, saveCard } from '../../src/core/library/cardStore.js';
+import { loadCard, loadCardsForSet, saveCard } from '../../src/core/library/cardStore.js';
 import { loadSet, saveSet } from '../../src/core/library/setStore.js';
 import { getDueCards } from '../../src/core/library/review/dueQueue.js';
 import { gradePlannedSession, startPlannedSession } from '../../src/core/library/review/session.js';
@@ -411,6 +411,23 @@ describe('review GUI server (functional)', () => {
       ok: false, code: 'snapshot_mismatch', snapshot: expect.stringMatching(/^[0-9a-f]{64}$/), total: 101,
     });
     expect(staleBody.snapshot).not.toBe(first.snapshot);
+  });
+
+  it('treats a blank Cards API state as All states', async () => {
+    const root = await seed();
+    const [card] = await loadCardsForSet(root, 'server-deck');
+    await saveCard(root, { ...card!, fsrs: { ...card!.fsrs, state: 2 } });
+    running = await startReviewServer(root);
+
+    const all = await (await fetch(`${running.url}/api/cards`)).json();
+    const blank = await (await fetch(`${running.url}/api/cards?state=`)).json();
+    const fresh = await (await fetch(`${running.url}/api/cards?state=0`)).json();
+
+    expect(all).toMatchObject({ total: 1, returned: 1 });
+    expect(blank).toMatchObject({ total: 1, returned: 1 });
+    expect(blank.cards.map((item: { cardId: string }) => item.cardId))
+      .toEqual(all.cards.map((item: { cardId: string }) => item.cardId));
+    expect(fresh).toMatchObject({ total: 0, returned: 0 });
   });
 
   it('records explicit dogfood feedback and deferral locally', async () => {
