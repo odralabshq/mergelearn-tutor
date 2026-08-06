@@ -1,4 +1,4 @@
-import { mkdtemp, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -33,7 +33,8 @@ try {
 
   for (const required of [
     'dist/libCli.js', 'dist/index.js', 'dist/index.d.ts', 'README.md', 'package.json',
-    'examples/sample-lesson.json', 'skills/mergelearn-authoring/SKILL.md',
+    'examples/sample-lesson.json', 'examples/interview-pattern-lesson.json',
+    'skills/mergelearn-authoring/SKILL.md',
     'skills/mergelearn-tutor/SKILL.md', 'LICENSE',
   ]) {
     assert(fileNames.includes(required), `package is missing ${required}`);
@@ -70,6 +71,37 @@ try {
   const sampleHome = path.join(tmp, 'sample-home');
   const sample = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'sample', '--dry-run'], { cwd: extractDir });
   assert(sample.stdout.includes('would install sample lesson'), 'packed sample dry-run did not run');
+
+  const interviewHome = path.join(tmp, 'interview-home');
+  const interview = run('node', [
+    'package/dist/libCli.js', '--home', interviewHome, 'apply',
+    '--file', 'examples/interview-pattern-lesson.json', '--dry-run',
+  ], { cwd: extractDir });
+  assert(interview.stdout.includes('would apply set "interview-pattern-example"'),
+    'README interview example did not resolve from the packed CLI');
+
+  const callerExamples = path.join(extractDir, 'examples');
+  await mkdir(callerExamples, { recursive: true });
+  await writeFile(path.join(callerExamples, 'interview-pattern-lesson.json'), JSON.stringify({
+    version: 1,
+    set: { id: 'caller-example', title: 'Caller example', tagIds: [] },
+    tagPatch: { reuse: [], add: [] },
+    order: ['caller-card'],
+    cards: [{ localId: 'caller-card', tagRefs: [], front: { prompt: 'Caller file?' }, back: { shortAnswer: 'Yes.', explanationMarkdown: 'Caller wins.' } }],
+  }));
+  const caller = run('node', [
+    'package/dist/libCli.js', '--home', interviewHome, 'apply',
+    '--file', 'examples/interview-pattern-lesson.json', '--dry-run',
+  ], { cwd: extractDir });
+  assert(caller.stdout.includes('would apply set "caller-example"'),
+    'caller-relative file did not take precedence over the shipped example');
+
+  const missing = spawnSync('node', [
+    'package/dist/libCli.js', '--home', interviewHome, 'apply',
+    '--file', 'examples/not-shipped.json', '--dry-run',
+  ], { cwd: extractDir, encoding: 'utf8', env: process.env });
+  assert(missing.status !== 0 && missing.stderr.includes('ENOENT'),
+    'an arbitrary missing example path should still fail with ENOENT');
 
   const setup = run('node', ['package/dist/libCli.js', '--home', sampleHome, 'setup-agent', '--agent', 'claude', '--scope', 'project', '--dry-run'], { cwd: extractDir });
   assert(setup.stdout.includes('dry run'), 'packed setup-agent dry-run did not run');

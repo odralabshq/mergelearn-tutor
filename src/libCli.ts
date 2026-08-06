@@ -91,6 +91,19 @@ const packageVersion = (): string => {
   return pkg.version;
 };
 
+const shippedExamplePaths = new Set([
+  'examples/interview-pattern-lesson.json',
+]);
+
+async function readApplyPatch(file: string): Promise<string> {
+  try {
+    return await readFile(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || !shippedExamplePaths.has(file)) throw error;
+    return readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+  }
+}
+
 function requestBrowserOpen(url: string): boolean {
   const [command, args] = process.platform === 'darwin'
     ? ['open', [url]]
@@ -162,7 +175,7 @@ export function buildProgram(deps: {
   const runApply = async (opts: ApplyOptions): Promise<void> => {
     const noun = opts.legacyImportWording ? 'import' : 'apply';
     const past = opts.legacyImportWording ? 'imported' : 'applied';
-    const patch = JSON.parse(await readFile(opts.file, 'utf8')) as AgentSetPatch;
+    const patch = JSON.parse(await readApplyPatch(opts.file)) as AgentSetPatch;
     if (opts.open) {
       const result = await createAndOpen(rootFrom(homeOpt()), patch, {
         agentName: opts.agent, dryRun: opts.dryRun, openUrl, ensure: ensureLocalServer,
