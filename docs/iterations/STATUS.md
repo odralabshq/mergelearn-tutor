@@ -15,16 +15,16 @@ timestamp: 2026-08-04
 - Remote: `origin/feat/iteration-program`
 - Mode: autonomous design and implementation; no merge to `main`
 - Current phase: complete
-- Current iteration: all seven implementation iterations complete
+- Current iteration: all eight implementation iterations complete
 - Program base commit: `44f94cd`
-- Latest completed implementation commit: `6584a6afb45ead68c0f27335e14540ec89e43217` (Iteration 07 design and implementation)
+- Latest completed implementation commit: `80db027681fd2b87caf476f2796490ab490786e3` (Iteration 08 card filter consistency)
 - Active worker: parent session with bounded implementation and direct Opus 5 review; cron job `29ddd97918b5` remains paused
 
 ## Completed
 
 - Baseline UX changes and original iteration scopes were committed separately.
 - Opus 5 roadmap review reduced ten scopes to six focused releases.
-- All seven design, testing, implementation, and review packages are complete and pushed.
+- All eight design, testing, implementation, and review packages are complete and pushed.
 - Four cross-design Opus 5 cycles adjudicated findings C1 through C39. Final verdict: NOT BLOCKED.
 - Reviewed design checkpoint `c49f884` is verified at `origin/feat/iteration-program`.
 - Iteration 01 local server reliability implementation is complete and verified at `a7a61ae`.
@@ -43,6 +43,8 @@ timestamp: 2026-08-04
 - Final integration passed the 390-test repository gate, package dry-run over 155 files, zero-vulnerability production dependency audit, cross-surface built-artifact Brave QA, and an independent Opus 5 review with `NOT BLOCKED` verdict.
 - Iteration 07 information architecture redesign is complete at `6584a6afb45ead68c0f27335e14540ec89e43217`.
 - Iteration 07 passed 392 tests across 42 files, typecheck, build, packaged smoke over 155 files, strict built-artifact Brave QA at 375 pixels, and a five-cycle Opus 5 implementation review with final `NOT BLOCKED` verdict.
+- Iteration 08 card filter consistency is complete at `80db027681fd2b87caf476f2796490ab490786e3`.
+- Iteration 08 passed 393 tests across 42 files, typecheck, build, packaged smoke over 155 files, populated built-artifact Brave QA at 375 pixels, and an Opus 5 exact-tree review with `NOT BLOCKED` verdict.
 
 ## Next action
 
