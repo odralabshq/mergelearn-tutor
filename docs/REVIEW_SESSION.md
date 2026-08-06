@@ -1,148 +1,42 @@
 ---
 type: guide
 title: "Review Session"
-description: "The daily review flow: prompts, grading, and history capture."
+description: "The current browser Review flow, recovery behavior, and scheduling boundary."
 resource: docs/REVIEW_SESSION.md
 tags: [review, spaced-repetition]
-timestamp: 2026-07-02
+timestamp: 2026-08-06
 ---
 
-# Interactive Local Review Session
+# Review sessions
 
-MergeLearn Tutor now has a local browser-based review session. It keeps the CLI as the control plane and stores all state locally in `.skilltrace/state.json`.
-
-## Start a session
+Start the local UI with:
 
 ```bash
-mergelearn-tutor session --repo .
+mergelearn serve
 ```
 
-The command prints a local URL:
+Open **Practice**, then choose **Review due**. A Review session is scheduled and graded; **Strengthen weak areas** and **External problems** are read-only views and never write FSRS state.
 
-```text
-MergeLearn Tutor session: http://127.0.0.1:<port>
-Press Ctrl+C to stop.
-```
+## Review flow
 
-Open that URL in a browser.
+1. Read the prompt and complete the authored interaction.
+2. Choose confidence from Guessing through Certain to submit and reveal.
+3. Read deterministic feedback, the expected answer, explanation, and any supplied references.
+4. Grade recall with `1` Again, `2` Hard, `3` Good, or `4` Easy.
+5. Use **Undo last answer** when needed, or **End session** to stop the sitting.
 
-## Current UI
+Grades are persisted through an authoritative server-side session plan. The browser keeps unsent answers locally for recovery, retries mutation requests with stable request IDs, and resumes an unfinished session before starting conflicting practice.
 
-The page shows snippet-first cards with:
+## Scope
 
-- card title
-- question plane and difficulty
-- why the card appeared
-- evidence file path
-- bounded code snippet
-- concrete question
-- active-recall answer box
-- reveal explanation button
-- self-grade actions: I knew it, Partly, Missed it, Bad card, Wrong evidence
-- queue controls to generate more cards or regenerate the active queue
+The Practice hub can scope Review by folder and tag. Multiple selections use union by default; intersection is available explicitly. The advertised due count and started session use the same filter. Explicit Set and Lesson launches replace browser-local Review scope.
 
-Available actions:
+## Recovery and safety
 
-- reveal explanation locally without recording mastery
-- record correct/incorrect explain-back answers
-- mark partly/unsure for near-term review
-- mark bad card or wrong evidence as card-quality feedback, not learner failure
-- focused one-card practice on `/practice`
-- unified map with local graph, provenance, and skill map modes on `/map`
-- consolidated quality audit on `/audit`
-- guided learning plan wizard on `/plan`
-- inspect card/batch history on `/history`
-- define learning tracks on `/courses`
-- draft and accept fake/local LLM-style questions on `/questions`
-- inspect GitLens-style document evidence on `/timeline`
-- inspect a graph view of courses/docs/questions/cards on `/graph`
-- visualize concept prerequisites and recommended study order on `/learning-path` (alias `/path`)
+- Reloading resumes an unfinished session when the same server still owns it.
+- After a server restart, the page reports that the prior session expired rather than recording a stale grade.
+- A conflicting launch does not replace an unfinished session; the page announces which session was resumed.
+- Read-only or disconnected clients disable server mutations.
+- The server binds to `127.0.0.1`; session and review history remain under the selected local library.
 
-All actions POST to the local server and update `.skilltrace/state.json`.
-
-## Local API
-
-The server binds to `127.0.0.1` only.
-
-Endpoints:
-
-```text
-GET  /
-GET  /practice
-GET  /map
-GET  /audit
-GET  /plan
-GET  /workbench
-GET  /courses
-GET  /questions
-GET  /timeline
-GET  /graph
-GET  /learning-path
-GET  /path
-GET  /history
-GET  /progress
-GET  /state.json
-GET  /api/state
-GET  /api/cards/history
-GET  /api/courses
-GET  /api/questions
-GET  /api/evidence-timeline
-GET  /api/evidence-graph
-GET  /api/learning-path
-GET  /api/progress
-GET  /api/preferences
-PUT  /api/preferences
-POST /api/cards/generate
-POST /api/courses
-POST /api/questions/draft
-POST /api/questions/status
-POST /answer
-POST /feedback
-POST /correct
-```
-
-Example payloads:
-
-```json
-{"itemId":"item_abc","answer":"...","correct":true}
-```
-
-```json
-{"itemId":"item_abc","eventType":"marked_useful","note":"good card"}
-```
-
-```json
-{"conceptId":"repo.auth","correctionType":"better_label","replacementLabel":"session auth"}
-```
-
-```json
-{"review":{"enabledPlanes":["local_behavior","risk_and_tests"],"snippetLineCount":12}}
-```
-
-```json
-{"count":5,"mode":"regenerate","reason":"need a fresh review queue"}
-```
-
-The `/api/*` endpoints intentionally provide a stable control surface for CLI, website, and future LLM-driven customization.
-
-## Dogfood result
-
-Batch 5 dogfood on `/home/adam/mergeLearn` scratch state:
-
-```text
-url http://127.0.0.1:39587
-html_has_title true
-html_has_cards true
-answer_ok true events 1
-feedback_ok true events 2
-```
-
-Scratch `.skilltrace` state was removed after dogfood.
-
-## Remaining UX work
-
-1. Add visual completed/skipped states without requiring page refresh.
-2. Add end-of-session summary screen.
-3. Add card correction controls in the UI, not only API/CLI.
-4. Add keyboard shortcuts.
-5. Add a Playwright visual smoke test once UI stabilizes.
+The terminal equivalents are `mergelearn due`, `mergelearn show <set/card>`, and `mergelearn grade <set/card> <1-4>`.

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -44,8 +44,12 @@ try {
     assert(!fileNames.includes(forbidden), `package should not include ${forbidden}`);
   }
 
-  assert(fileNames.some((file) => file === 'docs/PRIVACY.md'), 'package should include public privacy docs');
-  assert(fileNames.some((file) => file === 'docs/ENRICHMENT.md'), 'package should include public enrichment docs');
+  for (const maintainedDoc of ['docs/USER_MANUAL.md', 'docs/REVIEW_SESSION.md', 'docs/PRIVACY.md']) {
+    assert(fileNames.includes(maintainedDoc), `package should include ${maintainedDoc}`);
+  }
+  for (const retiredDoc of ['docs/CUSTOMIZATION.md', 'docs/ENRICHMENT.md', 'docs/EVALUATION.md', 'docs/LEXICON.md']) {
+    assert(!fileNames.includes(retiredDoc), `package should not present retired guide ${retiredDoc}`);
+  }
 
   const manifest = require(path.join(root, 'package.json'));
   assert(manifest.name === 'mergelearn', 'package name must be mergelearn');
@@ -59,6 +63,16 @@ try {
   run('mkdir', ['-p', extractDir], { cwd: tmp });
   run('tar', ['-xzf', tarball, '-C', extractDir], { cwd: tmp });
   await symlink(path.join(root, 'node_modules'), path.join(extractDir, 'package', 'node_modules'), 'dir');
+
+  const packedReadme = await readFile(path.join(extractDir, 'package/README.md'), 'utf8');
+  const packedManual = await readFile(path.join(extractDir, 'package/docs/USER_MANUAL.md'), 'utf8');
+  const packedReview = await readFile(path.join(extractDir, 'package/docs/REVIEW_SESSION.md'), 'utf8');
+  assert(packedReadme.includes('choose **Practice**') && !packedReadme.includes('choose **Prepare**'),
+    'packed README should describe the current Practice destination');
+  assert(packedManual.includes('**Home**') && packedManual.includes('**Library**') && packedManual.includes('**Practice**'),
+    'packed user manual should describe the three current destinations');
+  assert(!packedReview.includes('.skilltrace') && packedReview.includes('Strengthen weak areas'),
+    'packed review guide should describe the current local session model');
 
   const help = run('node', ['package/dist/libCli.js', '--help'], {
     cwd: extractDir,

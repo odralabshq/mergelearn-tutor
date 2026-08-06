@@ -7,7 +7,9 @@
     "dist/",
     "skills/",
     "examples/",
-    "docs/*.md",
+    "docs/USER_MANUAL.md",
+    "docs/REVIEW_SESSION.md",
+    "docs/PRIVACY.md",
     "docs/assets/screenshots/*.png",
     "LICENSE"
   ],

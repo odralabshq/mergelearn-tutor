@@ -2,8 +2,9 @@
 
 MergeLearn is a local-first, model-free learning tool. Your own coding agent
 writes the lessons; MergeLearn stores them, schedules reviews with FSRS, and
-gives you a local website to learn from. It ships no model and makes no network
-calls.
+gives you a local website to learn from. It ships no model, account, telemetry,
+or required network service. Authored Mermaid diagrams may load their renderer
+from jsDelivr when displayed; no lesson or library data is sent with that request.
 
 ## How you use it
 
@@ -63,14 +64,14 @@ tradeoff rather than presenting one pattern as universally best. Never copy a
 problem statement or claim a company asked it. Dated list or company labels are
 provenance only, not verification or frequency claims.
 
-### Prepare from evidence and supplied references
+### Practice from evidence and supplied references
 
-Open `mergelearn serve`, then choose **Prepare**. The read-only page has two
-factual lanes: **Strengthen** contains cards with enough persisted retrieval
-failures, and **Practice externally** contains author-supplied problem references.
-Repeated `set`, `tag`, and `source` query parameters make filtered URLs shareable.
-Source filters affect external references only. Prepare records no implementation
-result and never turns these rows into a readiness score or workflow.
+Open `mergelearn serve`, then choose **Practice**. **Review due** starts a graded,
+scheduled session. The read-only **Strengthen weak areas** mode contains cards with
+enough persisted retrieval failures, while **External problems** contains
+author-supplied references. Repeated `set`, `tag`, and `source` query parameters
+make those filtered views shareable. Source filters affect external references
+only. Strengthen and External problems never write FSRS state or imply readiness.
 
 ## Install details
 
