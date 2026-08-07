@@ -34,7 +34,7 @@ const patch: AgentSetPatch = {
 
 describe('library CLI (functional, end-to-end)', () => {
   it('reports the package version', () => {
-    expect(buildProgram().version()).toBe('1.2.0');
+    expect(buildProgram().version()).toBe('1.2.1');
   });
 
   it('serve opens human output once, reports opener failure, and keeps JSON launch-free', async () => {

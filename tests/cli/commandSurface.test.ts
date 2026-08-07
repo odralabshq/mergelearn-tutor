@@ -133,7 +133,7 @@ describe('refined CLI command surface', () => {
     const status = JSON.parse(await run(root, 'status', '--json')) as {
       version: string; library: string; running: boolean; due: number;
     };
-    expect(status).toMatchObject({ version: '1.2.0', library: root, running: false });
+    expect(status).toMatchObject({ version: '1.2.1', library: root, running: false });
     // A freshly applied card is due immediately, so status must say so: this is
     // the only command that answers "is there anything to do?".
     expect(status.due).toBe(1);

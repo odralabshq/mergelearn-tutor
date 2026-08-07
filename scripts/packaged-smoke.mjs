@@ -53,7 +53,7 @@ try {
 
   const manifest = require(path.join(root, 'package.json'));
   assert(manifest.name === 'mergelearn', 'package name must be mergelearn');
-  assert(manifest.version === '1.2.0', 'release version must be 1.2.0');
+  assert(manifest.version === '1.2.1', 'release version must be 1.2.1');
   assert(manifest.private !== true, 'prepared package must not be private');
   assert(manifest.license === 'Apache-2.0', 'license must be Apache-2.0');
   assert(manifest.bin?.['mergelearn'] === './dist/libCli.js', 'bin path must target built CLI');
