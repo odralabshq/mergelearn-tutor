@@ -168,7 +168,7 @@ describe('review GUI server (functional)', () => {
       expect(html, path).toContain(`<a href="${label === 'Home' ? '/' : `/${label.toLowerCase()}`}" aria-current="${current}">${label}</a>`);
       const nav = html.match(/<nav class="tabs">([\s\S]*?)<\/nav>/)?.[1] ?? '';
       expect(nav.match(/aria-current=/g), path).toHaveLength(1);
-      const scripts = [...html.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+      const scripts = [...html.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
       expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
         .forEach((script) => new Function(script))).not.toThrow();
     }
@@ -537,7 +537,7 @@ describe('review GUI server (functional)', () => {
     expect(text.indexOf('class="curation-head-actions"')).toBeLessThan(text.indexOf('class="curation-edit"'));
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text).not.toContain('Practice filters');
-    const scripts = [...text.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+    const scripts = [...text.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
     expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
       .forEach((script) => new Function(script))).not.toThrow();
   });
@@ -631,7 +631,7 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text.indexOf("document.querySelectorAll('[data-copy-command]')"))
       .toBeGreaterThan(text.indexOf('data-copy-command='));
-    const scripts = [...text.matchAll(/<script>([\s\S]*?)<\/script>/gi)].map((match) => match[1]);
+    const scripts = [...text.matchAll(/<script>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
     expect(scripts.length).toBeGreaterThan(0);
     expect(() => scripts.forEach((script) => new Function(script))).not.toThrow();
     expect(text).toContain('id="spaced-repetition" checked');
@@ -915,11 +915,7 @@ describe('review GUI server (functional)', () => {
       join(root, 'profile', 'sessions', days[0], files.find((file) => file.startsWith('session_'))!), 'utf8',
     )) as ReviewSession;
     const next = persisted.plan!.entries[1];
-    const archived = await fetch(`${running.url}/api/card/archive`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ setId: next.setId, cardId: next.cardId }),
-    });
-    expect(archived.status).toBe(200);
+    await archiveCard(root, next.setId, next.cardId);
 
     const response = await fetch(`${running.url}/api/session/grade`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -943,11 +939,7 @@ describe('review GUI server (functional)', () => {
     const path = join(root, 'profile', 'sessions', days[0], files.find((file) => file.startsWith('session_'))!);
     const persisted = JSON.parse(await readFile(path, 'utf8')) as ReviewSession;
     for (const entry of persisted.plan!.entries.slice(0, 2)) {
-      const archived = await fetch(`${running.url}/api/card/archive`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ setId: entry.setId, cardId: entry.cardId }),
-      });
-      expect(archived.status).toBe(200);
+      await archiveCard(root, entry.setId, entry.cardId);
     }
     const response = await fetch(`${running.url}/api/session/grade`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
@@ -1236,7 +1228,6 @@ describe('review GUI server (functional)', () => {
 
   it('keeps a persisted legacy session readable and endable but refuses grade and undo', async () => {
     const root = await seed();
-    const card = (await getDueCards(root))[0];
     const startedAt = '2026-08-05T10:00:00.000Z';
     const legacy: ReviewSession = {
       id: 'legacy-http', startedAt, mode: 'recommended', events: [],
@@ -1254,7 +1245,7 @@ describe('review GUI server (functional)', () => {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         sessionId: legacy.id, requestId: 'legacy-grade', revision: 0, entryId: 'legacy-entry',
-        setId: card.setId, cardId: card.id, rating: 3,
+        setId: 'server-deck', cardId: 'legacy-card', rating: 3,
       }),
     });
     expect(grade.status).toBe(409);
