@@ -1,13 +1,15 @@
 {
   "name": "mergelearn",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
     "skills/",
     "examples/",
-    "docs/*.md",
+    "docs/USER_MANUAL.md",
+    "docs/REVIEW_SESSION.md",
+    "docs/PRIVACY.md",
     "docs/assets/screenshots/*.png",
     "LICENSE"
   ],

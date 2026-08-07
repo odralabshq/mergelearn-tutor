@@ -1,10 +1,12 @@
 import { constants } from 'node:fs';
-import { access, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { access, readFile, stat } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { detectAgents, listCanonicalSkills, planInstall, resolveSkillsRoot } from '../agentSkills.js';
+import { listDir } from './io.js';
+import { libraryPaths } from './libraryStore.js';
 import { listSetIds } from './setStore.js';
 
 const execFileAsync = promisify(execFile);
@@ -15,6 +17,22 @@ export type DoctorResult = { ok: boolean; checks: DoctorCheck[] };
 
 async function pathWritable(path: string): Promise<boolean> {
   try { await access(path, constants.W_OK); return true; } catch { return false; }
+}
+
+/** Every JSON file the library owns. Absent files are fine (most are created
+ * lazily); unparseable ones are not, so the caller can name the exact path. */
+async function libraryJsonFiles(root: string): Promise<string[]> {
+  const p = libraryPaths(root);
+  const files = [p.tags, p.folders, p.userFile, p.statsFile];
+  for (const setId of await listDir(p.sets)) {
+    if (setId.startsWith('.')) continue;
+    files.push(p.setFile(setId), p.orderFile(setId));
+    for (const entry of await listDir(p.cardsDir(setId))) {
+      if (entry.startsWith('.') || !entry.endsWith('.json')) continue;
+      files.push(join(p.cardsDir(setId), entry));
+    }
+  }
+  return files;
 }
 
 /** Read-only setup diagnosis. It never creates the library, modifies skills, or
@@ -61,6 +79,26 @@ export async function runDoctor(libraryRoot: string): Promise<DoctorResult> {
 
   const setIds = await listSetIds(libraryRoot);
   checks.push({ id: 'lessons', status: setIds.length ? 'PASS' : 'WARN', message: setIds.length ? `${setIds.length} lesson(s) found` : 'no lessons yet; ask your agent or run mergelearn sample' });
+
+  // Damaged data used to be invisible here: doctor reported ok while `list
+  // cards` failed with a bare parser message naming no file. Parse every file
+  // and collect ALL failures, so one bad card does not hide a second.
+  const damaged: string[] = [];
+  for (const file of await libraryJsonFiles(libraryRoot)) {
+    try {
+      JSON.parse(await readFile(file, 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      damaged.push(file);
+    }
+  }
+  checks.push({
+    id: 'library-data',
+    status: damaged.length ? 'FAIL' : 'PASS',
+    message: damaged.length
+      ? `${damaged.length} unreadable file(s); restore from a backup or remove them:\n    ${damaged.join('\n    ')}`
+      : 'all library and profile JSON files parse',
+  });
 
   return { ok: checks.every((c) => c.status !== 'FAIL'), checks };
 }

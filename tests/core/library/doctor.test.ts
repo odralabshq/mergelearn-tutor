@@ -12,7 +12,10 @@ describe('doctor', () => {
     const root = join(parent, 'not-created-yet');
     const result = await runDoctor(root);
     const ids = result.checks.map((c) => c.id);
-    expect(ids).toEqual(['node', 'library', 'skill-source', 'agents', 'git', 'lessons']);
+    expect(ids).toEqual(['node', 'library', 'skill-source', 'agents', 'git', 'lessons', 'library-data']);
+    // An absent library has no files to parse, so integrity passes rather than
+    // failing on nothing. Damage detection is covered in doctorLibraryData.test.ts.
+    expect(result.checks.find((c) => c.id === 'library-data')?.status).toBe('PASS');
     expect(result.checks.find((c) => c.id === 'node')?.status).toBe('PASS');
     expect(result.checks.find((c) => c.id === 'library')?.status).toBe('WARN');
     await expect(stat(root)).rejects.toThrow(); // doctor did not create it

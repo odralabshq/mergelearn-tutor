@@ -9,7 +9,7 @@
 
 import { join } from 'node:path';
 
-import type { ReviewSession } from '../types.js';
+import type { ReviewEvent, ReviewSession } from '../types.js';
 import { readJson, listDir } from '../io.js';
 import { libraryPaths } from '../libraryStore.js';
 
@@ -34,55 +34,75 @@ export async function listSessions(root: string): Promise<ReviewSession[]> {
   return out;
 }
 
-/** Union of card ids attempted in LESSON sessions for one set. A card counts as
- * attempted once any lesson session for the set recorded a ReviewEvent for it.
- * Non-lesson sessions and other sets are ignored. */
-export async function attemptedCardIds(root: string, setId: string): Promise<Set<string>> {
-  return (await attemptedByLessonSet(root)).get(setId) ?? new Set<string>();
+export type LessonEvidenceClass = 'self_assessed' | 'deterministic';
+export type LessonEvidence = Map<string, LessonEvidenceClass>;
+
+function classifyLessonEvent(event: ReviewEvent): LessonEvidenceClass | null {
+  if (event.resultClass === 'evidence' || event.rating === 1) return null;
+  if (event.attempt?.correct !== undefined) {
+    return event.attempt.correct ? 'deterministic' : null;
+  }
+  return event.rating >= 2 && event.rating <= 4 ? 'self_assessed' : null;
 }
 
-/** One walk over all sessions -> a map of setId -> attempted card ids, counting
- * lesson sessions only. Lets the Home page derive progress for every set from a
- * single read instead of re-walking the session tree once per set. */
-export async function attemptedByLessonSet(root: string): Promise<Map<string, Set<string>>> {
-  const sessions = await listSessions(root);
-  const map = new Map<string, Set<string>>();
-  for (const s of sessions) {
-    if (s.mode !== 'lesson') continue;
-    const setId = s.filter?.setIds?.[0];
+/** Derive each card's strongest live evidence from persisted lesson sessions. */
+export async function lessonEvidenceBySet(root: string): Promise<Map<string, LessonEvidence>> {
+  const map = new Map<string, LessonEvidence>();
+  for (const session of await listSessions(root)) {
+    if (session.mode !== 'lesson') continue;
+    const setId = session.filter?.setIds?.[0];
     if (!setId) continue;
-    let ids = map.get(setId);
-    if (!ids) { ids = new Set<string>(); map.set(setId, ids); }
-    for (const e of s.events) if (e?.cardId) ids.add(e.cardId);
+    const tombstones = new Set((session.plan?.gradeLedger ?? [])
+      .filter((entry) => entry.error?.code === 'request_undone').map((entry) => entry.requestId));
+    let evidence = map.get(setId);
+    if (!evidence) { evidence = new Map(); map.set(setId, evidence); }
+    for (const event of session.events) {
+      if (!event?.cardId || (event.requestId && tombstones.has(event.requestId))) continue;
+      if (event.resultClass !== undefined
+        ? event.resultClass !== 'scheduled'
+        : session.plan !== undefined) continue;
+      const next = classifyLessonEvent(event);
+      if (!next || evidence.get(event.cardId) === 'deterministic') continue;
+      evidence.set(event.cardId, next);
+    }
   }
   return map;
+}
+
+export async function lessonEvidenceForSet(root: string, setId: string): Promise<LessonEvidence> {
+  return (await lessonEvidenceBySet(root)).get(setId) ?? new Map();
 }
 
 export type LessonState = 'not_started' | 'in_progress' | 'completed';
 
 export interface LessonProgress {
-  attemptedCount: number;      // active cards attempted (capped at total)
-  total: number;               // active cards in the set
+  passedCount: number;
+  deterministicCount: number;
+  selfAssessedCount: number;
+  total: number;
   state: LessonState;
-  resumeCardId: string | null; // first active card, authored order, not attempted
+  resumeCardId: string | null;
 }
 
-/** Derive lesson progress from the authored-order active card ids and the set
- * of attempted card ids. Pure: no IO, so it is trivial to unit test. */
+/** Derive lesson progress from authored-order active card ids and strongest evidence. */
 export function computeLessonProgress(
   orderedActiveCardIds: string[],
-  attempted: Set<string>,
+  evidence: LessonEvidence,
 ): LessonProgress {
   const total = orderedActiveCardIds.length;
-  let attemptedCount = 0;
+  let deterministicCount = 0;
+  let selfAssessedCount = 0;
   let resumeCardId: string | null = null;
   for (const id of orderedActiveCardIds) {
-    if (attempted.has(id)) attemptedCount += 1;
+    const evidenceClass = evidence.get(id);
+    if (evidenceClass === 'deterministic') deterministicCount += 1;
+    else if (evidenceClass === 'self_assessed') selfAssessedCount += 1;
     else if (resumeCardId === null) resumeCardId = id;
   }
+  const passedCount = deterministicCount + selfAssessedCount;
   const state: LessonState =
-    total > 0 && attemptedCount >= total ? 'completed'
-    : attemptedCount === 0 ? 'not_started'
+    total > 0 && passedCount >= total ? 'completed'
+    : passedCount === 0 ? 'not_started'
     : 'in_progress';
-  return { attemptedCount, total, state, resumeCardId };
+  return { passedCount, deterministicCount, selfAssessedCount, total, state, resumeCardId };
 }

@@ -7,7 +7,7 @@
  */
 
 import type { Card, ReviewSession } from '../types.js';
-import { listSetIds, loadSet } from '../setStore.js';
+import { listSetIds, loadOrder, loadSet } from '../setStore.js';
 import { loadCardsForSet } from '../cardStore.js';
 
 export type DueFilter = NonNullable<ReviewSession['filter']>;
@@ -77,4 +77,24 @@ export async function getDueCards(root: string, now = new Date(), filter?: DueFi
   // Most-overdue first, so the oldest debt is cleared first.
   due.sort(compareDueCards);
   return due;
+}
+
+/** Active cards in deterministic Set plus authored-card order. Focused modes
+ * select this scope once without consulting FSRS due dates. */
+export async function getActiveCardsInAuthoredOrder(root: string, filter?: DueFilter): Promise<Card[]> {
+  const selected: Card[] = [];
+  const setIds = (await listSetIds(root)).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const setId of setIds) {
+    const set = await loadSet(root, setId);
+    if (!set) continue;
+    const active = (await loadCardsForSet(root, setId)).filter((card) =>
+      card.status === 'active' && matchesFilter(card, set.folderPath, filter));
+    const byId = new Map(active.map((card) => [card.id, card]));
+    for (const id of (await loadOrder(root, setId))?.cardIds ?? []) {
+      const card = byId.get(id);
+      if (card) { selected.push(card); byId.delete(id); }
+    }
+    selected.push(...[...byId.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)));
+  }
+  return selected;
 }

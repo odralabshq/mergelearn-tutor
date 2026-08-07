@@ -44,6 +44,9 @@ options work before or after the subcommand. Verify wiring with
 1. `mergelearn list sets` — list lessons (id, title, card count, folder).
 2. `mergelearn due [--set <id>] [--tag <id>] [--folder <path>]` — what is due
    now, optionally scoped. Empty filter = everything due across the library.
+   `--quiet` prints just the summary line; `--if-any` prints nothing at all when
+   nothing is due, which is what makes it safe in a shell prompt hook. Exit code
+   stays 0 either way.
 3. `mergelearn show <setId/cardId>` — read one card's front + back
    (question, context, short answer, full explanation, and any frozen source
    snippet). Use this to learn by reading without affecting scheduling.
@@ -57,8 +60,22 @@ still work during migration but should not be authored into new scripts.
 
 ## Library health and learner model
 
-- `mergelearn mastery` — demonstrated mastery by overlapping skill tag and by
-  folder. Add `--json` when an agent should adapt explanations to known gaps.
+- `mergelearn mastery`: progress by overlapping skill tag and by folder, as TWO
+  measures: `coverage` (share of cards that reached review at least once) and
+  `retention` (current FSRS recall probability, averaged over the cards actually
+  studied), with `studied` as the retention denominator. Read them together. One
+  correct answer on one card is 100% coverage and says nothing durable, which is
+  why a single number was misleading. Unstudied topics print `—`, not `0%`. Rows
+  are weakest first. Add `--json` when an agent should adapt explanations to known
+  gaps.
+- `mergelearn weak`: the individual cards the learner keeps failing to recall,
+  from recorded review evidence, with a per-tag rollup as `weak/eligible` above
+  the list and each card row naming its own concepts, so the two can be joined.
+  A card
+  must have at least 3 recent attempts and 2 retrieval failures before it is
+  called weak; below that bar it is reported as needing more evidence rather than
+  ranked. When nothing qualifies the command says so instead of guessing, so an
+  empty result means "not enough evidence yet", never "no weaknesses".
 - `mergelearn check` — re-check frozen repository citations and report files,
   lines, or commits that drifted or disappeared.
 - `mergelearn prune` — preview stale cards that could be archived. It changes
@@ -78,9 +95,10 @@ if the browser is not already there. Three tabs:
   answer shows first; a "Show full explanation" toggle reveals the deeper
   markdown explanation, examples, and common mistakes. Mermaid diagrams in an
   explanation render as SVG.
-- **Manage** — browse the folder tree and tag taxonomy with per-node mastery,
+- **Manage**: browse the folder tree and tag taxonomy with per-node progress,
   build a filter (Match any / Match all across folders + tags), and launch a
-  filtered Practice session.
+  filtered Practice session. The bar and percentage show coverage; hover for
+  retention and the studied count, which the CLI reports from identical rules.
 
 ## Authoring is a separate skill
 
@@ -93,7 +111,8 @@ Don't hand-write cards into `MERGELEARN_HOME`.
 - `mergelearn <cmd>` printing nothing usually means a stale build — rebuild
   (`npm run build`) so the linked bin points at current `dist/`.
 - Nothing due? The library may be empty (author some cards) or everything is
-  scheduled for later — `list sets` confirms whether cards exist at all.
+  scheduled for later. `list sets` confirms whether cards exist at all, and
+  `status` reports the due count directly.
 - `grade` only accepts a card that is currently due; a "not due" result means
   FSRS has it scheduled ahead, not that it's missing.
 - Wrong `--home` (or unset `MERGELEARN_HOME`) points at a different library and

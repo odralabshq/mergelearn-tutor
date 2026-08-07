@@ -20,11 +20,15 @@ describe('public package manifest', () => {
   it('points consumers at the complete built artifact', async () => {
     const pkg = JSON.parse(await readFile('package.json', 'utf8')) as PackageJson;
     expect(pkg.name).toBe('mergelearn');
-    expect(pkg.version).toBe('1.2.0');
+    expect(pkg.version).toBe('1.2.1');
     expect(pkg.main).toBe('dist/index.js');
     expect(pkg.types).toBe('dist/index.d.ts');
     expect(pkg.bin?.mergelearn).toBe('./dist/libCli.js');
-    expect(pkg.files).toEqual(['dist/', 'skills/', 'examples/', 'docs/*.md', 'docs/assets/screenshots/*.png', 'LICENSE']);
+    expect(pkg.files).toEqual([
+      'dist/', 'skills/', 'examples/', 'docs/USER_MANUAL.md',
+      'docs/REVIEW_SESSION.md', 'docs/PRIVACY.md',
+      'docs/assets/screenshots/*.png', 'LICENSE',
+    ]);
     expect(pkg.scripts?.['smoke:package']).toBe('node scripts/packaged-smoke.mjs');
   });
 

@@ -48,7 +48,7 @@ async function appliedLibrary(): Promise<{ root: string; cardId: string; patchFi
   const patchFile = join(root, 'patch.json');
   await writeFile(patchFile, JSON.stringify(patch), 'utf8');
   await run(root, 'apply', '--file', patchFile);
-  const cards = JSON.parse(await run(root, 'list', 'cards', '--json')) as { cardId: string }[];
+  const cards = JSON.parse(await run(root, 'list', 'cards', '--json')).cards as { cardId: string }[];
   return { root, cardId: cards[0]!.cardId, patchFile };
 }
 
@@ -90,7 +90,7 @@ describe('refined CLI command surface', () => {
     expect(await run(root, 'apply', '--file', patchFile)).toContain('applied set "surface-deck"');
     const sets = JSON.parse(await run(root, 'list', 'sets', '--json')) as { id: string }[];
     expect(sets.map((set) => set.id)).toEqual(['surface-deck']);
-    const cards = JSON.parse(await run(root, 'list', 'cards', '--json')) as { setId: string }[];
+    const cards = JSON.parse(await run(root, 'list', 'cards', '--json')).cards as { setId: string }[];
     expect(cards).toHaveLength(1);
     expect(cards[0]!.setId).toBe('surface-deck');
   });
@@ -107,14 +107,14 @@ describe('refined CLI command surface', () => {
     expect(await run(root, 'show', ref)).toContain('Updated positional prompt');
 
     expect(await run(root, 'archive', ref)).toContain(`archived ${ref}`);
-    expect(JSON.parse(await run(root, 'list', 'cards', '--json'))).toEqual([]);
+    expect(JSON.parse(await run(root, 'list', 'cards', '--json')).cards).toEqual([]);
     expect(await run(root, 'unarchive', ref)).toContain(`unarchived ${ref}`);
 
     expect(await run(root, 'delete', ref)).toContain('refusing permanent deletion');
-    expect(JSON.parse(await run(root, 'list', 'cards', '--json'))).toHaveLength(1);
+    expect(JSON.parse(await run(root, 'list', 'cards', '--json')).cards).toHaveLength(1);
     // Global --yes is accepted after the subcommand, not only before it.
     expect(await run(root, 'delete', ref, '--yes')).toContain(`deleted ${ref}`);
-    expect(JSON.parse(await run(root, 'list', 'cards', '--archived', '--json'))).toEqual([]);
+    expect(JSON.parse(await run(root, 'list', 'cards', '--archived', '--json')).cards).toEqual([]);
   });
 
   it('grades the canonical positional ref and emits qualified JSON', async () => {
@@ -131,20 +131,31 @@ describe('refined CLI command surface', () => {
   it('reports status and mastery as human or global JSON output', async () => {
     const { root } = await appliedLibrary();
     const status = JSON.parse(await run(root, 'status', '--json')) as {
-      version: string; library: string; running: boolean;
+      version: string; library: string; running: boolean; due: number;
     };
-    expect(status).toMatchObject({ version: '1.2.0', library: root, running: false });
+    expect(status).toMatchObject({ version: '1.2.1', library: root, running: false });
+    // A freshly applied card is due immediately, so status must say so: this is
+    // the only command that answers "is there anything to do?".
+    expect(status.due).toBe(1);
 
-    const mastery = JSON.parse(await run(root, 'mastery', '--json')) as {
-      tags: { label: string; cardCount: number; mastery: number }[];
-      folders: { path: string; cardCount: number; mastery: number }[];
+    // Progress is reported as TWO measures. `coverage` is what the old single
+    // `mastery` number meant; `retention` and `studied` are what it could not
+    // express, and their absence let one correct answer read as 100% mastered.
+    const progress = JSON.parse(await run(root, 'mastery', '--json')) as {
+      tags: { label: string; cardCount: number; coverage: number; retention: number; studied: number }[];
+      folders: { path: string; cardCount: number; coverage: number; retention: number; studied: number }[];
     };
-    expect(mastery.tags).toEqual([
-      expect.objectContaining({ label: 'cli-design', cardCount: 1, mastery: 0 }),
+    expect(progress.tags).toEqual([
+      expect.objectContaining({ label: 'cli-design', cardCount: 1, coverage: 0, retention: 0, studied: 0 }),
     ]);
-    expect(mastery.folders).toEqual([
-      expect.objectContaining({ path: 'cli/surface', cardCount: 1, mastery: 0 }),
+    expect(progress.folders).toEqual([
+      expect.objectContaining({ path: 'cli/surface', cardCount: 1, coverage: 0, retention: 0, studied: 0 }),
     ]);
+    // Nothing studied must print an em-dash, never "0%": 0% reads as total
+    // forgetting when it really means "not started".
+    const human = await run(root, 'mastery');
+    expect(human).toContain('learned  retained  studied');
+    expect(human).toContain('—');
   });
 
   it('checks source drift and makes prune a dry run until --yes is supplied', async () => {
@@ -182,13 +193,13 @@ describe('refined CLI command surface', () => {
       dryRun: boolean; archived: string[];
     };
     expect(preview).toEqual(expect.objectContaining({ dryRun: true, archived: [] }));
-    expect(JSON.parse(await run(root, 'list', 'cards', '--json'))).toHaveLength(1);
+    expect(JSON.parse(await run(root, 'list', 'cards', '--json')).cards).toHaveLength(1);
 
     const pruned = JSON.parse(await run(root, 'prune', '--yes', '--json')) as {
       dryRun: boolean; archived: string[];
     };
     expect(pruned).toEqual(expect.objectContaining({ dryRun: false, archived: [ref] }));
-    expect(JSON.parse(await run(root, 'list', 'cards', '--json'))).toEqual([]);
+    expect(JSON.parse(await run(root, 'list', 'cards', '--json')).cards).toEqual([]);
   });
 
   it('keeps export/import symmetric under the canonical names', async () => {

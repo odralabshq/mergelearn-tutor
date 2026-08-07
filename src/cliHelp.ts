@@ -20,7 +20,7 @@ export type HelpGroup = { title: string; commands: string[] };
 export const HELP_GROUPS: HelpGroup[] = [
   { title: 'Learn', commands: ['serve', 'due', 'show', 'grade', 'sample'] },
   { title: 'Library', commands: ['list', 'edit', 'archive', 'unarchive', 'delete', 'check', 'prune', 'settings'] },
-  { title: 'Skills', commands: ['mastery'] },
+  { title: 'Skills', commands: ['mastery', 'weak'] },
   { title: 'Agent', commands: ['context', 'apply', 'skip'] },
   { title: 'Share', commands: ['export', 'import', 'backup', 'restore'] },
   { title: 'Setup', commands: ['setup-agent', 'doctor', 'status'] },
@@ -73,7 +73,8 @@ export const COMMAND_SUMMARY: Record<string, string> = {
   check: 'cards whose cited code has drifted',
   prune: 'archive drifted cards in bulk',
   settings: 'review cap and queue strategy',
-  mastery: 'per-tag and per-folder skill picture',
+  mastery: 'what you have learned and still remember',
+  weak: 'what you keep failing to recall',
   context: 'library state to author against',
   apply: 'apply an AgentSetPatch (add --open)',
   skip: 'record work that produced no lesson',
