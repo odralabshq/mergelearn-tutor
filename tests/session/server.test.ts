@@ -139,6 +139,25 @@ async function get(url: string): Promise<{ status: number; text: string }> {
   return { status: r.status, text: await r.text() };
 }
 
+function extractScriptBodies(html: string): string[] {
+  const lower = html.toLowerCase();
+  const scripts: string[] = [];
+  let cursor = 0;
+  while (cursor < html.length) {
+    const open = lower.indexOf('<script', cursor);
+    if (open === -1) break;
+    const openEnd = lower.indexOf('>', open + 7);
+    if (openEnd === -1) break;
+    const close = lower.indexOf('</script', openEnd + 1);
+    if (close === -1) break;
+    const closeEnd = lower.indexOf('>', close + 8);
+    if (closeEnd === -1) break;
+    scripts.push(html.slice(openEnd + 1, close));
+    cursor = closeEnd + 1;
+  }
+  return scripts;
+}
+
 function gradeBody(
   start: { sessionId: string; revision: number; current: { entryId: string } },
   card: { id: string; setId: string },
@@ -168,7 +187,7 @@ describe('review GUI server (functional)', () => {
       expect(html, path).toContain(`<a href="${label === 'Home' ? '/' : `/${label.toLowerCase()}`}" aria-current="${current}">${label}</a>`);
       const nav = html.match(/<nav class="tabs">([\s\S]*?)<\/nav>/)?.[1] ?? '';
       expect(nav.match(/aria-current=/g), path).toHaveLength(1);
-      const scripts = [...html.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
+      const scripts = extractScriptBodies(html);
       expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
         .forEach((script) => new Function(script))).not.toThrow();
     }
@@ -537,7 +556,7 @@ describe('review GUI server (functional)', () => {
     expect(text.indexOf('class="curation-head-actions"')).toBeLessThan(text.indexOf('class="curation-edit"'));
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text).not.toContain('Practice filters');
-    const scripts = [...text.matchAll(/<script(?: [^>]*)?>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
+    const scripts = extractScriptBodies(text);
     expect(() => scripts.filter((script) => script.trim() && !script.trim().startsWith('{'))
       .forEach((script) => new Function(script))).not.toThrow();
   });
@@ -631,7 +650,7 @@ describe('review GUI server (functional)', () => {
     expect(text).toContain('<span data-copy-label>Copy reference</span>');
     expect(text.indexOf("document.querySelectorAll('[data-copy-command]')"))
       .toBeGreaterThan(text.indexOf('data-copy-command='));
-    const scripts = [...text.matchAll(/<script>([\s\S]*?)<\/script\s*>/gi)].map((match) => match[1]);
+    const scripts = extractScriptBodies(text);
     expect(scripts.length).toBeGreaterThan(0);
     expect(() => scripts.forEach((script) => new Function(script))).not.toThrow();
     expect(text).toContain('id="spaced-repetition" checked');
